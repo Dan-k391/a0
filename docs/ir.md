@@ -140,6 +140,9 @@ b.end_function();
 let module = b.finish()?;  // structural errors + verifier diagnostics
 ```
 
+`patch_iconst` changes the value of an `iconst` built earlier, for numbers known only after more code
+is built (a frame size emitted in a prologue).
+
 Misuse (an `else_` without an `if_`, building outside a function, ...) is recorded as a diagnostic and
 reported by `finish`, rather than panicking, so the API stays safe to expose over C.
 

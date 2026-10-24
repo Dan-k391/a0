@@ -260,6 +260,22 @@ impl Builder {
         self.inst(Opcode::Fconst, &[], bits, Some(ty))
     }
 
+    /// Changes the value of an `iconst` built earlier. Useful for numbers that are only known after
+    /// more code has been built, such as a frame size emitted in a function's prologue.
+    pub fn patch_iconst(&mut self, constant: Value, value: i64) {
+        let inst = match self.module.values.get(constant.index()) {
+            Some(_) => self.module.value_inst(constant),
+            None => None,
+        };
+        match inst {
+            Some(i) if self.module.inst_opcode(i) == Opcode::Iconst => {
+                let ty = self.module.value_type(constant);
+                self.module.insts[i.index()].imm = canonical_int(ty, value) as u64;
+            }
+            _ => self.error("patch_iconst needs a value produced by iconst"),
+        }
+    }
+
     /// A float constant given by its exact bit pattern (f32 uses the low 32 bits).
     pub fn fconst_bits(&mut self, ty: Type, bits: u64) -> Value {
         self.inst(Opcode::Fconst, &[], bits, Some(ty))
