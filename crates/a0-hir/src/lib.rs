@@ -27,6 +27,7 @@ mod builder;
 mod check;
 mod lower;
 mod model;
+mod mono;
 mod print;
 mod text;
 mod types;

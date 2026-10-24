@@ -37,6 +37,9 @@ pub fn lower(m: &HirModule) -> Result<a0_ir::Module, Diagnostics> {
     if entry.has_errors() {
         return Err(entry);
     }
+    // Generic items become one copy per use; lowering itself never sees a type parameter.
+    let mono = crate::mono::monomorphize(m);
+    let m = mono.as_ref().unwrap_or(m);
     let mut l = Lowerer::new(m);
     l.run();
     match l.b.finish() {

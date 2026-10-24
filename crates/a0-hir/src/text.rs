@@ -342,18 +342,26 @@ impl TextParser<'_> {
     fn function_body(&mut self, f: FuncId, item: NodeId) -> R<()> {
         let body = self.b.function_body(f);
         let block = self.field(item, "body").unwrap();
-        let root = self.with_body(body, block)?;
+        let root = self.with_body(body, item, block)?;
         self.b.set_root(body, root);
         Ok(())
     }
 
-    /// Parses `block` as the root of `body`, with its parameters in scope.
-    fn with_body(&mut self, body: BodyId, block: NodeId) -> R<ExprId> {
+    /// Parses `block` as the root of `body`, with the parameters of `decl` (a function or closure)
+    /// in scope under the names written there; locals may have been renamed to keep them unique.
+    fn with_body(&mut self, body: BodyId, decl: NodeId, block: NodeId) -> R<ExprId> {
         let outer = self.body.replace(body);
         self.scopes.push(ScopeKind::Function);
-        for &p in self.b.module().body_params(body).to_vec().iter() {
-            let name = self.b.module().local_name(p).to_string();
-            let _ = self.scopes.declare_defined(&name, p.0 as u64);
+        let params = self.b.module().body_params(body).to_vec();
+        let names: Vec<String> = self
+            .tree
+            .children(decl)
+            .into_iter()
+            .filter(|&c| self.kind(c) == "param")
+            .map(|c| self.text(self.field(c, "name").unwrap()).to_string())
+            .collect();
+        for (name, p) in names.iter().zip(params) {
+            let _ = self.scopes.declare_defined(name, p.0 as u64);
         }
         let r = self.block(block);
         self.scopes.pop();
@@ -669,7 +677,7 @@ impl TextParser<'_> {
                 let body = self
                     .b
                     .new_closure_body(self.body.unwrap(), &refs, &types, ret);
-                let root = self.with_body(body, self.field(node, "body").unwrap())?;
+                let root = self.with_body(body, node, self.field(node, "body").unwrap())?;
                 self.b.set_root(body, root);
                 self.at(node);
                 self.b.lambda(body)

@@ -30,13 +30,36 @@ IR plus calls into the default runtime (`a0rt`), so it runs in the interpreter a
 | `string` | reference | immutable bytes (UTF-8 by convention) |
 | `array<T>` | reference | growable, mutable |
 | `map<K, V>` | reference | hash map; `K` is `int`, `bool` or `string` |
-| `S` | reference | a declared struct: named, mutable fields |
-| `E` | reference | a declared enum: variants with positional payloads |
+| `S`, `S<T, ...>` | reference | a declared struct: named, mutable fields; possibly generic |
+| `E`, `E<T, ...>` | reference | a declared enum: variants with positional payloads; possibly generic |
 | `fn(T, ...) -> R` | reference | a closure |
+| `T?` | reference | a reference type `T`, or null |
 | `never` | (internal) | the type of `return`, `break`, `exit`, ...; fits any type |
 
-Reference types are garbage collected and nullable (`null<T>`). Using a null reference panics with
-`null reference`. Value types are copied.
+Reference types are garbage collected. They are **never null** unless their type is nullable: `T?`
+holds a `T` or `null`. Value types are copied.
+
+**Nullability.** `null<T>` has type `T?`. A `T` fits wherever a `T?` is expected. Fields, elements and
+calls need a non-null value: `e!` turns a `T?` into a `T` and panics with `null reference` if it is
+null, and `x == null<T>` tests for null. Because the types guarantee it, generated code checks for
+null only at `!`. A global of reference type starts as null, so its type must be nullable.
+
+**Generics.** Structs, enums and functions can take type parameters (`struct Pair<A, B>`,
+`fn first<T>(xs: array<T>) -> Option<T>`). Inside a generic item a type parameter is opaque: values
+of it can be stored, passed, returned, compared with `==` and turned into `any`, but not used as
+numbers or strings. Type arguments are inferred at calls and constructions (`first(xs)`,
+`new Pair { ... }`, `Option::None` where an `Option<int>` is expected) or written out
+(`first::<int>(xs)`, `new Pair<int, string> { ... }`, `Option<int>::None`). A0 monomorphizes: each
+generic item is copied for every combination of type arguments the program uses, before lowering,
+so frontends never substitute types themselves.
+
+**Inference.** Types a frontend does not know yet are inference variables: `HirBuilder::fresh_type`
+for an unannotated variable, the element type of `[]`, the type arguments of generic calls, the
+result of calling a closure of unknown type. Later uses fix them by unification. A node whose rule
+needs a type that is still open (a field of an object whose type is unknown) is typed again when
+`finish` runs; a type nothing determined is reported as "cannot infer". Type errors are reported at
+the sub-expression they are about, in source terms (`mismatched types: expected `int`, found
+`string``), so languages can show them to their users unchanged.
 
 ## Module
 
@@ -45,8 +68,13 @@ module "example";
 
 struct Point { x: float, y: float }
 enum Shape { Circle(float), Rect(float, float), Empty }
+struct Cell<T> { head: T, tail: Cell<T>? }
 global count: int;
 extern fn putchar(int) -> int;
+
+fn length<T>(c: Cell<T>?) -> int {
+  if c == null<Cell<T>> { 0 } else { 1 + length(c!.tail) }
+}
 
 fn area(s: Shape) -> float {
   match s {
@@ -70,8 +98,8 @@ fn main() -> int {
 }
 ```
 
-- `global` variables start at the zero value of their type (`0`, `0.0`, `false`, `()`, `null`, and
-  `()` for `any`).
+- `global` variables start at the zero value of their type (`0`, `0.0`, `false`, `()`, and `()` for
+  `any`); one of reference type must be nullable and starts as `null`.
 - `extern fn` declares a C function; its parameter and result types must be `int`, `float`, `bool`
   or `unit` (the interpreter's FFI rules apply).
 - The entry point is `fn main() -> int` or `fn main()`; its result is the exit status.
@@ -85,16 +113,17 @@ it has no trailing `;`, otherwise to `()`.
 
 | Form | Meaning |
 |---|---|
-| `()`, `true`, `42`, `1.5`, `"text"`, `null<T>` | literals |
-| `x`, `f` | a local, a global, or a function used as a closure value |
+| `()`, `true`, `42`, `1.5`, `"text"`, `null<T>` | literals (`null<T>` has type `T?`) |
+| `x`, `f`, `f::<T>` | a local, a global, or a function used as a closure value |
 | `let x: T = e;`, `let x = e;` | declare a local (the type defaults to `e`'s) |
 | `x = e`, `o.f = e`, `a[i] = e` | assignment (type `unit`) |
 | `a + b`, `-a`, `a < b`, `a == b`, `a && b`, `!a` | operators, see below |
-| `f(a, b)`, `e(a, b)` | call a function, extern or closure |
+| `f(a, b)`, `f::<T>(a)`, `e(a, b)` | call a function (with explicit type arguments), extern or closure |
+| `e!` | the value of a `T?`; panics with `null reference` if it is null |
 | `fn(x: int) -> int { x + 1 }` | a closure; captures outer locals by reference |
-| `new S { f: e, ... }`, `o.f` | struct construction (every field) and field access |
-| `E::V(a, b)`, `match e { V(x, y) => ..., _ => ... }` | enum construction and matching |
-| `[a, b]`, `new array<T>`, `a[i]` | arrays (index out of range panics) |
+| `new S { f: e, ... }`, `new S<T> { ... }`, `o.f` | struct construction (every field) and field access |
+| `E::V(a, b)`, `E<T>::V`, `match e { V(x, y) => ..., _ => ... }` | enum construction and matching |
+| `[a, b]`, `[]`, `new array<T>`, `a[i]` | arrays (index out of range panics) |
 | `new map<K, V>`, `m[k]` | maps (a missing key panics) |
 | `e as T`, `e is T` | conversions and dynamic type tests |
 | `if c { } else { }`, `while c { }`, `loop { }` | control flow; `if` with `else` is a value |
@@ -113,7 +142,7 @@ for other references; on `any` see below. `&&`, `||` short-circuit; `!` negates 
 | `push(a, v)`, `pop(a)` | append to / remove the last element of an array (`pop` on empty panics) |
 | `has(m, k)`, `remove(m, k)`, `keys(m)` | map membership, removal, keys as an array (deterministic order) |
 | `substr(s, start, count)`, `byte_at(s, i)` | string slicing and bytes |
-| `str(x)` | format an `int`, `float` or `bool` as a string (floats: shortest round-trip, `1` not `1.0`) |
+| `str(x)` | format an `int`, `float`, `bool` (or `string`) as a string (floats: shortest round-trip, `1` not `1.0`) |
 | `print(s)`, `eprint(s)` | write a string to stdout / stderr (no newline added) |
 | `exit(code)`, `panic(message)` | stop the program (`panic` prints `a0: panic: message`, exit 101) |
 | `clock()` | processor time in seconds, as a `float` |
@@ -121,7 +150,7 @@ for other references; on `any` see below. `&&`, `||` short-circuit; `!` negates 
 ## Conversions and dynamic values
 
 `e as T`: `int` to `float` and back (truncating, saturating, NaN to 0); any value to `any`; `any` to
-any type it holds (panics with `expected T` otherwise).
+any type it holds (panics with `expected T` otherwise; `()` becomes null for `T?`); `T` to `T?`.
 
 `e is T` tests the type held by an `any`: `unit`, `bool`, `int`, `float`, `string`, a struct, or an
 enum (true for every variant).
@@ -150,7 +179,8 @@ are `//` to the end of the line. The parser is written with A0's own grammar lay
 
 ## Lowering
 
-HIR is lowered to the core IR plus calls into `a0rt`:
+HIR is lowered to the core IR plus calls into `a0rt`, after monomorphization (`mono.rs`) has
+replaced generic items with one copy per combination of type arguments:
 
 - Value types map to `i1`, `i64`, `f64`; `any` to `i64`; references to `ptr`; `unit` disappears.
 - **Precise GC without stack maps.** Every reference or `any` that lives across something that can
@@ -160,7 +190,7 @@ HIR is lowered to the core IR plus calls into `a0rt`:
   allocate. Globals of these types are registered as roots. Heap objects are traced by layout.
 - **Objects.** Every struct, enum variant and closure environment gets a type descriptor registered
   at startup with a layout (one byte per word: raw, reference or `any`). Field access is an inline
-  load or store after a null check.
+  load or store; references are non-null by type, so only `!` checks for null.
 - **Closures.** Each closure is a core IR function taking its environment first. Captured locals
   live in heap boxes, shared by the defining function and every closure that captures them.
 - Strings, arrays, maps, formatting, boxing and dynamic equality are runtime calls.
@@ -170,5 +200,5 @@ HIR is lowered to the core IR plus calls into `a0rt`:
 
 ## Not yet
 
-User-defined generics, methods, interfaces, exceptions, iteration protocols, float map keys, and
+Bounds on type parameters, methods, interfaces, exceptions, iteration protocols, float map keys, and
 memory modes other than `gc`.

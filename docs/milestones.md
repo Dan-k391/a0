@@ -339,7 +339,7 @@ One entry per milestone: what was done, what changed along the way, and open que
 **Changed**
 
 - Lox's `string_equality` benchmark did not get faster: its time goes into calls, not into comparing
-  strings. The optimizer (M15) is where that is addressed.
+  strings. The optimizer (M13) is where that is addressed.
 
 **Open questions**
 

@@ -265,3 +265,60 @@ fn lowered_closures_take_their_environment_first() {
     );
     assert!(text.contains("call_indirect"), "{text}");
 }
+
+#[test]
+fn builders_infer_types_and_generics_are_monomorphized() {
+    // fn id<T>(x: T) -> T { x }, called with an int and a string; `xs` is `[]` until a push.
+    let mut b = HirBuilder::new("m");
+    let id = b.declare_generic_function("id", &["T"]);
+    let t = b.type_param(Item::Func(id), 0);
+    b.set_signature(id, &["x"], &[t], t);
+    let body = b.function_body(id);
+    let x = b.param(body, 0);
+    let root = b.local(x);
+    b.set_root(body, root);
+
+    let main = b.declare_function("main", &[], &[], TypeId::INT);
+    let body = b.function_body(main);
+    let one = b.int(1);
+    let n = b.call(id, &[one]);
+    let s = b.string("s");
+    let s = b.call(id, &[s]);
+    let s_len = b.builtin(Builtin::Len, &[s]);
+    let elem = b.fresh_type();
+    let xs_ty = b.array_type(elem);
+    let xs = b.new_local(body, "xs", xs_ty);
+    let empty = b.array(&[]);
+    let bind = b.let_(xs, empty);
+    let xs_ref = b.local(xs);
+    let two = b.int(2);
+    let pushed = b.call(id, &[two]);
+    let push = b.builtin(Builtin::Push, &[xs_ref, pushed]);
+    let sum = b.binary(BinOp::Add, n, s_len);
+    let root = b.block(&[bind, push], Some(sum));
+    b.set_root(body, root);
+    let m = b.finish().unwrap_or_else(|d| panic!("{}", d.summary()));
+    assert_eq!(m.type_name(m.local_type(xs)), "array<int>");
+
+    let ir = lower(&m).unwrap().to_string();
+    assert!(ir.contains("func @\"hir.id<int>\"("), "{ir}");
+    assert!(ir.contains("func @\"hir.id<string>\"("), "{ir}");
+}
+
+#[test]
+fn reused_nodes_and_open_types_are_reported() {
+    let mut b = HirBuilder::new("m");
+    let main = b.declare_function("main", &[], &[], TypeId::UNIT);
+    let body = b.function_body(main);
+    let t = b.fresh_type();
+    let l = b.new_local(body, "unknown", t);
+    let e = b.local(l);
+    let f = b.field_named(e, "x");
+    let root = b.block(&[f], None);
+    b.set_root(body, root);
+    let err = b.finish().unwrap_err().summary();
+    assert!(
+        err.contains("the type of this value must be known here"),
+        "{err}"
+    );
+}

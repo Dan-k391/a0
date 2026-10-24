@@ -190,3 +190,36 @@ which must not depend on an IR, and a language's types need not map one to one o
 Minnow, the typed example language, has statements (`let`, `if`, `while`, `for`, `return`) and
 expressions, like most languages people write compilers for, rather than the HIR's expression
 blocks. Struct literals are `new P { ... }`: with `P { ... }`, `if p { ... }` would be ambiguous.
+
+## D23. References are non-null unless their type says `T?`
+
+Phase 2's HIR made every reference nullable and checked for null at every use. Now a reference type
+`T` excludes null and `T?` admits it; `null<T>` has type `T?`, a `T` fits where a `T?` is expected,
+and `e!` is the only way back (it panics with `null reference`). Field access, indexing and calls
+require a non-null value. Soundness needs every way a reference comes into being to produce a valid
+one: struct literals give every field, arrays and maps start empty, `let` always has an initializer,
+`any` holds `()` rather than a null reference, and globals (which start zeroed) must be nullable if
+they are references. Generated code therefore checks for null only at `!`. Flow typing (`if x !=
+null` making `x` non-null) was left out: it would be the first HIR feature that depends on control
+flow, and a frontend can bind `x!` to a local where it needs it.
+
+## D24. The HIR builder infers types; frontends need no checker of their own
+
+Each builder call types its node with unification over inference variables (`fresh_type`, `[]`,
+generic calls, calls of unknown closures). A rule that needs structure the type does not have yet is
+deferred and retried at `finish`; what stays unknown is reported as "cannot infer". Errors carry the
+span of the sub-expression they are about and read as messages for the language's users. The
+checker re-types every node of the finished module as a safety net. Unification is invariant; the
+only implicit conversions are `never` to anything and `T` to `T?` at the top of a type. This is what
+lets a typed language skip writing its own checker (M12); `a0_sema::Types` (D21) remains for
+languages whose type systems do not map onto the HIR's.
+
+## D25. Generics by monomorphization in a separate pass
+
+Generic structs, enums and functions are type checked once, with their type parameters opaque (no
+bounds), and instantiated by `mono.rs` into plain copies, one per combination of type arguments,
+before lowering. Lowering, the native backend and the optimizer therefore never see a type parameter,
+and every instance gets its own object layouts (an `int` field is raw, a `string` field is a
+reference). Instance names carry their arguments (`id<int>`), which no frontend name can contain.
+The alternative, a uniform representation with boxing (as Java does), would have kept one copy per
+item but cost an allocation per `int` stored in a generic container.
