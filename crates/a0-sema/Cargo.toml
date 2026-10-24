@@ -1,8 +1,9 @@
 [package]
 name = "a0-sema"
-description = "A0 semantic toolkit: scopes and name resolution"
+description = "A0 semantic toolkit: scopes, name resolution and static types"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [dependencies]
+a0-diag.workspace = true

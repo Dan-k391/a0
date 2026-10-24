@@ -1,12 +1,17 @@
-//! The A0 semantic toolkit: lexical scopes for name resolution.
+//! The A0 semantic toolkit: lexical scopes for name resolution, and static types.
 //!
 //! [`Scopes`] is a stack of scopes holding symbols. It answers the questions every frontend asks while
 //! resolving names: is this name already declared in this scope, where does a use resolve to, has the
 //! variable been initialized yet, and does a use cross a function boundary (so the variable must be
-//! captured by a closure). Each symbol carries a `u64` of frontend data (an IR variable, a slot index).
+//! captured by a closure). Each symbol carries a `u64` of frontend data (an IR variable, a slot index,
+//! a [`TypeId`]).
 //!
-//! Static type checking is not here yet: neither example language needs it (Kaleidoscope has one type,
-//! Lox is dynamically typed); see `docs/decisions.md`.
+//! [`Types`] is the type checker's toolkit: interned types, nominal structs, type variables with
+//! unification, and the standard mismatch diagnostic.
+
+mod types;
+
+pub use types::{TypeId, TypeTag, Types};
 
 use std::collections::HashMap;
 
