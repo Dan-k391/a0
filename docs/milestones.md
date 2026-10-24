@@ -403,6 +403,88 @@ One entry per milestone: what was done, what changed along the way, and open que
 
 - None.
 
+## M13. An optimizer of our own
+
+**Done**
+
+- `opt.rs` (D27, about 875 lines) runs on every HIR module after monomorphization, on by default
+  with no frontend work; `A0_OPT=0` or `LowerOptions { optimize: false }` turns it off. It inlines small functions three levels deep (turning mid-function `return`s into
+  `if` values), decides `is`/`as` on `any` when the boxed type is known (also through locals, by
+  splitting `let v = x as any` into the raw value and its box), drops the check from casts guarded
+  by an `is` test (D28), and propagates constants and copies, removes dead code and flattens blocks.
+- It never removes or duplicates an expression with an effect. Every harness (core IR and HIR
+  programs, Minnow, the Lox suite) runs each program optimized and unoptimized, interpreted, native
+  and under GC stress: six modes that must agree.
+- What it is worth today, natively, as unoptimized time / optimized time: `fib` 3.1, `equality`
+  2.9, `zoo` 1.2, `instantiation` 1.3, `binary_trees` 1.2, `invocation`, `method_call`, `properties`
+  and `trees` 1.1 to 1.2, `string_equality` 1.0 (it reads globals, which the optimizer leaves alone).
+
+**Changed**
+
+- Functions that never return (runtime-error helpers) are not inlined: copying their bodies into
+  every operator only grew the code.
+
+**Open questions**
+
+- Languages that emit the core IR directly (Kaleidoscope) do not get the optimizer. An inliner on
+  the core IR would cover them; none needs it yet.
+
+## M14. Native Lox at least as fast as with its hand-written runtime
+
+**Done**
+
+- Framework (no language involvement): fast `any` paths in lowering and the runtime (D28): inline
+  type tests and equality, guarded casts, small array and map buffers from the free lists, a map's
+  last-lookup cache, string equality by cached hash first. Reference locals are IR variables written
+  through to their frame slots, blocks reuse slots, and frames are cleared by scope instead of when
+  pushed (D30), which removed a `memset` from every call.
+- Lox (D29): functions with up to three parameters take them directly instead of in an argument
+  array, and call sites dispatch through `call0` .. `call3` in the prelude, which the optimizer
+  inlines. The `+` operator tests for numbers first and leaves strings and errors to a helper.
+- Every benchmark of the book is now faster natively than with the hand-written C runtime that Lox
+  had before M6 (the M6 baseline), measured on x86-64 Windows, best of three:
+
+  | Benchmark | M6 baseline | M6 (HIR) | now | now / baseline |
+  |---|---|---|---|---|
+  | `binary_trees` | 2.03 s | ×2.1 | 1.87 s | 0.92 |
+  | `equality` | 0.48 s | ×1.4 | 0.15 s | 0.30 |
+  | `fib` | 0.31 s | ×5.4 | 0.27 s | 0.87 |
+  | `instantiation` | 0.75 s | ×1.0 | 0.48 s | 0.63 |
+  | `invocation` | 0.74 s | ×1.0 | 0.40 s | 0.54 |
+  | `method_call` | 0.31 s | ×1.6 | 0.23 s | 0.73 |
+  | `properties` | 0.80 s | ×1.2 | 0.51 s | 0.63 |
+  | `string_equality` | 0.44 s | ×1.4 | 0.42 s | 0.97 |
+  | `trees` | 7.76 s | ×1.5 | 4.15 s | 0.53 |
+  | `zoo` | 0.58 s | ×1.3 | 0.37 s | 0.63 |
+  | `zoo_batch` (batches in 10 s, more is better) | 4769 | | 6265 | 1.31× the work |
+
+- Tests: `tests/hir/fast_paths.hir` (map cache invalidation, guarded and unguarded casts, inline
+  equality with NaN and -0.0, buffers growing out of the free lists, `break`, `continue` and `return`
+  out of scopes holding references), a lowering test that guarded casts are unchecked and assigned
+  ones are not, and the stress-mode check that every popped frame was cleared. Breaking a local's
+  rooting still fails the Lox suite under GC stress (44 tests), as does skipping the clearing on
+  `break`.
+
+  | Lines | M12 | M14 |
+  |---|---|---|
+  | Lox (grammar + Rust + prelude) | 1486 | 1658 |
+  | Minnow (grammar + Rust) | 692 | 692 |
+
+**Changed**
+
+- Lox grew by 172 lines, almost all in the prelude: `call0` .. `call3` (D29) and the split `+`. This
+  is the one place where the language author tuned for speed. It is the ordinary way to compile a
+  language with run-time arity checks to a typed IR, but a second dynamic language would show
+  whether the framework should offer it (for example closures with optional fixed-arity entries).
+- Generated code now depends on two runtime layout offsets (an object's type before it, a type's
+  family in its descriptor); `a0rt.h` documents them and `gc.c` checks them at compile time.
+
+**Open questions**
+
+- None. Remaining per-call costs, if more speed is wanted: the two runtime calls that push and pop
+  a frame (they could be inline loads and stores), the indirect call through the closure, and Lox's
+  own depth counter for its "Stack overflow." error.
+
 ## Overall open questions
 
 These need a decision from you:

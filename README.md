@@ -34,6 +34,8 @@ it directly.
 | 10. Known issues: inline ints in `any`, 48-bit references, string equality | done |
 | 11. HIR inference, generics, nullable references | done |
 | 12. Frontend API: a typed language without a checker | done: Minnow 1513 → 692 lines, with more features |
+| 13. An optimizer of our own, on by default | done: inlining, `any` folding, cleanup; `A0_OPT=0` turns it off |
+| 14. Native Lox at least as fast as its hand-written runtime | done: 0.30 to 0.97 of the old time on every benchmark |
 
 `docs/milestones.md` has the summary of each milestone and the open questions.
 
