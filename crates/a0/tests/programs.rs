@@ -1,7 +1,9 @@
-//! Runs every program in `tests/programs` through each backend and checks its output.
+//! Runs every program in `tests/programs` (core IR) and `tests/hir` (high-level IR) through each
+//! backend and checks its output.
 //!
 //! Expectations live in comments at the top of each file:
-//! `; expect-stdout: <line>`, `; expect-stderr: <line>` (one per line) and `; expect-exit: <code>`.
+//! `; expect-stdout: <line>`, `; expect-stderr: <line>` (one per line) and `; expect-exit: <code>`,
+//! written with `//` instead of `;` in `.hir` files.
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -12,34 +14,45 @@ struct Expect {
     exit: i32,
 }
 
-fn expectations(text: &str) -> Expect {
+fn expectations(text: &str, comment: &str) -> Expect {
     let mut e = Expect {
         stdout: String::new(),
         stderr: String::new(),
         exit: 0,
     };
+    let key = |k: &str| format!("{comment} {k}:");
     for line in text.lines() {
-        if let Some(rest) = line.strip_prefix("; expect-stdout:") {
+        if let Some(rest) = line.strip_prefix(&key("expect-stdout")) {
             e.stdout.push_str(rest.strip_prefix(' ').unwrap_or(rest));
             e.stdout.push('\n');
-        } else if let Some(rest) = line.strip_prefix("; expect-stderr:") {
+        } else if let Some(rest) = line.strip_prefix(&key("expect-stderr")) {
             e.stderr.push_str(rest.strip_prefix(' ').unwrap_or(rest));
             e.stderr.push('\n');
-        } else if let Some(rest) = line.strip_prefix("; expect-exit:") {
+        } else if let Some(rest) = line.strip_prefix(&key("expect-exit")) {
             e.exit = rest.trim().parse().unwrap();
         }
     }
     e
 }
 
+/// Every program: core IR in `tests/programs`, HIR in `tests/hir`.
 fn programs() -> Vec<PathBuf> {
-    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/programs");
-    let mut files: Vec<PathBuf> = std::fs::read_dir(dir)
-        .unwrap()
-        .map(|e| e.unwrap().path())
-        .filter(|p| p.extension().is_some_and(|x| x == "a0ir"))
-        .collect();
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let mut files = Vec::new();
+    for (dir, ext) in [("tests/programs", "a0ir"), ("tests/hir", "hir")] {
+        for entry in std::fs::read_dir(root.join(dir)).unwrap() {
+            let p = entry.unwrap().path();
+            if p.extension().is_some_and(|x| x == ext) {
+                files.push(p);
+            }
+        }
+    }
     files.sort();
+    assert!(
+        files
+            .iter()
+            .any(|f| f.extension().is_some_and(|x| x == "hir"))
+    );
     files
 }
 
@@ -56,7 +69,12 @@ fn check_programs(run: &dyn Fn(&Path) -> Output) {
     assert!(!files.is_empty());
     for file in &files {
         let text = std::fs::read_to_string(file).unwrap().replace("\r\n", "\n");
-        let expect = expectations(&text);
+        let comment = if file.extension().is_some_and(|x| x == "hir") {
+            "//"
+        } else {
+            ";"
+        };
+        let expect = expectations(&text, comment);
         let out = run(file);
         let stdout = String::from_utf8_lossy(&out.stdout);
         let stderr = String::from_utf8_lossy(&out.stderr);
@@ -86,12 +104,27 @@ fn interpreted_programs_match_expectations() {
 }
 
 #[test]
+fn interpreted_programs_survive_gc_stress() {
+    check_programs(&|file| {
+        Command::new(env!("CARGO_BIN_EXE_a0"))
+            .arg("run")
+            .arg(file)
+            .env("A0_GC_STRESS", "1")
+            .output()
+            .unwrap()
+    });
+}
+
+#[test]
 fn native_programs_match_expectations() {
     let dir = scratch_dir("native");
     check_programs(&|file| {
         let exe = dir.join(format!(
             "{}{}",
-            file.file_stem().unwrap().to_string_lossy(),
+            file.file_name()
+                .unwrap()
+                .to_string_lossy()
+                .replace('.', "_"),
             std::env::consts::EXE_SUFFIX
         ));
         let build = Command::new(env!("CARGO_BIN_EXE_a0"))

@@ -31,6 +31,7 @@ grammar file ──a0-syntax──▶ syntax tree ──(your frontend + a0-sema
 | `crates/a0-diag` | Source files, spans and diagnostics shared by every layer |
 | `crates/a0-syntax` | Grammar layer: grammar DSL, lexer, parser, syntax trees and syntax errors |
 | `crates/a0-sema` | Semantic toolkit: scopes and name resolution |
+| `crates/a0-hir` | High-level IR: strings, collections, structs, enums, closures, `any`, GC; lowered to the core IR |
 | `crates/a0-ir` | The core IR: data model, builder, text format, verifier |
 | `crates/a0-interp` | Interpreter for the IR |
 | `crates/a0-target` | Explicit target descriptions |
@@ -40,8 +41,8 @@ grammar file ──a0-syntax──▶ syntax tree ──(your frontend + a0-sema
 | `crates/a0` | The `a0` command-line driver |
 | `examples/kaleidoscope` | Kaleidoscope (LLVM's tutorial language) end to end |
 | `examples/lox` | Lox (Crafting Interpreters) end to end, with the official test suite |
-| `tests/programs` | IR programs with expected output, run by both backends |
-| `docs/ir.md`, `docs/grammar.md` | IR design and grammar DSL reference |
+| `tests/programs`, `tests/hir` | Core IR and HIR programs with expected output, run by both backends |
+| `docs/ir.md`, `docs/hir.md`, `docs/grammar.md` | Core IR, high-level IR and grammar DSL |
 | `docs/decisions.md`, `docs/milestones.md` | Design decisions; milestone summaries and open questions |
 
 ## Building and testing

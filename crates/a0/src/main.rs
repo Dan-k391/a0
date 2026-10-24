@@ -1,4 +1,4 @@
-//! `a0`: work with A0 IR files from the command line.
+//! `a0`: work with A0 IR files (`.a0ir`, core IR; `.hir`, high-level IR) from the command line.
 
 use std::process::ExitCode;
 
@@ -6,11 +6,14 @@ use a0_diag::{Diagnostics, SourceMap};
 use a0_ir::Module;
 use a0_native::Target;
 
-const USAGE: &str = "usage: a0 <command> [options] <file.a0ir>
+const USAGE: &str = "usage: a0 <command> [options] <file>
+
+Files are core IR (.a0ir) or high-level IR (.hir); HIR is lowered to core IR before running.
 
 commands:
   check <file>              parse and verify; print diagnostics
   fmt <file>                print the canonical text form
+  lower <file.hir>          print the core IR a HIR module lowers to
   run <file> [-- args...]   interpret @main and exit with its status
   build <file> [-o out] [--target T] [--no-opt]
                             compile to a native executable (host target only)
@@ -33,6 +36,7 @@ fn main() -> ExitCode {
     match command.as_str() {
         "check" => check(rest),
         "fmt" => fmt(rest),
+        "lower" => lower(rest),
         "run" => run(rest),
         "build" => build(rest, true),
         "obj" => build(rest, false),
@@ -67,15 +71,30 @@ fn single_file(args: &[String]) -> Result<&str, ExitCode> {
     }
 }
 
-/// Reads, parses and verifies an IR file, printing diagnostics on failure.
+fn is_hir(path: &str) -> bool {
+    path.ends_with(".hir")
+}
+
+fn read(path: &str) -> Result<String, ExitCode> {
+    std::fs::read_to_string(path).map_err(|e| {
+        eprintln!("a0: cannot read {path}: {e}");
+        ExitCode::from(2)
+    })
+}
+
+fn load_hir(path: &str, sources: &mut SourceMap) -> Result<a0_hir::HirModule, ExitCode> {
+    let text = read(path)?;
+    let id = sources.add(path, &text);
+    a0_hir::parse(&text, id).map_err(|d| report(sources, &d))
+}
+
+/// Reads, parses and verifies an IR file (lowering HIR first), printing diagnostics on failure.
 fn load(path: &str, sources: &mut SourceMap) -> Result<Module, ExitCode> {
-    let text = match std::fs::read_to_string(path) {
-        Ok(t) => t,
-        Err(e) => {
-            eprintln!("a0: cannot read {path}: {e}");
-            return Err(ExitCode::from(2));
-        }
-    };
+    if is_hir(path) {
+        let hir = load_hir(path, sources)?;
+        return a0_hir::lower(&hir).map_err(|d| report(sources, &d));
+    }
+    let text = read(path)?;
     let id = sources.add(path, &text);
     a0_ir::parse_and_verify(&text, id).map_err(|d| report(sources, &d))
 }
@@ -101,6 +120,33 @@ fn fmt(args: &[String]) -> ExitCode {
         Ok(p) => p,
         Err(c) => return c,
     };
+    if is_hir(path) {
+        return match load_hir(path, &mut SourceMap::new()) {
+            Ok(m) => {
+                print!("{}", a0_hir::print_module(&m));
+                ExitCode::SUCCESS
+            }
+            Err(c) => c,
+        };
+    }
+    match load(path, &mut SourceMap::new()) {
+        Ok(m) => {
+            print!("{}", a0_ir::print_module(&m));
+            ExitCode::SUCCESS
+        }
+        Err(c) => c,
+    }
+}
+
+fn lower(args: &[String]) -> ExitCode {
+    let path = match single_file(args) {
+        Ok(p) => p,
+        Err(c) => return c,
+    };
+    if !is_hir(path) {
+        eprintln!("a0: lower takes a .hir file");
+        return ExitCode::from(2);
+    }
     match load(path, &mut SourceMap::new()) {
         Ok(m) => {
             print!("{}", a0_ir::print_module(&m));

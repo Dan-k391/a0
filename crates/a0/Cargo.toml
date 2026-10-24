@@ -16,3 +16,4 @@ a0-interp.workspace = true
 a0-runtime.workspace = true
 a0-native.workspace = true
 a0-syntax.workspace = true
+a0-hir.workspace = true

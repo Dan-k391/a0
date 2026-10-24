@@ -15,8 +15,9 @@ cargo fmt --all                     # run before committing
 ```
 
 Needs a C compiler: MSVC on Windows (found automatically), `cc` on Linux/macOS. Useful while
-debugging: `a0 run|build|fmt|check file.a0ir`, `a0 parse lang.a0g input`, `lox ir file.lox`,
-`kaleidoscope ir file.k`, `LOX_GC_STRESS=1` (collect on every allocation).
+debugging: `a0 run|build|fmt|check file.a0ir|file.hir`, `a0 lower file.hir` (the core IR a HIR
+module becomes), `a0 parse lang.a0g input`, `lox ir file.lox`, `kaleidoscope ir file.k`, and
+`A0_GC_STRESS=1` (the collector runs on every allocation).
 
 ## Layer map and dependency rules
 
@@ -25,14 +26,16 @@ debugging: `a0 run|build|fmt|check file.a0ir`, `a0 parse lang.a0g input`, `lox i
 | base | `a0-diag` | nothing |
 | frontend | `a0-syntax` (grammar DSL, parser, trees), `a0-sema` (scopes) | `a0-diag` |
 | core IR | `a0-ir` (model, builder, text format, verifier) | `a0-diag` |
+| high-level IR | `a0-hir` (typed tree, builder, checker, text, lowering) | `a0-ir`, `a0-syntax`, `a0-sema`, `a0-diag` |
 | targets | `a0-target` | nothing |
 | runtime | `a0-runtime` (C in `include/`, `c/`; Rust glue) | nothing |
 | backends | `a0-interp`, `a0-native` | `a0-ir`, `a0-runtime`, `a0-target`, `a0-diag` |
 | tools | `a0` (CLI), `a0-build` (build-script helper) | anything |
 | examples | `examples/*` | anything |
 
-Never make a lower layer depend on a higher one, and keep the frontend and the IR independent of each
-other. A new crate goes into the table above and into `[workspace]` in `Cargo.toml`.
+Never make a lower layer depend on a higher one, and keep the frontend and the core IR independent
+of each other. `a0-hir` is the one layer that uses both (its text format is parsed with the grammar
+layer, decision D17). A new crate goes into the table above and into `[workspace]` in `Cargo.toml`.
 
 ## Conventions
 
@@ -54,9 +57,11 @@ other. A new crate goes into the table above and into `[workspace]` in `Cargo.to
 ## Testing requirements
 
 - Every change comes with tests in the crate it touches; bugs get a regression test.
-- **Differential testing**: IR programs in `tests/programs/*.a0ir` declare `; expect-stdout:`,
-  `; expect-stderr:` and `; expect-exit:` and run through both `a0 run` and `a0 build`
-  (`crates/a0/tests/programs.rs`). Add a program there for any new IR or runtime behavior.
+- **Differential testing**: core IR programs in `tests/programs/*.a0ir` and HIR programs in
+  `tests/hir/*.hir` declare `expect-stdout:`, `expect-stderr:` and `expect-exit:` (after `;` or `//`)
+  and run interpreted, natively, and interpreted with `A0_GC_STRESS=1`
+  (`crates/a0/tests/programs.rs`). Add a program there for any new IR, HIR or runtime behavior.
+- HIR text must round-trip: `print(parse(print(m))) == print(m)` is tested for every corpus file.
 - Example languages test interpreted and native output (`examples/*/tests`). The Lox suite must stay
   at all 241 passing in all three modes (interpreted, native, GC stress).
 - Object emission is checked for every supported target except aarch64-windows (out of scope).
@@ -68,6 +73,7 @@ other. A new crate goes into the table above and into `[workspace]` in `Cargo.to
 | When you change | Update |
 |---|---|
 | IR instructions, types, text format, builder | `docs/ir.md` |
+| HIR types, expressions, builtins, text format, lowering | `docs/hir.md` (and `hir.a0g` + `print.rs` together) |
 | Grammar DSL | `docs/grammar.md` |
 | A design choice with alternatives | a new `D<n>` entry in `docs/decisions.md` |
 | A milestone ends | `docs/milestones.md` (done / changed / open questions), `README.md` status |
