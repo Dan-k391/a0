@@ -6,15 +6,22 @@
 
 use std::process::ExitCode;
 
-use a0_driver::{CompileError, ExitCodes, Language, Program};
+use a0_diag::Span;
+use a0_driver::{CompileError, ExitCodes, Language, Message, Program};
 
 fn main() -> ExitCode {
     Language {
         name: "lox",
-        compile: |text, _| match lox::compile_hir(text) {
+        compile: |text, source| match lox::compile_hir(text) {
             Ok(m) => Ok(Program::Hir(m)),
             Err(errors) => Err(CompileError::Messages(
-                errors.iter().map(ToString::to_string).collect(),
+                errors
+                    .iter()
+                    .map(|e| {
+                        let span = Span::new(source, e.offset, e.end);
+                        Message::new(&e.to_string(), Some(span))
+                    })
+                    .collect(),
             )),
         },
         // The BSD sysexits codes jlox uses: EX_USAGE, EX_NOINPUT, EX_DATAERR.
@@ -27,6 +34,7 @@ fn main() -> ExitCode {
         run_by_default: true,
         host_symbols: None,
         libraries: None,
+        grammar: Some(lox::GRAMMAR),
     }
     .main()
 }

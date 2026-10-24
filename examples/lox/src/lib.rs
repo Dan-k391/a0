@@ -46,8 +46,9 @@ pub struct CompileError {
     pub line: u32,
     pub place: ErrorPlace,
     pub message: String,
-    /// Byte offset, for ordering errors by position.
+    /// Byte offsets of what the error is about; `offset` also orders errors by position.
     pub offset: u32,
+    pub end: u32,
 }
 
 impl fmt::Display for CompileError {
@@ -101,6 +102,7 @@ pub fn compile_hir(text: &str) -> Result<HirModule, Vec<CompileError>> {
                 place,
                 message: d.message.clone(),
                 offset: span.start,
+                end: span.end,
             }
         })
         .collect();
@@ -148,6 +150,7 @@ impl Lines<'_> {
             place: ErrorPlace::Token(tree.text(token).to_string()),
             message: message.to_string(),
             offset: tree.span(token).start,
+            end: tree.span(token).end,
         }
     }
 }

@@ -485,6 +485,47 @@ One entry per milestone: what was done, what changed along the way, and open que
   a frame (they could be inline loads and stores), the indirect call through the closure, and Lox's
   own depth counter for its "Stack overflow." error.
 
+## M15. A language server for every language
+
+**Done**
+
+- Grammar annotations for names (D31, `docs/grammar.md`): `@def(kind)`, `@def(kind: field)` and
+  `@scope`. `SyntaxIndex` in `a0-syntax` turns a parsed file into classified tokens, declared
+  symbols with their nesting, and resolved references; it works on files with syntax errors.
+- `lang lsp` in `a0-driver` (D32, `docs/editors.md`): diagnostics from the language's compiler,
+  semantic highlighting, the outline, go-to-definition and hovers from the index, and types on hover
+  from the HIR when the compiler records spans (Minnow shows `variable total: int`). It speaks UTF-16
+  positions, survives a panicking compiler, and needs about 400 lines plus a 300-line JSON module.
+- Languages give the driver their grammar (`grammar: Some(GRAMMAR)`) and nothing else. Lox, Minnow
+  and Kaleidoscope needed 7, 13 and 6 annotations; Lox's own-format errors now carry spans
+  (`a0_driver::Message`), so editors can place them.
+- `editors/vscode`: a generic VS Code client that starts `<command> lsp` for configured file types.
+  Checked by hand in VS Code 1.143 on Windows with Lox: highlighting, the error squiggle, the outline
+  and hovers all appear.
+- Tests: the index (scoping, shadowing, hoisting, members, syntax errors, token classes, bad
+  annotations), a protocol session in the driver (every request, UTF-16 columns, split multi-line
+  tokens, malformed input, a compiler panic), and `tests/lsp.rs` in each example language, which
+  runs its real server.
+
+  | Lines | M14 | M15 |
+  |---|---|---|
+  | Lox (grammar + Rust + prelude) | 1658 | 1675 |
+  | Minnow (grammar + Rust) | 692 | 705 |
+
+  The growth is layout: annotated rules put `=` on a line of its own.
+
+**Changed**
+
+- `CompileError::Messages` holds `Message`s (text and an optional span) instead of strings.
+- VS Code's themes color names from semantic tokens but keywords, strings, numbers and comments only
+  through a TextMate grammar; the extension maps those token types to TextMate scopes for the
+  languages it declares, so no language needs a TextMate grammar.
+
+**Open questions**
+
+- None. Resolution is lexical (a member name refers to every member of that name); renaming,
+  completion and find-references are not implemented and can be built on `SyntaxIndex`.
+
 ## Overall open questions
 
 These need a decision from you:

@@ -15,8 +15,8 @@ program = (!EOF item)* EOF;
 item @inline @recover(after ";" before "def" "extern")
     = definition | external | toplevel | ";";
 
-definition = "def" proto:prototype body:expr;
-external = "extern" proto:prototype;
+definition @def(function) @scope = "def" proto:prototype body:expr;
+external @def(function) = "extern" proto:prototype;
 toplevel = expr:expr;
 
 prototype = "binary" op:opchar ~ "expected an operator character after 'binary'"
@@ -27,7 +27,7 @@ prototype = "binary" op:opchar ~ "expected an operator character after 'binary'"
           | name:IDENT ~ "expected a function name in prototype"
             "(" ~ "expected '(' in prototype" params:params ")" ~ "expected ')' in prototype";
 
-params = param:IDENT*;
+params @def(parameter: param) = param:IDENT*;
 
 opchar @inline = OPCHAR | "=";
 
@@ -49,11 +49,14 @@ paren = "(" inner:expr ")" ~ "expected ')'";
 
 if_expr = "if" cond:expr "then" ~ "expected 'then'" then:expr "else" ~ "expected 'else'" else:expr;
 
-for_expr = "for" var:IDENT ~ "expected an identifier after 'for'"
-           "=" ~ "expected '=' after the loop variable" start:expr
-           "," ~ "expected ',' after the start value" end:expr
-           ("," step:expr)?
-           "in" ~ "expected 'in' after the loop header" body:expr;
+for_expr @def(variable: var) @scope
+    = "for" var:IDENT ~ "expected an identifier after 'for'"
+      "=" ~ "expected '=' after the loop variable" start:expr
+      "," ~ "expected ',' after the start value" end:expr
+      ("," step:expr)?
+      "in" ~ "expected 'in' after the loop header" body:expr;
 
-var_expr = "var" binding:var_binding ("," binding:var_binding)* "in" ~ "expected 'in' after 'var'" body:expr;
-var_binding = name:IDENT ~ "expected an identifier after 'var'" ("=" init:expr)?;
+var_expr @scope
+    = "var" binding:var_binding ("," binding:var_binding)*
+      "in" ~ "expected 'in' after 'var'" body:expr;
+var_binding @def(variable) = name:IDENT ~ "expected an identifier after 'var'" ("=" init:expr)?;

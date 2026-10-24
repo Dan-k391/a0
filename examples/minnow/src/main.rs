@@ -15,6 +15,7 @@ fn main() -> ExitCode {
         run_by_default: false,
         host_symbols: None,
         libraries: None,
+        grammar: Some(minnow::GRAMMAR),
     }
     .main()
 }

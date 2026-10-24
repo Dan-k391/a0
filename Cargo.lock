@@ -36,6 +36,7 @@ dependencies = [
  "a0-ir",
  "a0-native",
  "a0-runtime",
+ "a0-syntax",
 ]
 
 [[package]]

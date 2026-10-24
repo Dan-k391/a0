@@ -14,40 +14,46 @@ program = (!EOF declaration)* EOF;
 declaration @inline @recover(after ";" before "class" "fun" "var" "for" "if" "while" "print" "return")
     = class_decl | fun_decl | var_decl | statement;
 
-class_decl = "class" name:IDENTIFIER ~ "Expect class name."
-             ("<" superclass:IDENTIFIER ~ "Expect superclass name.")?
-             "{" ~ "Expect '{' before class body."
-             (!"}" !EOF methods:method)*
-             "}" ~ "Expect '}' after class body.";
+class_decl @def(class) @scope
+    = "class" name:IDENTIFIER ~ "Expect class name."
+      ("<" superclass:IDENTIFIER ~ "Expect superclass name.")?
+      "{" ~ "Expect '{' before class body."
+      (!"}" !EOF methods:method)*
+      "}" ~ "Expect '}' after class body.";
 
-fun_decl = "fun" name:IDENTIFIER ~ "Expect function name."
-           "(" ~ "Expect '(' after function name."
-           params:parameters?
-           ")" ~ "Expect ')' after parameters."
-           body:block ~ "Expect '{' before function body.";
+fun_decl @def(function) @scope
+    = "fun" name:IDENTIFIER ~ "Expect function name."
+      "(" ~ "Expect '(' after function name."
+      params:parameters?
+      ")" ~ "Expect ')' after parameters."
+      body:block ~ "Expect '{' before function body.";
 
-method = name:IDENTIFIER ~ "Expect method name."
-         "(" ~ "Expect '(' after method name."
-         params:parameters?
-         ")" ~ "Expect ')' after parameters."
-         body:block ~ "Expect '{' before method body.";
+method @def(method) @scope
+    = name:IDENTIFIER ~ "Expect method name."
+      "(" ~ "Expect '(' after method name."
+      params:parameters?
+      ")" ~ "Expect ')' after parameters."
+      body:block ~ "Expect '{' before method body.";
 
-parameters = param:IDENTIFIER ~ "Expect parameter name."
-             ("," param:IDENTIFIER ~ "Expect parameter name.")*;
+parameters @def(parameter: param)
+    = param:IDENTIFIER ~ "Expect parameter name."
+      ("," param:IDENTIFIER ~ "Expect parameter name.")*;
 
-var_decl = "var" name:IDENTIFIER ~ "Expect variable name."
-           ("=" init:expression)?
-           ";" ~ "Expect ';' after variable declaration.";
+var_decl @def(variable)
+    = "var" name:IDENTIFIER ~ "Expect variable name."
+      ("=" init:expression)?
+      ";" ~ "Expect ';' after variable declaration.";
 
 statement @inline = for_stmt | if_stmt | print_stmt | return_stmt | while_stmt | block | expr_stmt;
 
 expr_stmt = expr:expression ";" ~ "Expect ';' after expression.";
 
-for_stmt = "for" "(" ~ "Expect '(' after 'for'."
-           (";" | init:var_decl | init:expr_stmt)
-           cond:expression? ";" ~ "Expect ';' after loop condition."
-           incr:expression? ")" ~ "Expect ')' after for clauses."
-           body:statement;
+for_stmt @scope
+    = "for" "(" ~ "Expect '(' after 'for'."
+      (";" | init:var_decl | init:expr_stmt)
+      cond:expression? ";" ~ "Expect ';' after loop condition."
+      incr:expression? ")" ~ "Expect ')' after for clauses."
+      body:statement;
 
 if_stmt = "if" "(" ~ "Expect '(' after 'if'." cond:expression ")" ~ "Expect ')' after if condition."
           then:statement ("else" else:statement)?;
@@ -59,7 +65,7 @@ return_stmt = "return" value:expression? ";" ~ "Expect ';' after return value.";
 while_stmt = "while" "(" ~ "Expect '(' after 'while'." cond:expression ")" ~ "Expect ')' after condition."
              body:statement;
 
-block = "{" (!"}" !EOF declaration)* "}" ~ "Expect '}' after block.";
+block @scope = "{" (!"}" !EOF declaration)* "}" ~ "Expect '}' after block.";
 
 expression @inline = @prec primary ~ "Expect expression." {
     right "=" => assign;

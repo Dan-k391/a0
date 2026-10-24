@@ -1,0 +1,72 @@
+{
+  "name": "a0-languages",
+  "displayName": "A0 languages",
+  "description": "Editor support for languages built on A0: diagnostics, highlighting, outline, go to definition and hover, from each language's `lsp` command.",
+  "version": "0.1.0",
+  "publisher": "a0",
+  "license": "MIT",
+  "private": true,
+  "engines": {
+    "vscode": "^1.82.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "main": "./extension.js",
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "contributes": {
+    "languages": [
+      {
+        "id": "lox",
+        "aliases": ["Lox"],
+        "extensions": [".lox"],
+        "configuration": "./slash-comments.json"
+      },
+      {
+        "id": "minnow",
+        "aliases": ["Minnow"],
+        "extensions": [".mn"],
+        "configuration": "./slash-comments.json"
+      },
+      {
+        "id": "kaleidoscope",
+        "aliases": ["Kaleidoscope"],
+        "extensions": [".k"],
+        "configuration": "./hash-comments.json"
+      }
+    ],
+    "semanticTokenScopes": [
+      { "language": "lox", "scopes": { "keyword": ["keyword.control"], "comment": ["comment"], "string": ["string"], "number": ["constant.numeric"], "operator": ["keyword.operator"] } },
+      { "language": "minnow", "scopes": { "keyword": ["keyword.control"], "comment": ["comment"], "string": ["string"], "number": ["constant.numeric"], "operator": ["keyword.operator"] } },
+      { "language": "kaleidoscope", "scopes": { "keyword": ["keyword.control"], "comment": ["comment"], "string": ["string"], "number": ["constant.numeric"], "operator": ["keyword.operator"] } }
+    ],
+    "configuration": {
+      "title": "A0 languages",
+      "properties": {
+        "a0.languages": {
+          "type": "array",
+          "description": "Languages to start a language server for. `command` is the language's driver (run as `command lsp`); `extensions` match files by name, `language` by VS Code language id.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "language": { "type": "string" },
+              "extensions": { "type": "array", "items": { "type": "string" } },
+              "command": { "type": "string" }
+            },
+            "required": ["command"]
+          },
+          "default": [
+            { "language": "lox", "extensions": [".lox"], "command": "lox" },
+            { "language": "minnow", "extensions": [".mn"], "command": "minnow" },
+            { "language": "kaleidoscope", "extensions": [".k"], "command": "kaleidoscope" }
+          ]
+        }
+      }
+    }
+  },
+  "dependencies": {
+    "vscode-languageclient": "9.0.1"
+  }
+}

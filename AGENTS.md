@@ -22,6 +22,8 @@ Needs a C compiler: MSVC on Windows (found automatically), `cc` on Linux/macOS. 
 debugging: `a0 run|build|fmt|check file.a0ir|file.hir`, `a0 lower file.hir` (the core IR a HIR
 module becomes), `a0 parse lang.a0g input`, `lox hir|ir file.lox`, `minnow hir|ir file.mn`, `kaleidoscope ir file.k`, and
 `A0_GC_STRESS=1` (the collector runs on every allocation), `A0_OPT=0` (no HIR optimizer).
+Every language driver also has `lang lsp`, the language server (`docs/editors.md`); the VS Code
+extension in `editors/vscode` starts it.
 
 ## Layer map and dependency rules
 
@@ -36,6 +38,7 @@ module becomes), `a0 parse lang.a0g input`, `lox hir|ir file.lox`, `minnow hir|i
 | backends | `a0-interp`, `a0-native` | `a0-ir`, `a0-runtime`, `a0-target`, `a0-diag` |
 | tools | `a0` (CLI), `a0-build` (build-script helper), `a0-driver` (language drivers) | anything |
 | examples | `examples/*` | anything |
+| editors | `editors/vscode` (an extension that starts `lang lsp`; JavaScript) | nothing in Rust |
 
 Never make a lower layer depend on a higher one, and keep the frontend and the core IR independent
 of each other. `a0-hir` is the one layer that uses both (its text format is parsed with the grammar
@@ -70,6 +73,8 @@ layer, decision D17). A new crate goes into the table above and into `[workspace
 - Example languages test interpreted and native output (`examples/*/tests`); languages on the HIR
   (Lox, Minnow) also run under GC stress, optimized and not. The Lox suite must stay at all 241
   passing in all six modes.
+- Each example language has `tests/lsp.rs`: its server's outline, definitions, hovers and
+  diagnostics on a small program, through `a0_driver::lsp::session`.
 - Object emission is checked for every supported target except aarch64-windows (out of scope).
 - Runtime or GC changes: run the Lox suite under GC stress, and prove the stress test still fails
   when roots are broken if you touch rooting.
@@ -80,7 +85,8 @@ layer, decision D17). A new crate goes into the table above and into `[workspace
 |---|---|
 | IR instructions, types, text format, builder | `docs/ir.md` |
 | HIR types, expressions, builtins, text format, lowering | `docs/hir.md` (and `hir.a0g` + `print.rs` together) |
-| Grammar DSL | `docs/grammar.md` |
+| Grammar DSL (including `@def`/`@scope`) | `docs/grammar.md` |
+| The language server or the editor extension | `docs/editors.md` |
 | A design choice with alternatives | a new `D<n>` entry in `docs/decisions.md` |
 | A milestone ends | `docs/milestones.md` (done / changed / open questions), `README.md` status |
 | A workflow or convention | this file and `.claude/skills/` |

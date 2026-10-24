@@ -8,17 +8,26 @@
 //! lang build <file> [-o output]  compile it to a native executable for the host
 //! lang ir <file>                 print the core IR
 //! lang hir <file>                print the HIR (languages that compile to the HIR)
+//! lang lsp                       serve the Language Server Protocol on stdin and stdout
 //! lang <file> [args...]          the same as `run`, if the language says so
 //! ```
 //!
 //! Compile errors are A0 diagnostics, rendered against the source the way rustc renders them, or
 //! messages the language formats itself (for a prescribed format, like jlox's). When a program runs,
 //! its exit status is passed through; the driver's own failures use the language's [`ExitCodes`].
+//!
+//! The language server (`lsp`) needs nothing more from a language: its diagnostics come from the
+//! compiler, and highlighting, the outline, go-to-definition and hovers from the grammar's `@def`
+//! and `@scope` annotations (`docs/grammar.md`) and the HIR the compiler builds.
 
+pub mod json;
+pub mod lsp;
+
+use std::io::{BufRead, Write};
 use std::path::Path;
 use std::process::ExitCode;
 
-use a0_diag::{Diagnostics, SourceId, SourceMap};
+use a0_diag::{Diagnostics, SourceId, SourceMap, Span};
 
 /// What a compiler produces.
 pub enum Program {
@@ -33,7 +42,23 @@ pub enum CompileError {
     /// Diagnostics with spans into the source file.
     Diagnostics(Diagnostics),
     /// Messages in the language's own format, printed one per line.
-    Messages(Vec<String>),
+    Messages(Vec<Message>),
+}
+
+/// A compile error in the language's own format, with where it is (for editors).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Message {
+    pub text: String,
+    pub span: Option<Span>,
+}
+
+impl Message {
+    pub fn new(text: &str, span: Option<Span>) -> Message {
+        Message {
+            text: text.to_string(),
+            span,
+        }
+    }
 }
 
 /// The exit statuses of the driver's own failures.
@@ -74,6 +99,8 @@ pub struct Language {
     pub host_symbols: Option<fn() -> a0_interp::HostSymbols>,
     /// Static libraries to link into executables (a language's own C runtime).
     pub libraries: Option<fn() -> Vec<a0_native::Library>>,
+    /// The language's grammar (the text of its `.a0g` file), for the language server.
+    pub grammar: Option<&'static str>,
 }
 
 /// A parsed command line.
@@ -93,6 +120,7 @@ pub enum Command {
     Build,
     Ir,
     Hir,
+    Lsp,
 }
 
 impl Language {
@@ -108,6 +136,11 @@ impl Language {
             eprint!("{}", self.usage());
             return ExitCode::from(self.exit_codes.usage);
         };
+        if inv.command == Command::Lsp {
+            let stdin = std::io::stdin();
+            let code = self.serve_lsp(&mut stdin.lock(), &mut std::io::stdout());
+            return ExitCode::from(code);
+        }
         let text = match std::fs::read_to_string(&inv.file) {
             Ok(t) => t,
             Err(e) => {
@@ -125,7 +158,7 @@ impl Language {
             }
             Err(CompileError::Messages(messages)) => {
                 for m in messages {
-                    eprintln!("{m}");
+                    eprintln!("{}", m.text);
                 }
                 return ExitCode::from(self.exit_codes.compile);
             }
@@ -184,8 +217,14 @@ impl Language {
                     Err(d) => self.internal_error(&d, &sources),
                 }
             }
-            Command::Hir => unreachable!("handled above"),
+            Command::Hir | Command::Lsp => unreachable!("handled above"),
         }
+    }
+
+    /// Serves the Language Server Protocol until the client exits or the input ends; returns the
+    /// exit status (0 after a `shutdown` request).
+    pub fn serve_lsp(&self, input: &mut dyn BufRead, output: &mut dyn Write) -> u8 {
+        lsp::serve(self, input, output)
     }
 
     fn internal_error(&self, d: &Diagnostics, sources: &SourceMap) -> ExitCode {
@@ -195,6 +234,14 @@ impl Language {
 
     /// Parses a command line, or returns `None` if it is not valid.
     pub fn parse_args(&self, args: &[String]) -> Option<Invocation> {
+        if args.len() == 1 && args[0] == "lsp" {
+            return Some(Invocation {
+                command: Command::Lsp,
+                file: String::new(),
+                output: None,
+                args: Vec::new(),
+            });
+        }
         let (command, rest) = match args.first().map(String::as_str) {
             Some("run") => (Command::Run, &args[1..]),
             Some("build") => (Command::Build, &args[1..]),
@@ -232,7 +279,8 @@ impl Language {
              \x20 run <file> [args...]   interpret the program{run}\n\
              \x20 build <file> [-o out]  compile it to a native executable\n\
              \x20 ir <file>              print the core IR\n\
-             \x20 hir <file>             print the high-level IR\n"
+             \x20 hir <file>             print the high-level IR\n\
+             \x20 lsp                    serve the Language Server Protocol on stdin/stdout\n"
         )
     }
 }
@@ -249,6 +297,7 @@ mod tests {
             run_by_default,
             host_symbols: None,
             libraries: None,
+            grammar: None,
         }
     }
 
@@ -273,6 +322,7 @@ mod tests {
             l.parse_args(&args("hir a.d")).unwrap().command,
             Command::Hir
         );
+        assert_eq!(l.parse_args(&args("lsp")).unwrap().command, Command::Lsp);
         for bad in [
             "",
             "run",
@@ -280,6 +330,7 @@ mod tests {
             "ir a.d extra",
             "build a.d -x out",
             "build a.d -o",
+            "lsp a.d",
         ] {
             assert!(
                 l.parse_args(&args(bad)).is_none(),

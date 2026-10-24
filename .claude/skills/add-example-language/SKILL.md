@@ -14,7 +14,9 @@ output, and report errors with source locations.
    uses through `workspace = true`. If it ships C: `build = "build.rs"`, a direct dependency on
    `a0-runtime`, and `a0-build` as a build-dependency.
 2. `examples/foo/foo.a0g` - the grammar (`docs/grammar.md`). Try it with
-   `a0 parse examples/foo/foo.a0g sample.foo` before writing the compiler.
+   `a0 parse examples/foo/foo.a0g sample.foo` before writing the compiler. Mark declarations with
+   `@def(kind)` / `@def(kind: field)` and scopes with `@scope`: that is all the language server
+   needs for its outline, highlighting, go-to-definition and hovers.
 3. `examples/foo/src/lib.rs` - `compile(text, SourceId) -> Result<HirModule, Diagnostics>`; load
    the grammar with `include_str!`; build HIR by name with the builder's frontend helpers
    (`begin_body`, `let_named`, `name`, `call_named`, `named_type`, `new_struct_named`; see
@@ -29,13 +31,16 @@ output, and report errors with source locations.
    `const A0Symbol foo_symbols[]` table. `build.rs` calls
    `a0_build::runtime_library("foo_rt", &["runtime/foo.c"])`; `lib.rs` exposes `runtime_library()`
    (for linking) and `host_symbols()` (for the interpreter). See `examples/kaleidoscope`.
-5. `examples/foo/src/main.rs` - an `a0_driver::Language` (name, compile function, exit codes, and
-   for a C runtime its host symbols and libraries) and `.main()`. The driver provides `run`,
-   `build`, `ir` and `hir`, renders diagnostics and maps failures to the exit codes. Do not write a
-   driver by hand.
+5. `examples/foo/src/main.rs` - an `a0_driver::Language` (name, compile function, exit codes, the
+   grammar text for the language server, and for a C runtime its host symbols and libraries) and
+   `.main()`. The driver provides `run`, `build`, `ir`, `hir` and `lsp`, renders diagnostics and maps
+   failures to the exit codes. Do not write a driver by hand. Errors in the language's own format
+   (`CompileError::Messages`) carry spans so editors can place them.
 6. `examples/foo/tests/` - programs with expected output, run both interpreted and as native
    executables (copy the harness in `examples/kaleidoscope/tests/kaleidoscope.rs`), plus
-   diagnostic tests that check message text and `file:line:col`.
+   diagnostic tests that check message text and `file:line:col`, and `tests/lsp.rs`, which runs
+   the language server on a small program with `a0_driver::lsp::session` (copy
+   `examples/minnow/tests/lsp.rs`) and checks the outline, a definition, a hover and a diagnostic.
 7. `examples/foo/README.md` - what the language is, the file map, deliberate differences.
 
 ## Files to update
@@ -43,6 +48,8 @@ output, and report errors with source locations.
 - Root `Cargo.toml`: add `examples/foo` to `members`.
 - `README.md`: the layout table (and status if it is a milestone).
 - `AGENTS.md`: anything that changes how to build or test.
+- `editors/vscode/package.json`: a `contributes.languages` entry, its `semanticTokenScopes` and an
+  `a0.languages` default, so VS Code starts `foo lsp` for its files.
 - `docs/milestones.md`: the milestone summary when it lands.
 
 ## When extending an existing language

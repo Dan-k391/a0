@@ -289,3 +289,29 @@ the slots it used, and blocks reuse the slots of blocks before them. Under `A0_G
 the same time, reference locals became IR variables written through to their slots instead of
 being reloaded from them, which the non-moving collector (D16, D18) allows. Hand-written users of
 the frame API clear their frames before popping (`a0rt.h`).
+
+## D31. Editors learn a language's names from grammar annotations
+
+Editor support needs to know what a file declares and what each name refers to. Three sources were
+considered. The compiler's own name resolution is exact, but only frontends that build HIR by name
+(D26) go through the framework's resolver; Lox has its own resolver and Kaleidoscope emits core IR,
+so both would need code just for editors. Heuristics over the syntax tree (a field called `name`
+declares something) fail on common grammars: `new Point { x: 1 }` and `struct Point { x: int }` have
+the same shape. So the grammar says it, declaratively, like it already says `@inline` and
+`@recover`: `@def(kind)` marks a rule whose nodes declare a name, `@def(kind: field)` one whose tokens
+in `field` do, and `@scope` a rule that opens a scope. `SyntaxIndex` (in `a0-syntax`) resolves names
+lexically from these and classifies tokens from the grammar's own lexer. It is approximate where types
+matter (a member name refers to every member of that name), and the language server adds types from
+the HIR when the compiler records spans. Lox, Minnow and Kaleidoscope needed 6 to 13 annotations
+each and no code.
+
+## D32. The language server lives in the driver and writes its own JSON
+
+`lang lsp` is a command of `a0-driver`, so every language that uses the driver has a server without
+writing one: diagnostics from its compiler, everything else from D31. The protocol needs JSON;
+`a0-driver` has a small JSON module of its own (about 300 lines with tests) instead of depending on
+`serde_json`, since it needs only values, a parser and a printer, and the driver stays free of
+dependencies outside the workspace. The server is single-threaded, keeps whole documents and
+re-analyzes a document on every change; the example languages compile in milliseconds, so there is
+no need yet for incremental analysis or cancellation. Editors are reached through the protocol only:
+`editors/vscode` is a generic client that starts `<command> lsp` for configured file types.

@@ -36,6 +36,7 @@ it directly.
 | 12. Frontend API: a typed language without a checker | done: Minnow 1513 → 692 lines, with more features |
 | 13. An optimizer of our own, on by default | done: inlining, `any` folding, cleanup; `A0_OPT=0` turns it off |
 | 14. Native Lox at least as fast as its hand-written runtime | done: 0.30 to 0.97 of the old time on every benchmark |
+| 15. A language server for every language | done: `lang lsp` from grammar annotations; a VS Code extension |
 
 `docs/milestones.md` has the summary of each milestone and the open questions.
 
@@ -53,14 +54,16 @@ it directly.
 | `crates/a0-native` | Native code through Cranelift, linked by the system linker |
 | `crates/a0-runtime` | The C runtime (`include/a0rt.h`, `c/`) and its Rust build glue |
 | `crates/a0-build` | Build-script helper for languages that ship a C runtime library (Kaleidoscope) |
-| `crates/a0-driver` | The command-line driver every example language uses (run, build, ir, hir) |
+| `crates/a0-driver` | The command-line driver every example language uses (run, build, ir, hir, lsp) |
 | `crates/a0` | The `a0` command-line tool |
 | `examples/kaleidoscope` | Kaleidoscope (LLVM's tutorial language) end to end |
 | `examples/lox` | Lox (Crafting Interpreters) end to end, with the official test suite |
 | `examples/minnow` | Minnow, a small statically typed language with structs, arrays and closures |
+| `editors/vscode` | A VS Code extension that starts each language's server (`lang lsp`) |
 | `tests/programs`, `tests/hir` | Core IR and HIR programs with expected output, run by both backends |
 | `AGENTS.md`, `.claude/skills` | How to work on A0: commands, layer rules, conventions, workflows |
 | `docs/ir.md`, `docs/hir.md`, `docs/grammar.md` | Core IR, high-level IR and grammar DSL |
+| `docs/editors.md` | The language server every language gets, and editor setup |
 | `docs/decisions.md`, `docs/milestones.md` | Design decisions; milestone summaries and open questions |
 
 ## Building and testing
@@ -91,12 +94,14 @@ a0 lower prog.hir                         # print the core IR a HIR module lower
 kaleidoscope run examples/kaleidoscope/tests/programs/mandelbrot.k
 lox script.lox                            # like jlox; `lox build script.lox` for an executable
 minnow run examples/minnow/tests/programs/closures.mn
+lox lsp                                   # the language server, for editors (docs/editors.md)
 ```
 
 ## Writing a language with A0
 
 1. Write a grammar (`docs/grammar.md`): tokens, rules, `@prec` operator tables, `~ "message"` error
-   messages, `@recover` for panic-mode recovery. Try it with `a0 parse`.
+   messages, `@recover` for panic-mode recovery, and `@def`/`@scope` to mark declarations and scopes
+   for editors. Try it with `a0 parse`.
 2. Walk the `SyntaxTree` once and build HIR with `a0_hir::HirBuilder` (`docs/hir.md`): strings,
    collections, structs, enums, generics, closures, nullable references, `any` and garbage
    collection are built in. Build by name (`let_named`, `name`, `call_named`, `named_type`, ...)
@@ -104,8 +109,10 @@ minnow run examples/minnow/tests/programs/closures.mn
    terms, so there is no checker to write. Runtime support can be written in HIR text and parsed
    with `a0_hir::parse`. For full control, emit the core IR with `a0_ir::Builder` instead
    (variables instead of SSA, `if_`/`loop_` for control flow).
-3. Give `a0_driver::Language` your compile function: it provides `run` (interpreter), `build`
-   (native executable), `ir` and `hir`, renders diagnostics and maps errors to your exit codes. Or
+3. Give `a0_driver::Language` your compile function and grammar: it provides `run` (interpreter),
+   `build` (native executable), `ir`, `hir` and `lsp` (a language server with diagnostics,
+   highlighting, outline, go-to-definition and hover, `docs/editors.md`), renders diagnostics and
+   maps errors to your exit codes. Or
    call `a0_hir::lower`, `a0_interp` and `a0_native::build_executable` yourself. A language that
    needs C support code ships it with `a0_build::runtime_library`.
 

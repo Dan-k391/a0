@@ -1,0 +1,1020 @@
+//! A Language Server Protocol server for any language built on A0 (`lang lsp`).
+//!
+//! Everything comes from what a language already gives the driver: diagnostics from its compiler;
+//! highlighting, the outline, go-to-definition and the declarations shown on hover from its grammar's
+//! `@def` and `@scope` annotations ([`SyntaxIndex`]); and types on hover from the HIR its compiler
+//! builds, when it builds one with spans. The server speaks JSON-RPC on stdin and stdout, keeps whole
+//! documents (full sync), and analyzes a document each time it changes.
+
+use std::collections::HashMap;
+use std::io::{self, BufRead, Write};
+use std::panic::{AssertUnwindSafe, catch_unwind};
+
+use a0_diag::{Severity, SourceId, SourceMap, Span};
+use a0_hir::{HirModule, Item};
+use a0_syntax::{Grammar, SymbolKind, SyntaxIndex, TokenClass};
+
+use crate::json::Json;
+use crate::{CompileError, Language, Program};
+
+/// Semantic token types, in the order of the legend sent to the client.
+const TOKEN_TYPES: [&str; 17] = [
+    "keyword",
+    "operator",
+    "number",
+    "string",
+    "comment",
+    "function",
+    "method",
+    "class",
+    "struct",
+    "enum",
+    "enumMember",
+    "property",
+    "variable",
+    "parameter",
+    "typeParameter",
+    "type",
+    "namespace",
+];
+
+fn token_type(name: &str) -> u32 {
+    TOKEN_TYPES.iter().position(|&t| t == name).unwrap() as u32
+}
+
+fn symbol_token_type(kind: SymbolKind) -> &'static str {
+    match kind {
+        SymbolKind::Function => "function",
+        SymbolKind::Method => "method",
+        SymbolKind::Class => "class",
+        SymbolKind::Struct => "struct",
+        SymbolKind::Enum => "enum",
+        SymbolKind::Variant => "enumMember",
+        SymbolKind::Field => "property",
+        SymbolKind::Variable | SymbolKind::Constant => "variable",
+        SymbolKind::Parameter => "parameter",
+        SymbolKind::TypeParameter => "typeParameter",
+        SymbolKind::Type => "type",
+        SymbolKind::Module => "namespace",
+    }
+}
+
+/// The protocol's `SymbolKind` numbers.
+fn lsp_symbol_kind(kind: SymbolKind) -> u32 {
+    match kind {
+        SymbolKind::Module => 2,
+        SymbolKind::Class | SymbolKind::Type => 5,
+        SymbolKind::Method => 6,
+        SymbolKind::Field => 8,
+        SymbolKind::Enum => 10,
+        SymbolKind::Function => 12,
+        SymbolKind::Variable | SymbolKind::Parameter => 13,
+        SymbolKind::Constant => 14,
+        SymbolKind::Variant => 22,
+        SymbolKind::Struct => 23,
+        SymbolKind::TypeParameter => 26,
+    }
+}
+
+/// Byte offsets of line starts, for converting to and from the protocol's positions (lines and
+/// UTF-16 code units).
+struct Lines {
+    starts: Vec<u32>,
+}
+
+impl Lines {
+    fn new(text: &str) -> Lines {
+        let mut starts = vec![0];
+        starts.extend(text.match_indices('\n').map(|(i, _)| i as u32 + 1));
+        Lines { starts }
+    }
+
+    fn position(&self, text: &str, offset: u32) -> (u32, u32) {
+        let offset = offset.min(text.len() as u32);
+        let line = self.starts.partition_point(|&s| s <= offset) - 1;
+        let start = self.starts[line] as usize;
+        let character = text[start..offset as usize]
+            .chars()
+            .map(char::len_utf16)
+            .sum::<usize>();
+        (line as u32, character as u32)
+    }
+
+    fn offset(&self, text: &str, line: u32, character: u32) -> u32 {
+        let Some(&start) = self.starts.get(line as usize) else {
+            return text.len() as u32;
+        };
+        let mut units = 0;
+        for (i, c) in text[start as usize..].char_indices() {
+            if units >= character as usize || c == '\n' {
+                return start + i as u32;
+            }
+            units += c.len_utf16();
+        }
+        text.len() as u32
+    }
+
+    fn range(&self, text: &str, start: u32, end: u32) -> Json {
+        let (sl, sc) = self.position(text, start);
+        let (el, ec) = self.position(text, end);
+        Json::object([
+            (
+                "start",
+                Json::object([("line", sl.into()), ("character", sc.into())]),
+            ),
+            (
+                "end",
+                Json::object([("line", el.into()), ("character", ec.into())]),
+            ),
+        ])
+    }
+}
+
+/// An open document and what is known about it.
+struct Document {
+    text: String,
+    lines: Lines,
+    index: Option<SyntaxIndex>,
+    hir: Option<HirModule>,
+    source: SourceId,
+}
+
+struct Server<'a> {
+    lang: &'a Language,
+    grammar: Option<Grammar>,
+    docs: HashMap<String, Document>,
+    out: &'a mut dyn Write,
+}
+
+/// Serves the protocol until `exit` or the end of the input. Returns the process exit status: 0
+/// after a `shutdown` request, 1 otherwise (as the protocol asks).
+pub(crate) fn serve(lang: &Language, input: &mut dyn BufRead, output: &mut dyn Write) -> u8 {
+    let grammar = lang
+        .grammar
+        .and_then(|text| match Grammar::from_str(text, SourceId(u32::MAX)) {
+            Ok(g) => Some(g),
+            Err(d) => {
+                eprintln!("{}: the grammar does not load:\n{}", lang.name, d.summary());
+                None
+            }
+        });
+    let mut server = Server {
+        lang,
+        grammar,
+        docs: HashMap::new(),
+        out: output,
+    };
+    let mut shut_down = false;
+    loop {
+        let message = match read_message(input) {
+            Ok(Some(m)) => m,
+            Ok(None) => return if shut_down { 0 } else { 1 },
+            Err(e) => {
+                eprintln!("{}: {e}", lang.name);
+                return 1;
+            }
+        };
+        let message = match Json::parse(&message) {
+            Ok(m) => m,
+            Err(e) => {
+                server.error(&Json::Null, -32700, &format!("invalid JSON: {e}"));
+                continue;
+            }
+        };
+        let id = message.get("id").clone();
+        let params = message.get("params");
+        match message.get("method").as_str().unwrap_or("") {
+            "initialize" => {
+                let result = server.capabilities();
+                server.respond(&id, result);
+            }
+            "shutdown" => {
+                shut_down = true;
+                server.respond(&id, Json::Null);
+            }
+            "exit" => return if shut_down { 0 } else { 1 },
+            "textDocument/didOpen" => {
+                let doc = params.get("textDocument");
+                if let (Some(uri), Some(text)) = (doc.get("uri").as_str(), doc.get("text").as_str())
+                {
+                    server.update(uri, text.to_string());
+                }
+            }
+            "textDocument/didChange" => {
+                let uri = params.get("textDocument").get("uri").as_str();
+                let change = params.get("contentChanges").as_array().last();
+                if let (Some(uri), Some(text)) = (uri, change.and_then(|c| c.get("text").as_str()))
+                {
+                    server.update(uri, text.to_string());
+                }
+            }
+            "textDocument/didClose" => {
+                if let Some(uri) = params.get("textDocument").get("uri").as_str() {
+                    server.docs.remove(uri);
+                    server.publish(uri, Vec::new());
+                }
+            }
+            "textDocument/semanticTokens/full" => {
+                let result = server
+                    .doc(params)
+                    .map_or(Json::Null, |d| Json::object([("data", semantic_tokens(d))]));
+                server.respond(&id, result);
+            }
+            "textDocument/documentSymbol" => {
+                let result = server.doc(params).map_or(Json::Null, document_symbols);
+                server.respond(&id, result);
+            }
+            "textDocument/definition" => {
+                let result = server.definition(params);
+                server.respond(&id, result);
+            }
+            "textDocument/hover" => {
+                let result = server.hover(params);
+                server.respond(&id, result);
+            }
+            _ if !id.is_null() => server.error(&id, -32601, "method not supported"),
+            _ => {}
+        }
+    }
+}
+
+/// A message framed for the wire (`Content-Length` header and body), for clients and tests.
+pub fn frame(message: &Json) -> Vec<u8> {
+    let body = message.to_string();
+    format!("Content-Length: {}\r\n\r\n{body}", body.len()).into_bytes()
+}
+
+/// The messages in a stream of framed messages (a server's whole output, say). Stops at the first
+/// one that is not valid.
+pub fn messages(mut stream: &[u8]) -> Vec<Json> {
+    let mut out = Vec::new();
+    while let Ok(Some(text)) = read_message(&mut stream) {
+        match Json::parse(&text) {
+            Ok(m) => out.push(m),
+            Err(_) => break,
+        }
+    }
+    out
+}
+
+/// Runs a whole session against a language server (`server lsp`), for a language's tests: opens
+/// `text` as `uri`, sends each request (method, 0-based line and UTF-16 character; responses get ids
+/// 1, 2, ... in order), shuts down and exits. Returns everything the server said.
+pub fn session(
+    server: &std::path::Path,
+    uri: &str,
+    text: &str,
+    requests: &[(&str, u32, u32)],
+) -> io::Result<Vec<Json>> {
+    let message = |id: Option<u32>, method: &str, params: Json| {
+        let mut m = vec![("jsonrpc".to_string(), "2.0".into())];
+        if let Some(id) = id {
+            m.push(("id".to_string(), id.into()));
+        }
+        m.push(("method".to_string(), method.into()));
+        m.push(("params".to_string(), params));
+        frame(&Json::Object(m))
+    };
+    let doc = || Json::object([("uri", uri.into())]);
+    let mut input = vec![
+        message(Some(0), "initialize", Json::object([])),
+        message(
+            None,
+            "textDocument/didOpen",
+            Json::object([(
+                "textDocument",
+                Json::object([("uri", uri.into()), ("text", text.into())]),
+            )]),
+        ),
+    ];
+    for (i, &(method, line, character)) in requests.iter().enumerate() {
+        let position = Json::object([("line", line.into()), ("character", character.into())]);
+        input.push(message(
+            Some(i as u32 + 1),
+            method,
+            Json::object([("textDocument", doc()), ("position", position)]),
+        ));
+    }
+    input.push(message(Some(u32::MAX), "shutdown", Json::Null));
+    input.push(message(None, "exit", Json::Null));
+    let mut child = std::process::Command::new(server)
+        .arg("lsp")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()?;
+    if let Some(mut stdin) = child.stdin.take() {
+        stdin.write_all(&input.concat())?;
+    }
+    let out = child.wait_with_output()?;
+    if !out.status.success() {
+        return Err(io::Error::other(format!(
+            "the server exited with {}",
+            out.status
+        )));
+    }
+    Ok(messages(&out.stdout))
+}
+
+/// Reads one `Content-Length`-framed message; `None` at the end of the input.
+fn read_message(input: &mut dyn BufRead) -> io::Result<Option<String>> {
+    let mut length = None;
+    loop {
+        let mut line = String::new();
+        if input.read_line(&mut line)? == 0 {
+            return Ok(None);
+        }
+        let line = line.trim_end();
+        if line.is_empty() {
+            break;
+        }
+        if let Some((name, value)) = line.split_once(':')
+            && name.eq_ignore_ascii_case("content-length")
+        {
+            length = value.trim().parse::<usize>().ok();
+        }
+    }
+    let Some(length) = length else {
+        return Err(io::Error::other("a message without Content-Length"));
+    };
+    let mut body = vec![0; length];
+    input.read_exact(&mut body)?;
+    String::from_utf8(body)
+        .map(Some)
+        .map_err(|_| io::Error::other("a message that is not UTF-8"))
+}
+
+impl Server<'_> {
+    fn send(&mut self, message: Json) {
+        let body = message.to_string();
+        let _ = write!(self.out, "Content-Length: {}\r\n\r\n{body}", body.len());
+        let _ = self.out.flush();
+    }
+
+    fn respond(&mut self, id: &Json, result: Json) {
+        self.send(Json::object([
+            ("jsonrpc", "2.0".into()),
+            ("id", id.clone()),
+            ("result", result),
+        ]));
+    }
+
+    fn error(&mut self, id: &Json, code: i32, message: &str) {
+        self.send(Json::object([
+            ("jsonrpc", "2.0".into()),
+            ("id", id.clone()),
+            (
+                "error",
+                Json::object([
+                    ("code", Json::Number(code as f64)),
+                    ("message", message.into()),
+                ]),
+            ),
+        ]));
+    }
+
+    fn capabilities(&self) -> Json {
+        let mut caps = vec![
+            (
+                "textDocumentSync".to_string(),
+                Json::object([("openClose", true.into()), ("change", 1u32.into())]),
+            ),
+            ("positionEncoding".to_string(), "utf-16".into()),
+        ];
+        if self.grammar.is_some() {
+            let types = TOKEN_TYPES.iter().map(|&t| t.into()).collect::<Vec<Json>>();
+            caps.extend([
+                (
+                    "semanticTokensProvider".to_string(),
+                    Json::object([
+                        (
+                            "legend",
+                            Json::object([
+                                ("tokenTypes", types.into()),
+                                ("tokenModifiers", vec!["declaration".into()].into()),
+                            ]),
+                        ),
+                        ("full", true.into()),
+                    ]),
+                ),
+                ("documentSymbolProvider".to_string(), true.into()),
+                ("definitionProvider".to_string(), true.into()),
+                ("hoverProvider".to_string(), true.into()),
+            ]);
+        }
+        Json::object([
+            ("capabilities", Json::Object(caps)),
+            (
+                "serverInfo",
+                Json::object([
+                    ("name", format!("{} (A0)", self.lang.name).into()),
+                    ("version", env!("CARGO_PKG_VERSION").into()),
+                ]),
+            ),
+        ])
+    }
+
+    fn doc(&self, params: &Json) -> Option<&Document> {
+        let uri = params.get("textDocument").get("uri").as_str()?;
+        self.docs.get(uri)
+    }
+
+    /// The document and byte offset of a `TextDocumentPositionParams`.
+    fn position(&self, params: &Json) -> Option<(&Document, u32)> {
+        let doc = self.doc(params)?;
+        let pos = params.get("position");
+        let offset = doc.lines.offset(
+            &doc.text,
+            pos.get("line").as_u32()?,
+            pos.get("character").as_u32()?,
+        );
+        Some((doc, offset))
+    }
+
+    /// Analyzes a new version of a document and publishes its diagnostics.
+    fn update(&mut self, uri: &str, text: String) {
+        let mut sources = SourceMap::new();
+        let source = sources.add(uri, &text);
+        let lines = Lines::new(&text);
+        let index = self.grammar.as_ref().map(|g| {
+            let (tree, _) = g.parse(&text, source);
+            SyntaxIndex::new(g, &tree)
+        });
+        let compile = self.lang.compile;
+        // A compiler bug must not take the editor's language support down with it.
+        let compiled = catch_unwind(AssertUnwindSafe(|| compile(&text, source)));
+        let mut diagnostics = Vec::new();
+        let mut hir = None;
+        let diagnostic = |span: Option<(u32, u32)>, severity: u32, message: &str| {
+            let (start, end) = span.unwrap_or((0, 0));
+            Json::object([
+                ("range", lines.range(&text, start, end)),
+                ("severity", severity.into()),
+                ("source", self.lang.name.into()),
+                ("message", message.into()),
+            ])
+        };
+        match compiled {
+            Ok(Ok(Program::Hir(m))) => hir = Some(m),
+            Ok(Ok(Program::Ir(_))) => {}
+            Ok(Err(CompileError::Diagnostics(ds))) => {
+                for d in ds.as_slice() {
+                    let span = match d.span {
+                        Some(s) if s.source == source => Some((s.start, s.end)),
+                        Some(_) => continue,
+                        None => None,
+                    };
+                    let severity = match d.severity {
+                        Severity::Error => 1,
+                        Severity::Warning => 2,
+                        Severity::Note => 3,
+                    };
+                    let mut message = d.message.clone();
+                    for note in &d.notes {
+                        message.push_str("\nnote: ");
+                        message.push_str(note);
+                    }
+                    diagnostics.push(diagnostic(span, severity, &message));
+                }
+            }
+            Ok(Err(CompileError::Messages(ms))) => {
+                for m in ms {
+                    diagnostics.push(diagnostic(m.span.map(|s| (s.start, s.end)), 1, &m.text));
+                }
+            }
+            Err(panic) => {
+                let what = panic
+                    .downcast_ref::<String>()
+                    .map(String::as_str)
+                    .or_else(|| panic.downcast_ref::<&str>().copied())
+                    .unwrap_or("a panic");
+                diagnostics.push(diagnostic(
+                    None,
+                    1,
+                    &format!("internal error in the {} compiler: {what}", self.lang.name),
+                ));
+            }
+        }
+        self.docs.insert(
+            uri.to_string(),
+            Document {
+                text,
+                lines,
+                index,
+                hir,
+                source,
+            },
+        );
+        self.publish(uri, diagnostics);
+    }
+
+    fn publish(&mut self, uri: &str, diagnostics: Vec<Json>) {
+        self.send(Json::object([
+            ("jsonrpc", "2.0".into()),
+            ("method", "textDocument/publishDiagnostics".into()),
+            (
+                "params",
+                Json::object([("uri", uri.into()), ("diagnostics", diagnostics.into())]),
+            ),
+        ]));
+    }
+
+    fn definition(&self, params: &Json) -> Json {
+        let Some((doc, offset)) = self.position(params) else {
+            return Json::Null;
+        };
+        let Some(index) = &doc.index else {
+            return Json::Null;
+        };
+        let Some(t) = index.token_at(offset) else {
+            return Json::Null;
+        };
+        let uri = params.get("textDocument").get("uri").clone();
+        let locations: Vec<Json> = index
+            .targets(t)
+            .iter()
+            .map(|&s| {
+                let span = index.symbol_span(s);
+                Json::object([
+                    ("uri", uri.clone()),
+                    ("range", doc.lines.range(&doc.text, span.start, span.end)),
+                ])
+            })
+            .collect();
+        if locations.is_empty() {
+            Json::Null
+        } else {
+            locations.into()
+        }
+    }
+
+    fn hover(&self, params: &Json) -> Json {
+        let Some((doc, offset)) = self.position(params) else {
+            return Json::Null;
+        };
+        let Some(index) = &doc.index else {
+            return Json::Null;
+        };
+        let Some(t) = index.token_at(offset) else {
+            return Json::Null;
+        };
+        let Some(&s) = index.targets(t).first() else {
+            return Json::Null;
+        };
+        let name = index.symbol_name(s);
+        let kind = index.symbol_kind(s);
+        let mut value = String::new();
+        let header = declaration_header(&doc.text, index.symbol_extent(s), kind);
+        if header != name {
+            value.push_str(&format!("```{}\n{header}\n```\n", self.lang.name));
+        }
+        value.push_str(&format!("{} `{name}`", kind_words(kind)));
+        if let Some(ty) = doc.hir.as_ref().and_then(|m| hir_type(m, doc, index, s)) {
+            value.push_str(&format!(": `{ty}`"));
+        }
+        let token = index.token(t);
+        Json::object([
+            (
+                "contents",
+                Json::object([("kind", "markdown".into()), ("value", value.into())]),
+            ),
+            ("range", doc.lines.range(&doc.text, token.start, token.end)),
+        ])
+    }
+}
+
+fn kind_words(kind: SymbolKind) -> &'static str {
+    match kind {
+        SymbolKind::TypeParameter => "type parameter",
+        k => k.name(),
+    }
+}
+
+/// The first line of a declaration, up to the `{` of its body for functions and types:
+/// `fun fib(n)`, `let p = new Point { x: 1 };`.
+fn declaration_header(text: &str, extent: Span, kind: SymbolKind) -> String {
+    let decl = &text[extent.start as usize..extent.end as usize];
+    let line = decl.lines().next().unwrap_or("");
+    let has_body = !matches!(
+        kind,
+        SymbolKind::Variable | SymbolKind::Constant | SymbolKind::Field | SymbolKind::Parameter
+    );
+    let header = match line.find('{') {
+        Some(i) if has_body => &line[..i],
+        _ => line.strip_suffix('{').unwrap_or(line),
+    }
+    .trim();
+    match header.char_indices().nth(100) {
+        Some((i, _)) => format!("{}…", &header[..i]),
+        None => header.to_string(),
+    }
+}
+
+/// The type of a variable, parameter or field, from the HIR when the compiler recorded where its
+/// declarations are. (A function's declaration already shows its signature.)
+fn hir_type(m: &HirModule, doc: &Document, index: &SyntaxIndex, s: u32) -> Option<String> {
+    let name = index.symbol_name(s);
+    let span = index.symbol_span(s);
+    let covers = |outer: Option<Span>| {
+        outer.filter(|o| o.source == doc.source && o.start <= span.start && span.end <= o.end)
+    };
+    match index.symbol_kind(s) {
+        SymbolKind::Field => {
+            let owner = index.symbol_name(index.symbol_parent(s)?);
+            let Some(Item::Struct(st)) = m.lookup_type(owner) else {
+                return None;
+            };
+            let i = m.struct_field_index(st, name)?;
+            Some(m.display_type(m.struct_field(st, i).1))
+        }
+        SymbolKind::Variable | SymbolKind::Parameter | SymbolKind::Constant => {
+            // Locals may have been renamed to stay unique (`x_1`); the innermost one wins.
+            let same_name = |local: &str| {
+                local == name
+                    || local
+                        .strip_prefix(name)
+                        .and_then(|rest| rest.strip_prefix('_'))
+                        .is_some_and(|n| n.bytes().all(|b| b.is_ascii_digit()))
+            };
+            (0..m.local_count())
+                .map(a0_hir::LocalId)
+                .filter_map(|l| {
+                    let outer = covers(m.local_span(l))?;
+                    same_name(m.local_name(l)).then_some((outer.end - outer.start, l))
+                })
+                .min_by_key(|&(size, _)| size)
+                .map(|(_, l)| m.display_type(m.local_type(l)))
+        }
+        _ => None,
+    }
+}
+
+/// The document's tokens, encoded as the protocol's relative five-number groups.
+fn semantic_tokens(doc: &Document) -> Json {
+    let Some(index) = &doc.index else {
+        return Vec::new().into();
+    };
+    let mut data = Vec::new();
+    let (mut last_line, mut last_char) = (0, 0);
+    for i in 0..index.token_count() {
+        let t = index.token(i);
+        let (kind, declaration) = match t.class {
+            TokenClass::Keyword => ("keyword", false),
+            TokenClass::Operator => ("operator", false),
+            TokenClass::Number => ("number", false),
+            TokenClass::String => ("string", false),
+            TokenClass::Comment => ("comment", false),
+            TokenClass::Name => match index.targets(i).first() {
+                Some(&s) => (
+                    symbol_token_type(index.symbol_kind(s)),
+                    t.declares.is_some(),
+                ),
+                None if t.member => ("property", false),
+                None => ("variable", false),
+            },
+            TokenClass::Other => continue,
+        };
+        // Tokens may not span lines: a multi-line string or comment becomes one token per line.
+        let mut start = t.start;
+        for piece in doc.text[t.start as usize..t.end as usize].split_inclusive('\n') {
+            let text = piece.trim_end_matches(['\n', '\r']);
+            let (line, character) = doc.lines.position(&doc.text, start);
+            let length = text.chars().map(char::len_utf16).sum::<usize>() as u32;
+            start += piece.len() as u32;
+            if length == 0 {
+                continue;
+            }
+            let delta_char = if line == last_line {
+                character - last_char
+            } else {
+                character
+            };
+            data.extend([
+                line - last_line,
+                delta_char,
+                length,
+                token_type(kind),
+                declaration as u32,
+            ]);
+            (last_line, last_char) = (line, character);
+        }
+    }
+    data.into_iter().map(Json::from).collect::<Vec<_>>().into()
+}
+
+/// The outline: declarations nested in the declarations around them, without parameters and
+/// without variables other than global ones.
+fn document_symbols(doc: &Document) -> Json {
+    let Some(index) = &doc.index else {
+        return Vec::new().into();
+    };
+    let n = index.symbol_count();
+    let shown: Vec<bool> = (0..n)
+        .map(|s| match index.symbol_kind(s) {
+            SymbolKind::Parameter | SymbolKind::TypeParameter => false,
+            SymbolKind::Variable | SymbolKind::Constant => index.symbol_is_global(s),
+            _ => true,
+        })
+        .collect();
+    let mut children: Vec<Vec<u32>> = vec![Vec::new(); n as usize];
+    let mut roots = Vec::new();
+    for s in (0..n).filter(|&s| shown[s as usize]) {
+        let mut p = index.symbol_parent(s);
+        while let Some(q) = p.filter(|&q| !shown[q as usize]) {
+            p = index.symbol_parent(q);
+        }
+        match p {
+            Some(p) => children[p as usize].push(s),
+            None => roots.push(s),
+        }
+    }
+    fn symbol(doc: &Document, index: &SyntaxIndex, children: &[Vec<u32>], s: u32) -> Json {
+        let extent = index.symbol_extent(s);
+        let name = index.symbol_span(s);
+        let kids: Vec<Json> = children[s as usize]
+            .iter()
+            .map(|&c| symbol(doc, index, children, c))
+            .collect();
+        Json::object([
+            ("name", index.symbol_name(s).into()),
+            ("kind", lsp_symbol_kind(index.symbol_kind(s)).into()),
+            (
+                "range",
+                doc.lines.range(&doc.text, extent.start, extent.end),
+            ),
+            (
+                "selectionRange",
+                doc.lines.range(&doc.text, name.start, name.end),
+            ),
+            ("children", kids.into()),
+        ])
+    }
+    roots
+        .iter()
+        .map(|&s| symbol(doc, index, &children, s))
+        .collect::<Vec<_>>()
+        .into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ExitCodes;
+    use a0_diag::Diagnostics;
+
+    const GRAMMAR: &str = r#"
+        grammar demo;
+        skip /[ \t\r\n]+/;
+        skip /\/\/[^\n]*/;
+        token NUM /[0-9]+/;
+        token STR /"[^"]*"/;
+        token ID /[A-Za-z_][A-Za-z0-9_]*/;
+        program = (!EOF item)* EOF;
+        item @inline @recover(before "fn" "let") = fn_decl | let_stmt;
+        fn_decl @def(function) @scope = "fn" name:ID "(" params? ")" "{" (!"}" !EOF use)* "}";
+        params @def(parameter: param) = param:ID ("," param:ID)*;
+        let_stmt @def(variable) = "let" name:ID "=" value:atom ";";
+        use = value:atom ";";
+        atom = NUM | STR | ID;
+    "#;
+
+    fn demo() -> Language {
+        Language {
+            name: "demo",
+            compile: |text, source| {
+                if text.contains("panic") {
+                    panic!("boom");
+                }
+                if let Some(i) = text.find("oops") {
+                    let mut d = Diagnostics::new();
+                    let span = Span::new(source, i as u32, i as u32 + 4);
+                    d.error("demo.oops", "no oops allowed", Some(span));
+                    return Err(CompileError::Diagnostics(d));
+                }
+                let m = a0_hir::parse("module \"m\";\nfn main() {}\n", SourceId(u32::MAX));
+                Ok(Program::Hir(m.unwrap()))
+            },
+            exit_codes: ExitCodes::default(),
+            run_by_default: false,
+            host_symbols: None,
+            libraries: None,
+            grammar: Some(GRAMMAR),
+        }
+    }
+
+    const URI: &str = "file:///demo.d";
+
+    fn request(id: u32, method: &str, params: Json) -> Vec<u8> {
+        frame(&Json::object([
+            ("jsonrpc", "2.0".into()),
+            ("id", id.into()),
+            ("method", method.into()),
+            ("params", params),
+        ]))
+    }
+
+    fn notify(method: &str, params: Json) -> Vec<u8> {
+        frame(&Json::object([
+            ("jsonrpc", "2.0".into()),
+            ("method", method.into()),
+            ("params", params),
+        ]))
+    }
+
+    fn at(id: u32, method: &str, line: u32, character: u32) -> Vec<u8> {
+        request(
+            id,
+            method,
+            Json::object([
+                ("textDocument", Json::object([("uri", URI.into())])),
+                (
+                    "position",
+                    Json::object([("line", line.into()), ("character", character.into())]),
+                ),
+            ]),
+        )
+    }
+
+    fn open(text: &str) -> Vec<u8> {
+        notify(
+            "textDocument/didOpen",
+            Json::object([(
+                "textDocument",
+                Json::object([
+                    ("uri", URI.into()),
+                    ("languageId", "demo".into()),
+                    ("version", 1u32.into()),
+                    ("text", text.into()),
+                ]),
+            )]),
+        )
+    }
+
+    fn run(input: Vec<Vec<u8>>) -> (Vec<Json>, u8) {
+        let input = input.concat();
+        let mut output = Vec::new();
+        let code = demo().serve_lsp(&mut input.as_slice(), &mut output);
+        (messages(&output), code)
+    }
+
+    fn response(messages: &[Json], id: u32) -> &Json {
+        messages
+            .iter()
+            .find(|m| m.get("id").as_u32() == Some(id))
+            .unwrap_or_else(|| panic!("no response {id}"))
+    }
+
+    fn diagnostics(messages: &[Json]) -> Vec<&Json> {
+        messages
+            .iter()
+            .filter(|m| m.get("method").as_str() == Some("textDocument/publishDiagnostics"))
+            .map(|m| m.get("params").get("diagnostics"))
+            .collect()
+    }
+
+    const TEXT: &str = "// é comment\nlet x = \"a\nb\";\nfn f(a, b) {\n  a;\n  x;\n}\nlet s = \"😀\"; let t = s;\n";
+
+    #[test]
+    fn a_session_answers_every_request() {
+        let td = || Json::object([("textDocument", Json::object([("uri", URI.into())]))]);
+        let change = notify(
+            "textDocument/didChange",
+            Json::object([
+                (
+                    "textDocument",
+                    Json::object([("uri", URI.into()), ("version", 2u32.into())]),
+                ),
+                (
+                    "contentChanges",
+                    vec![Json::object([("text", TEXT.into())])].into(),
+                ),
+            ]),
+        );
+        let (messages, code) = run(vec![
+            request(
+                1,
+                "initialize",
+                Json::object([("capabilities", Json::object([]))]),
+            ),
+            notify("initialized", Json::object([])),
+            open("let x = oops;"),
+            change,
+            request(2, "textDocument/semanticTokens/full", td()),
+            request(3, "textDocument/documentSymbol", td()),
+            // `s` in `let t = s;`, after a character that is two UTF-16 units.
+            at(4, "textDocument/definition", 7, 22),
+            at(5, "textDocument/hover", 4, 2),
+            at(6, "textDocument/hover", 5, 3),
+            request(7, "textDocument/rename", td()),
+            b"Content-Length: 5\r\n\r\n{nope".to_vec(),
+            request(8, "shutdown", Json::Null),
+            notify("exit", Json::Null),
+        ]);
+        assert_eq!(code, 0);
+
+        let caps = response(&messages, 1).get("result").get("capabilities");
+        assert_eq!(caps.get("hoverProvider"), &Json::Bool(true));
+        let legend = caps.get("semanticTokensProvider").get("legend");
+        assert_eq!(legend.get("tokenTypes").as_array().len(), TOKEN_TYPES.len());
+
+        // The compiler's error, then nothing once it is fixed.
+        let diags = diagnostics(&messages);
+        assert_eq!(diags.len(), 2);
+        let error = &diags[0].as_array()[0];
+        assert_eq!(error.get("message").as_str(), Some("no oops allowed"));
+        let range = error.get("range");
+        assert_eq!(range.get("start").get("character").as_u32(), Some(8));
+        assert_eq!(range.get("end").get("character").as_u32(), Some(12));
+        assert!(diags[1].as_array().is_empty());
+
+        // Tokens: (line, character, length, type, declaration), one per line for a split string.
+        let data: Vec<u32> = response(&messages, 2)
+            .get("result")
+            .get("data")
+            .as_array()
+            .iter()
+            .map(|n| n.as_u32().unwrap())
+            .collect();
+        let mut tokens = Vec::new();
+        let (mut line, mut character) = (0, 0);
+        for t in data.chunks(5) {
+            line += t[0];
+            character = if t[0] == 0 { character + t[1] } else { t[1] };
+            tokens.push((line, character, t[2], TOKEN_TYPES[t[3] as usize], t[4]));
+        }
+        for expected in [
+            (0, 0, 12, "comment", 0),
+            (1, 0, 3, "keyword", 0),
+            (1, 4, 1, "variable", 1),
+            (1, 8, 2, "string", 0),
+            (2, 0, 2, "string", 0),
+            (3, 3, 1, "function", 1),
+            (3, 5, 1, "parameter", 1),
+            (4, 2, 1, "parameter", 0),
+            (5, 2, 1, "variable", 0),
+            (7, 8, 4, "string", 0),
+            (7, 22, 1, "variable", 0),
+        ] {
+            assert!(tokens.contains(&expected), "{expected:?} not in {tokens:?}");
+        }
+
+        // The outline has the global variables and the function, not its parameters.
+        let names: Vec<&str> = response(&messages, 3)
+            .get("result")
+            .as_array()
+            .iter()
+            .map(|s| s.get("name").as_str().unwrap())
+            .collect();
+        assert_eq!(names, ["x", "f", "s", "t"]);
+
+        let def = &response(&messages, 4).get("result").as_array()[0];
+        assert_eq!(def.get("uri").as_str(), Some(URI));
+        let start = def.get("range").get("start");
+        let start = (start.get("line").as_u32(), start.get("character").as_u32());
+        assert_eq!(start, (Some(7), Some(4)));
+
+        let hover = |id| {
+            response(&messages, id)
+                .get("result")
+                .get("contents")
+                .get("value")
+                .as_str()
+                .unwrap()
+                .to_string()
+        };
+        assert_eq!(hover(5), "parameter `a`");
+        assert_eq!(hover(6), "```demo\nlet x = \"a\n```\nvariable `x`");
+
+        let rename = response(&messages, 7).get("error");
+        assert_eq!(rename.get("code").as_f64(), Some(-32601.0));
+        let bad = messages
+            .iter()
+            .find(|m| m.get("error").get("code").as_f64() == Some(-32700.0));
+        assert!(bad.is_some(), "{messages:?}");
+        assert!(response(&messages, 8).get("result").is_null());
+    }
+
+    #[test]
+    fn exit_without_shutdown_fails_and_compiler_panics_are_reported() {
+        let (messages, code) = run(vec![
+            open("let x = 1; // panic\n"),
+            notify("exit", Json::Null),
+        ]);
+        assert_eq!(code, 1);
+        let diags = diagnostics(&messages);
+        let message = diags[0].as_array()[0].get("message").as_str().unwrap();
+        assert_eq!(message, "internal error in the demo compiler: boom");
+        // The end of the input also ends the session.
+        assert_eq!(run(Vec::new()).1, 1);
+    }
+
+    #[test]
+    fn positions_count_utf16_units() {
+        let text = "a😀b\né\n";
+        let lines = Lines::new(text);
+        assert_eq!(lines.position(text, 5), (0, 3));
+        assert_eq!(lines.offset(text, 0, 3), 5);
+        assert_eq!(lines.offset(text, 1, 1), 9);
+        assert_eq!(lines.offset(text, 1, 99), 9);
+        assert_eq!(lines.offset(text, 9, 0), text.len() as u32);
+    }
+}

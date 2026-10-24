@@ -477,6 +477,10 @@ impl HirModule {
         self.bodies[b.index()].root
     }
 
+    pub fn local_count(&self) -> u32 {
+        self.locals.len() as u32
+    }
+
     pub fn local_name(&self, l: LocalId) -> &str {
         &self.locals[l.index()].name
     }
