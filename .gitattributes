@@ -1,0 +1,4 @@
+* text=auto eol=lf
+*.lib binary
+*.a binary
+*.exe binary

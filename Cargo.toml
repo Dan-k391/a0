@@ -1,0 +1,22 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/a0-diag",
+    "crates/a0-ir",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+repository = "https://github.com/Dan-k391/a0"
+
+[workspace.dependencies]
+a0-diag = { path = "crates/a0-diag" }
+a0-ir = { path = "crates/a0-ir" }
+
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 2
