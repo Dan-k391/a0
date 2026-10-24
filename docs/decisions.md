@@ -61,3 +61,31 @@ shape (for example `f32` arguments) are reported as errors by the interpreter, n
 `load`/`store`/`ptradd` in the interpreter use real host addresses, globals are allocated in host
 memory, and pointers can be passed to and from C freely. Function addresses of IR functions are opaque
 tokens that only `call_indirect` inside the interpreter understands.
+
+## D9. Grammars are data, loaded at run time
+
+A grammar is a text file in a small DSL (`docs/grammar.md`), parsed by `Grammar::from_str` when the
+compiler starts. There is no parser generator step and no Rust code per language, which keeps the
+frontend layer C-bindable (a grammar is a string, a tree is handles) and makes a grammar easy to edit.
+Lexing uses our own small longest-match regex engine, because lexers need POSIX-style maximal munch
+across all token patterns, which backtracking regex libraries do not provide directly.
+
+## D10. Ordered choice, furthest-failure errors, custom messages, panic-mode recovery
+
+Rules are PEG-style ordered choice with backtracking, which is forgiving to write. Errors are reported
+at the furthest token reached; `x ~ "message"` attaches the exact message a hand-written parser would
+give, and `@recover` gives jlox-style panic-mode recovery. The furthest failure is kept across
+recovered constructs, so a branch abandoned by backtracking (a broken `else`) is still reported where it
+broke. Together these reproduce jlox's messages and recovery exactly, which the Lox suite requires.
+
+## D11. Operator precedence: static `@prec`, dynamic `resolve_precedence`
+
+Both example languages need precedence parsing. Fixed tables are declared in the grammar (`@prec`, a
+Pratt parser with prefix, infix and postfix forms). Tables that programs extend (Kaleidoscope's
+`def binary| 5`) are parsed as flat chains and resolved later with `resolve_precedence`.
+
+## D12. The semantic toolkit starts with scopes only
+
+`a0-sema` provides lexical scopes (declare, define, resolve, capture detection), which both example
+languages need. A type checker is not built yet: Kaleidoscope has a single type and Lox is dynamically
+typed, so there is no second language to generalize from (see the fundamentals).
