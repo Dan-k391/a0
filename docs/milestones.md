@@ -122,7 +122,7 @@ One entry per milestone: what was done, what changed along the way, and open que
 **Done**
 
 - `examples/kaleidoscope`: the LLVM tutorial language through chapter 7. Grammar file, a compiler
-  from the syntax tree to IR (about 600 lines), a C runtime (`putchard`, `printd`), and a
+  from the syntax tree to IR (about 650 lines), a C runtime (`putchard`, `printd`), and a
   `kaleidoscope run|build|ir` driver.
 - User-defined operators work as in the tutorial: binary operators are parsed as flat chains and
   resolved with the operator table in effect at that point in the program (a `def binary|`

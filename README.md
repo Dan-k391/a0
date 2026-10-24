@@ -79,5 +79,5 @@ lox script.lox                            # like jlox; `lox build script.lox` fo
 3. Run the module with `a0_interp`, or build an executable with `a0_native::build_executable`. If the
    language needs C support code, ship it with `a0_build::runtime_library`.
 
-`examples/kaleidoscope` (about 600 lines of Rust) is the small, complete example; `examples/lox` is the
+`examples/kaleidoscope` (about 650 lines of Rust) is the small, complete example; `examples/lox` is the
 large one.
