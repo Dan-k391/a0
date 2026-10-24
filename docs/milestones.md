@@ -148,3 +148,56 @@ One entry per milestone: what was done, what changed along the way, and open que
 1. Should the framework offer a reusable "language driver" (run/build/ir subcommands, diagnostics
    rendering)? Kaleidoscope's driver is small, and Lox needs its own exit codes and error format, so I
    kept the drivers per language for now.
+
+## M5. Lox end to end
+
+**Done**
+
+- `examples/lox`: all of Lox (closures, classes, inheritance, `super`, initializers, native `clock`).
+  - The grammar reproduces jlox's syntax errors and panic-mode recovery.
+  - `analyze.rs` implements jlox's parse-time checks (assignment targets, the 255 argument and
+    parameter limits) and its resolver on `a0-sema` scopes, and computes which variables closures
+    capture and each function's upvalue list.
+  - `codegen.rs` emits IR in which every live Lox value sits in a shadow-stack frame slot; calls go
+    through `lox_call_prepare` and `call_indirect`; captured variables live in heap cells.
+  - `runtime/lox.c`: NaN-boxed values, interned strings, hash tables, closures, classes, bound methods
+    and a precise mark-sweep collector, with `LOX_GC_STRESS=1` to collect on every allocation.
+  - `lox file.lox` behaves like jlox (exit 65 for compile errors, 70 for runtime errors); `lox build`
+    makes a native executable.
+- The official test suite is vendored (MIT, commit `4a840f7`) and `tests/suite.rs` checks it with the
+  same rules as the book's `test.dart`. **All 241 tests of the `jlox` suite configuration pass**
+  interpreted, as native executables, and interpreted under GC stress. Two tests that the `jlox`
+  suite skips because of JVM behavior (`number/nan_equality.lox`, `limit/stack_overflow.lox`) also pass.
+  The remaining skips are the same as jlox's: early-chapter tests, benchmarks, and clox's bytecode
+  limits.
+- Checks on the checks: a deliberately wrong expectation makes the suite fail; disabling the shadow
+  stack roots makes 11 tests fail under GC stress; two million allocations peak at about 6 MB.
+- `Builder::patch_iconst`, so a prologue can use a frame size known only after the body is built.
+- Workspace-wide clippy (no warnings) and rustfmt.
+
+**Changed**
+
+- No lower layer needed a redesign for Lox. The additions were `patch_iconst` and the grammar-layer
+  error behavior that M3 had already shaped around jlox's messages.
+- The collector, strings and tables went into Lox's own runtime rather than `a0rt` (D13): only one
+  language needs them so far.
+
+**Open questions**
+
+1. Should the collector move into `a0rt` now, as the fundamentals list memory management as a runtime
+   responsibility, or wait for a second language that needs it (D13)?
+2. Lox's dynamic operations are all runtime calls. Inline fast paths for numbers in the IR would make
+   native Lox much faster; the tests did not need it, so it is not done.
+3. Numbers print in the shortest round-trip form, which equals jlox's output for everything the suite
+   prints, but extreme magnitudes differ (`1e+21` here, `1.0E21` in jlox).
+
+## Overall open questions
+
+These need a decision from you:
+
+1. **aarch64-windows** (M2): Cranelift's object writer cannot produce AArch64 COFF objects. Contribute
+   the relocations upstream, write that part ourselves, or leave the target out for now?
+2. **Linking on Linux and macOS** (M2) is implemented but untested, because only an x86-64 Windows
+   machine was available. Objects for those targets are validated structurally.
+3. **C-bindable APIs** (M1, D2): is the interpretation in D2 the intended line?
+4. **Garbage collector placement** (M5, D13): in `a0rt` now, or when a second language needs one?
