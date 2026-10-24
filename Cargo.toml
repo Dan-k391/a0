@@ -5,6 +5,8 @@ members = [
     "crates/a0-ir",
     "crates/a0-runtime",
     "crates/a0-interp",
+    "crates/a0-target",
+    "crates/a0-native",
     "crates/a0",
 ]
 
@@ -19,6 +21,8 @@ a0-diag = { path = "crates/a0-diag" }
 a0-ir = { path = "crates/a0-ir" }
 a0-runtime = { path = "crates/a0-runtime" }
 a0-interp = { path = "crates/a0-interp" }
+a0-target = { path = "crates/a0-target" }
+a0-native = { path = "crates/a0-native" }
 
 [profile.dev]
 opt-level = 1

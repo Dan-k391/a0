@@ -1,0 +1,8 @@
+[package]
+name = "a0-target"
+description = "Explicit descriptions of the machines A0 generates code for"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
