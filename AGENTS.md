@@ -30,7 +30,7 @@ module becomes), `a0 parse lang.a0g input`, `lox hir|ir file.lox`, `kaleidoscope
 | targets | `a0-target` | nothing |
 | runtime | `a0-runtime` (C in `include/`, `c/`; Rust glue) | nothing |
 | backends | `a0-interp`, `a0-native` | `a0-ir`, `a0-runtime`, `a0-target`, `a0-diag` |
-| tools | `a0` (CLI), `a0-build` (build-script helper) | anything |
+| tools | `a0` (CLI), `a0-build` (build-script helper), `a0-driver` (language drivers) | anything |
 | examples | `examples/*` | anything |
 
 Never make a lower layer depend on a higher one, and keep the frontend and the core IR independent

@@ -7,6 +7,7 @@ license.workspace = true
 build = "build.rs"
 
 [dependencies]
+a0-driver.workspace = true
 a0-diag.workspace = true
 a0-ir.workspace = true
 a0-syntax.workspace = true

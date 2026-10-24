@@ -13,7 +13,7 @@ behavior.
 | `src/analyze.rs` | jlox's parse-time checks and resolver |
 | `src/emit.rs` | HIR generation: one closure per Lox function, a `main` for the script |
 | `prelude.hir` | Lox's runtime semantics, written in HIR: calls, classes, operators, errors |
-| `src/main.rs` | the `lox` driver |
+| `src/main.rs` | the `lox` command, an `a0-driver` language with jlox's exit codes |
 | `tests/craftinginterpreters` | the official test suite (MIT), run by `tests/suite.rs` |
 
 ```

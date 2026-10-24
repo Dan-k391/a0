@@ -1,0 +1,14 @@
+[package]
+name = "a0-driver"
+description = "A reusable command-line driver (run, build, ir, hir) for languages built on A0"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+a0-diag.workspace = true
+a0-ir.workspace = true
+a0-hir.workspace = true
+a0-interp.workspace = true
+a0-native.workspace = true
+a0-runtime.workspace = true

@@ -251,6 +251,28 @@ One entry per milestone: what was done, what changed along the way, and open que
 2. Memory management is per module, and `gc` is the only mode. Is a non-GC mode (arena or manual)
    needed before the typed example language, or only when a language asks for it?
 
+## M7. A shared language driver
+
+**Done**
+
+- `a0-driver` (D20): a language describes itself with a `Language` value (name, compile function,
+  exit codes, and for a C runtime its interpreter symbols and link libraries) and gets `run`,
+  `build`, `ir` and `hir` commands, rustc-style diagnostics or its own message format, and its own
+  exit codes for usage, I/O, compile and internal errors. A running program's exit status passes
+  through unchanged.
+- Kaleidoscope and Lox use it: their drivers went from 79 and 90 lines to 20 and 32. Lox keeps jlox's
+  `lox file.lox` form and its exit codes (64, 66, 65).
+- Unit tests for command-line parsing; the language suites cover the rest.
+
+**Changed**
+
+- The M4 open question (a reusable driver) is answered: two languages with different error formats
+  and exit codes fit one driver once compile errors can be either diagnostics or preformatted lines.
+
+**Open questions**
+
+- None.
+
 ## Overall open questions
 
 These need a decision from you:

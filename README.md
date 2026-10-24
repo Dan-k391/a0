@@ -26,6 +26,7 @@ it directly.
 | 4. Kaleidoscope end to end | done: tutorial programs run interpreted and native |
 | 5. Lox end to end | done: all 241 tests of the official `jlox` suite pass, interpreted, native, and under GC stress |
 | 6. High-level IR, runtime GC, Lox on the HIR | done: Lox shrank from 2647 to 1544 lines and still passes all 241 tests three ways |
+| 7. A shared language driver | done: `a0-driver`, used by Kaleidoscope and Lox |
 
 `docs/milestones.md` has the summary of each milestone and the open questions.
 
@@ -43,7 +44,8 @@ it directly.
 | `crates/a0-native` | Native code through Cranelift, linked by the system linker |
 | `crates/a0-runtime` | The C runtime (`include/a0rt.h`, `c/`) and its Rust build glue |
 | `crates/a0-build` | Build-script helper for languages that ship a C runtime library (Kaleidoscope) |
-| `crates/a0` | The `a0` command-line driver |
+| `crates/a0-driver` | The command-line driver every example language uses (run, build, ir, hir) |
+| `crates/a0` | The `a0` command-line tool |
 | `examples/kaleidoscope` | Kaleidoscope (LLVM's tutorial language) end to end |
 | `examples/lox` | Lox (Crafting Interpreters) end to end, with the official test suite |
 | `tests/programs`, `tests/hir` | Core IR and HIR programs with expected output, run by both backends |
@@ -88,9 +90,10 @@ lox script.lox                            # like jlox; `lox build script.lox` fo
    written in HIR text and parsed with `a0_hir::parse`. Use `a0_sema::Scopes` for name resolution.
    For full control, emit the core IR with `a0_ir::Builder` instead (variables instead of SSA,
    `if_`/`loop_` for control flow).
-3. Lower with `a0_hir::lower`, then run the module with `a0_interp` or build an executable with
-   `a0_native::build_executable`. A language that needs C support code ships it with
-   `a0_build::runtime_library`.
+3. Give `a0_driver::Language` your compile function: it provides `run` (interpreter), `build`
+   (native executable), `ir` and `hir`, renders diagnostics and maps errors to your exit codes. Or
+   call `a0_hir::lower`, `a0_interp` and `a0_native::build_executable` yourself. A language that
+   needs C support code ships it with `a0_build::runtime_library`.
 
 `examples/kaleidoscope` (about 650 lines of Rust, on the core IR) is the small, complete example;
 `examples/lox` (on the HIR) is the large one.

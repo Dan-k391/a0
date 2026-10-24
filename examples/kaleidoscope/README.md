@@ -10,7 +10,7 @@ operators.
 | `kaleidoscope.a0g` | the grammar (binary operators are parsed as flat chains) |
 | `src/lib.rs` | syntax tree to A0 IR: scopes from `a0-sema`, `resolve_precedence` for operator chains |
 | `runtime/kaleidoscope.c` | `putchard` and `printd` |
-| `src/main.rs` | the `kaleidoscope` driver |
+| `src/main.rs` | the `kaleidoscope` command, an `a0-driver` language |
 
 ```
 kaleidoscope run tests/programs/mandelbrot.k

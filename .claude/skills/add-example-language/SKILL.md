@@ -1,6 +1,6 @@
 ---
 name: add-example-language
-description: Add a new example language to A0, or extend an existing one (Kaleidoscope, Lox) - grammar, compiler to IR, optional C runtime, driver, interpreted and native tests, docs. Use when building or changing a language under examples/.
+description: Add a new example language to A0, or extend an existing one (Kaleidoscope, Lox) - grammar, compiler to HIR or IR, optional C runtime, driver, interpreted and native tests, docs. Use when building or changing a language under examples/.
 ---
 
 # Add or extend an example language
@@ -15,14 +15,20 @@ output, and report errors with source locations.
    `a0-runtime`, and `a0-build` as a build-dependency.
 2. `examples/foo/foo.a0g` - the grammar (`docs/grammar.md`). Try it with
    `a0 parse examples/foo/foo.a0g sample.foo` before writing the compiler.
-3. `examples/foo/src/lib.rs` - `compile(text, SourceId) -> Result<Module, Diagnostics>`; load the
-   grammar with `include_str!`; resolve names with `a0_sema::Scopes`; emit IR with
-   `a0_ir::Builder`; return verifier failures as diagnostics, never panic on user input.
+3. `examples/foo/src/lib.rs` - `compile(text, SourceId) -> Result<HirModule, Diagnostics>`; load
+   the grammar with `include_str!`; resolve names with `a0_sema::Scopes`; emit HIR with
+   `a0_hir::HirBuilder` (`docs/hir.md`), or core IR with `a0_ir::Builder` if the language needs
+   nothing the HIR offers. Runtime support written in HIR goes in a `prelude.hir` parsed with
+   `a0_hir::parse` (see `examples/lox`). Return builder failures as diagnostics, never panic on user
+   input.
 4. `examples/foo/runtime/foo.c` (optional) - C support code; export a NULL-terminated
    `const A0Symbol foo_symbols[]` table. `build.rs` calls
    `a0_build::runtime_library("foo_rt", &["runtime/foo.c"])`; `lib.rs` exposes `runtime_library()`
    (for linking) and `host_symbols()` (for the interpreter). See `examples/kaleidoscope`.
-5. `examples/foo/src/main.rs` - the driver: `run`, `build`, `ir` subcommands.
+5. `examples/foo/src/main.rs` - an `a0_driver::Language` (name, compile function, exit codes, and
+   for a C runtime its host symbols and libraries) and `.main()`. The driver provides `run`,
+   `build`, `ir` and `hir`, renders diagnostics and maps failures to the exit codes. Do not write a
+   driver by hand.
 6. `examples/foo/tests/` - programs with expected output, run both interpreted and as native
    executables (copy the harness in `examples/kaleidoscope/tests/kaleidoscope.rs`), plus
    diagnostic tests that check message text and `file:line:col`.

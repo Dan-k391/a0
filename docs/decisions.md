@@ -150,3 +150,13 @@ access two hash lookups (about 13 ns, ten times the old IR's indexed globals). E
 a HIR global of type `any` plus a `bool` HIR global that says whether it has been defined; reading
 or assigning an undefined one is jlox's runtime error. Names are prefixed (`g_x`, `d_x`) so they never
 clash with each other or with the prelude.
+
+## D20. One command-line driver for all languages, in the tools layer
+
+`a0-driver` gives every language the same `run`, `build`, `ir` and `hir` commands, diagnostics
+rendering and exit-code mapping; a language supplies a `Language` value (its compile function,
+exit codes, and C runtime hooks if it has one). Compile errors are either `Diagnostics`, rendered
+against the source, or messages in the language's own format, because Lox must print jlox's format
+exactly. Like the `a0` CLI, the driver is a Rust convenience in the tools layer, not part of the
+C-bindable library API (D2): it takes plain `fn` pointers and returns `ExitCode`. A C host would call
+the library crates directly.

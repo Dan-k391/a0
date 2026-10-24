@@ -27,6 +27,18 @@ name = "a0-diag"
 version = "0.1.0"
 
 [[package]]
+name = "a0-driver"
+version = "0.1.0"
+dependencies = [
+ "a0-diag",
+ "a0-hir",
+ "a0-interp",
+ "a0-ir",
+ "a0-native",
+ "a0-runtime",
+]
+
+[[package]]
 name = "a0-hir"
 version = "0.1.0"
 dependencies = [
@@ -388,6 +400,7 @@ version = "0.1.0"
 dependencies = [
  "a0-build",
  "a0-diag",
+ "a0-driver",
  "a0-interp",
  "a0-ir",
  "a0-native",
@@ -413,11 +426,9 @@ name = "lox"
 version = "0.1.0"
 dependencies = [
  "a0-diag",
+ "a0-driver",
  "a0-hir",
- "a0-interp",
  "a0-ir",
- "a0-native",
- "a0-runtime",
  "a0-sema",
  "a0-syntax",
 ]
