@@ -108,20 +108,41 @@ fn compile_errors_are_reported_with_locations() {
     let cases: &[(&str, &str)] = &[
         ("def f(x) y;", "unknown variable 'y'"),
         ("def f(x) g(x);", "unknown function 'g'"),
-        ("def f(x y) x; f(1);", "'f' takes 2 argument(s) but 1 were given"),
+        (
+            "def f(x y) x; f(1);",
+            "'f' takes 2 argument(s) but 1 were given",
+        ),
         ("def f(x) x | 1;", "unknown binary operator '|'"),
         ("def f(x) !x;", "unknown unary operator '!'"),
-        ("def f(x) x; def f(x) x;", "function 'f' cannot be redefined"),
-        ("extern f(x); def f(x y) x;", "function 'f' was declared with 1 parameter(s), not 2"),
+        (
+            "def f(x) x; def f(x) x;",
+            "function 'f' cannot be redefined",
+        ),
+        (
+            "extern f(x); def f(x y) x;",
+            "function 'f' was declared with 1 parameter(s), not 2",
+        ),
         ("def binary| 200 (a b) a;", "invalid precedence"),
-        ("def binary| (a) a;", "a binary operator takes 2 operands, not 1"),
-        ("def binary+ (a b) a;", "cannot redefine the built-in operator '+'"),
-        ("def f(x) 1 + 2 = x;", "destination of '=' must be a variable"),
+        (
+            "def binary| (a) a;",
+            "a binary operator takes 2 operands, not 1",
+        ),
+        (
+            "def binary+ (a b) a;",
+            "cannot redefine the built-in operator '+'",
+        ),
+        (
+            "def f(x) 1 + 2 = x;",
+            "destination of '=' must be a variable",
+        ),
         ("def main() 1;", "'main' is reserved"),
         ("def f(x x) x;", "duplicate parameter 'x'"),
         ("def f(x) if x then 1;", "expected 'else'"),
         ("def f(x) (x + 1;", "expected ')'"),
-        ("def f(x) for i = 1 in x;", "expected ',' after the start value"),
+        (
+            "def f(x) for i = 1 in x;",
+            "expected ',' after the start value",
+        ),
     ];
     let mut failures = Vec::new();
     for (src, want) in cases {
@@ -156,7 +177,12 @@ fn operators_must_be_defined_before_use() {
 fn ir_output_is_valid_text() {
     let out = Command::new(env!("CARGO_BIN_EXE_kaleidoscope"))
         .arg("ir")
-        .arg(programs().into_iter().find(|p| p.ends_with("fib.k")).unwrap())
+        .arg(
+            programs()
+                .into_iter()
+                .find(|p| p.ends_with("fib.k"))
+                .unwrap(),
+        )
         .output()
         .unwrap();
     assert!(out.status.success());

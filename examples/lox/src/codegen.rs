@@ -68,7 +68,8 @@ struct Runtime {
 impl Runtime {
     fn declare(b: &mut Builder) -> Runtime {
         use Type::{I64, Ptr};
-        let mut f = |name: &str, params: &[Type], ret: Option<Type>| b.declare_extern(name, params, ret);
+        let mut f =
+            |name: &str, params: &[Type], ret: Option<Type>| b.declare_extern(name, params, ret);
         Runtime {
             init: f("lox_init", &[I64, I64], None),
             global_name: f("lox_global_name", &[I64, Ptr, I64], None),
@@ -146,7 +147,11 @@ pub fn generate(tree: &SyntaxTree, n: &Names, a: &Analysis, lines: &Lines) -> Mo
         let f = if info.kind == FnKind::Script {
             b.declare_function("lox.script", &[], None)
         } else {
-            b.declare_function(&format!("lox.{}.{id}", info.name), &[Type::Ptr], Some(Type::I64))
+            b.declare_function(
+                &format!("lox.{}.{id}", info.name),
+                &[Type::Ptr],
+                Some(Type::I64),
+            )
         };
         funcs.push(f);
     }
@@ -225,7 +230,9 @@ impl Gen<'_> {
     // ---------------------------------------------------------------- helpers
 
     fn call(&mut self, f: FuncId, args: &[IrValue]) -> IrValue {
-        self.b.call(f, args).expect("runtime function returns a value")
+        self.b
+            .call(f, args)
+            .expect("runtime function returns a value")
     }
 
     fn call_void(&mut self, f: FuncId, args: &[IrValue]) {
@@ -784,7 +791,11 @@ impl Gen<'_> {
             self.expr(tree.field(node, n.left).unwrap(), dst);
             let v = self.load(dst);
             let c = self.truthy(v);
-            let evaluate_right = if tree.kind(op) == n.kw_and { c } else { self.b.not(c) };
+            let evaluate_right = if tree.kind(op) == n.kw_and {
+                c
+            } else {
+                self.b.not(c)
+            };
             self.b.if_(evaluate_right);
             self.expr(tree.field(node, n.right).unwrap(), dst);
             self.b.end_if();
@@ -850,7 +861,10 @@ impl Gen<'_> {
         let first = tree.child(node, 0);
         let fk = tree.kind(first);
         if fk == n.number {
-            let value: f64 = tree.text(first).parse().expect("the grammar only accepts valid numbers");
+            let value: f64 = tree
+                .text(first)
+                .parse()
+                .expect("the grammar only accepts valid numbers");
             let v = self.konst(value.to_bits() as i64);
             self.store(dst, v);
         } else if fk == n.string {

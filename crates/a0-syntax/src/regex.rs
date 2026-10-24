@@ -116,7 +116,10 @@ impl RegexParser {
                         return Err("expected '}' to close a repetition".to_string());
                     }
                     self.pos += 1;
-                    if max.is_some_and(|m| m < min) || min > MAX_REPEAT || max.is_some_and(|m| m > MAX_REPEAT) {
+                    if max.is_some_and(|m| m < min)
+                        || min > MAX_REPEAT
+                        || max.is_some_and(|m| m > MAX_REPEAT)
+                    {
                         return Err("invalid repetition bounds".to_string());
                     }
                     atom = Node::Repeat(Box::new(atom), min, max);
@@ -132,7 +135,8 @@ impl RegexParser {
             self.pos += 1;
         }
         let s: String = self.chars[start..self.pos].iter().collect();
-        s.parse().map_err(|_| "expected a number in a repetition".to_string())
+        s.parse()
+            .map_err(|_| "expected a number in a repetition".to_string())
     }
 
     fn atom(&mut self) -> Result<Node, String> {
@@ -193,7 +197,9 @@ impl RegexParser {
                 let hi = if hi_c == '\\' {
                     match self.escape(true)? {
                         Escaped::Char(c) => c,
-                        Escaped::Class(_) => return Err("a class shorthand cannot end a range".to_string()),
+                        Escaped::Class(_) => {
+                            return Err("a class shorthand cannot end a range".to_string());
+                        }
                     }
                 } else {
                     hi_c
@@ -214,7 +220,12 @@ impl RegexParser {
             return Err("pattern ends with '\\'".to_string());
         };
         self.pos += 1;
-        let class = |ranges: Vec<(char, char)>| Escaped::Class(Class { ranges, negated: false });
+        let class = |ranges: Vec<(char, char)>| {
+            Escaped::Class(Class {
+                ranges,
+                negated: false,
+            })
+        };
         Ok(match c {
             'n' => Escaped::Char('\n'),
             't' => Escaped::Char('\t'),
@@ -222,11 +233,23 @@ impl RegexParser {
             '0' => Escaped::Char('\0'),
             'd' => class(vec![('0', '9')]),
             'w' => class(vec![('a', 'z'), ('A', 'Z'), ('0', '9'), ('_', '_')]),
-            's' => class(vec![(' ', ' '), ('\t', '\t'), ('\n', '\n'), ('\r', '\r'), ('\x0b', '\x0c')]),
+            's' => class(vec![
+                (' ', ' '),
+                ('\t', '\t'),
+                ('\n', '\n'),
+                ('\r', '\r'),
+                ('\x0b', '\x0c'),
+            ]),
             'x' => {
-                let hex: String = self.chars.get(self.pos..self.pos + 2).unwrap_or(&[]).iter().collect();
+                let hex: String = self
+                    .chars
+                    .get(self.pos..self.pos + 2)
+                    .unwrap_or(&[])
+                    .iter()
+                    .collect();
                 self.pos += 2;
-                let v = u32::from_str_radix(&hex, 16).map_err(|_| "expected two hex digits after \\x".to_string())?;
+                let v = u32::from_str_radix(&hex, 16)
+                    .map_err(|_| "expected two hex digits after \\x".to_string())?;
                 Escaped::Char(char::from_u32(v).unwrap())
             }
             'u' => {
@@ -239,7 +262,8 @@ impl RegexParser {
                     .ok_or("expected '}' after \\u{...")?;
                 let hex: String = self.chars[self.pos + 1..self.pos + close].iter().collect();
                 self.pos += close + 1;
-                let v = u32::from_str_radix(&hex, 16).map_err(|_| "invalid \\u{...} escape".to_string())?;
+                let v = u32::from_str_radix(&hex, 16)
+                    .map_err(|_| "invalid \\u{...} escape".to_string())?;
                 Escaped::Char(char::from_u32(v).ok_or("invalid character in \\u{...}")?)
             }
             c if c.is_ascii_alphanumeric() => return Err(format!("unknown escape \\{c}")),

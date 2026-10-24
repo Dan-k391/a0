@@ -14,13 +14,19 @@ pub fn verify(m: &Module) -> Diagnostics {
     for g in 0..m.global_count() {
         let g = GlobalId(g);
         if m.global_name(g).is_empty() {
-            diags.push(Diagnostic::error("ir.name", "global has an empty name").with_span_opt(m.global_span(g)));
+            diags.push(
+                Diagnostic::error("ir.name", "global has an empty name")
+                    .with_span_opt(m.global_span(g)),
+            );
         }
         if m.global_type(g) == Some(Type::Ptr) && m.global_init_bits(g) != 0 {
             diags.push(
                 Diagnostic::error(
                     "ir.type",
-                    &format!("pointer global @{} must be initialized to null", m.global_name(g)),
+                    &format!(
+                        "pointer global @{} must be initialized to null",
+                        m.global_name(g)
+                    ),
                 )
                 .with_span_opt(m.global_span(g)),
             );
@@ -29,7 +35,10 @@ pub fn verify(m: &Module) -> Diagnostics {
     for f in 0..m.func_count() {
         let f = FuncId(f);
         if m.func_name(f).is_empty() {
-            diags.push(Diagnostic::error("ir.name", "function has an empty name").with_span_opt(m.func_span(f)));
+            diags.push(
+                Diagnostic::error("ir.name", "function has an empty name")
+                    .with_span_opt(m.func_span(f)),
+            );
         }
         if m.func_body(f).is_some() {
             FuncVerifier::new(m, f, &mut diags).run();
@@ -45,9 +54,17 @@ pub fn check_entry(m: &Module) -> Diagnostics {
         None => diags.error("ir.entry", "module has no function @main", None),
         Some(f) => {
             if m.func_is_extern(f) {
-                diags.error("ir.entry", "@main must be defined in the module", m.func_span(f));
+                diags.error(
+                    "ir.entry",
+                    "@main must be defined in the module",
+                    m.func_span(f),
+                );
             } else if !m.func_params(f).is_empty() || m.func_ret(f) != Some(Type::I32) {
-                diags.error("ir.entry", "@main must have the signature () -> i32", m.func_span(f));
+                diags.error(
+                    "ir.entry",
+                    "@main must have the signature () -> i32",
+                    m.func_span(f),
+                );
             }
         }
     }
@@ -82,7 +99,8 @@ impl<'a> FuncVerifier<'a> {
     fn func_error(&mut self, code: &str, msg: &str) {
         let msg = format!("in @{}: {msg}", self.fname());
         let span = self.m.func_span(self.f);
-        self.diags.push(Diagnostic::error(code, &msg).with_span_opt(span));
+        self.diags
+            .push(Diagnostic::error(code, &msg).with_span_opt(span));
     }
 
     fn inst_error(&mut self, inst: Inst, code: &str, msg: &str) {
@@ -122,18 +140,24 @@ impl<'a> FuncVerifier<'a> {
             }
         }
         for v in values {
-            if let Some(name) = m.value_name(v) {
-                if !seen.insert(name.to_string()) {
-                    self.func_error("ir.name", &format!("value name %{name} is used more than once"));
-                }
+            if let Some(name) = m.value_name(v)
+                && !seen.insert(name.to_string())
+            {
+                self.func_error(
+                    "ir.name",
+                    &format!("value name %{name} is used more than once"),
+                );
             }
         }
         let mut seen = HashSet::new();
         for &var in m.func_vars(self.f) {
-            if let Some(name) = m.var_name(var) {
-                if !seen.insert(name.to_string()) {
-                    self.func_error("ir.name", &format!("variable name ${name} is used more than once"));
-                }
+            if let Some(name) = m.var_name(var)
+                && !seen.insert(name.to_string())
+            {
+                self.func_error(
+                    "ir.name",
+                    &format!("variable name ${name} is used more than once"),
+                );
             }
         }
     }
@@ -199,7 +223,11 @@ impl<'a> FuncVerifier<'a> {
             _ => true,
         };
         if !arity_ok {
-            self.inst_error(inst, "ir.type", &format!("wrong number of operands for {op}"));
+            self.inst_error(
+                inst,
+                "ir.type",
+                &format!("wrong number of operands for {op}"),
+            );
             return;
         }
         let produces = match op {
@@ -258,7 +286,11 @@ impl<'a> FuncVerifier<'a> {
                     self.inst_error(
                         inst,
                         "ir.type",
-                        &format!("{op} needs two operands of the same integer type, found {} and {}", t(0), t(1)),
+                        &format!(
+                            "{op} needs two operands of the same integer type, found {} and {}",
+                            t(0),
+                            t(1)
+                        ),
                     );
                 } else {
                     self.expect_result(inst, result, t(0));
@@ -269,7 +301,11 @@ impl<'a> FuncVerifier<'a> {
                     self.inst_error(
                         inst,
                         "ir.type",
-                        &format!("{op} needs two operands of the same float type, found {} and {}", t(0), t(1)),
+                        &format!(
+                            "{op} needs two operands of the same float type, found {} and {}",
+                            t(0),
+                            t(1)
+                        ),
                     );
                 } else {
                     self.expect_result(inst, result, t(0));
@@ -277,14 +313,22 @@ impl<'a> FuncVerifier<'a> {
             }
             Opcode::Ineg | Opcode::Not => {
                 if !t(0).is_int() {
-                    self.inst_error(inst, "ir.type", &format!("{op} needs an integer operand, found {}", t(0)));
+                    self.inst_error(
+                        inst,
+                        "ir.type",
+                        &format!("{op} needs an integer operand, found {}", t(0)),
+                    );
                 } else {
                     self.expect_result(inst, result, t(0));
                 }
             }
             Opcode::Fneg => {
                 if !t(0).is_float() {
-                    self.inst_error(inst, "ir.type", &format!("fneg needs a float operand, found {}", t(0)));
+                    self.inst_error(
+                        inst,
+                        "ir.type",
+                        &format!("fneg needs a float operand, found {}", t(0)),
+                    );
                 } else {
                     self.expect_result(inst, result, t(0));
                 }
@@ -304,7 +348,11 @@ impl<'a> FuncVerifier<'a> {
                     self.inst_error(
                         inst,
                         "ir.type",
-                        &format!("fcmp needs two floats of the same type, found {} and {}", t(0), t(1)),
+                        &format!(
+                            "fcmp needs two floats of the same type, found {} and {}",
+                            t(0),
+                            t(1)
+                        ),
                     );
                 }
                 self.expect_result(inst, result, Type::I1);
@@ -312,12 +360,20 @@ impl<'a> FuncVerifier<'a> {
             op if op.is_cast() => self.cast(inst, op, t(0), result.unwrap()),
             Opcode::Select => {
                 if t(0) != Type::I1 {
-                    self.inst_error(inst, "ir.type", &format!("select condition must be i1, found {}", t(0)));
+                    self.inst_error(
+                        inst,
+                        "ir.type",
+                        &format!("select condition must be i1, found {}", t(0)),
+                    );
                 } else if t(1) != t(2) {
                     self.inst_error(
                         inst,
                         "ir.type",
-                        &format!("select operands must have the same type, found {} and {}", t(1), t(2)),
+                        &format!(
+                            "select operands must have the same type, found {} and {}",
+                            t(1),
+                            t(2)
+                        ),
                     );
                 } else {
                     self.expect_result(inst, result, t(1));
@@ -325,12 +381,20 @@ impl<'a> FuncVerifier<'a> {
             }
             Opcode::Load => {
                 if t(0) != Type::Ptr {
-                    self.inst_error(inst, "ir.type", &format!("load address must be ptr, found {}", t(0)));
+                    self.inst_error(
+                        inst,
+                        "ir.type",
+                        &format!("load address must be ptr, found {}", t(0)),
+                    );
                 }
             }
             Opcode::Store => {
                 if t(1) != Type::Ptr {
-                    self.inst_error(inst, "ir.type", &format!("store address must be ptr, found {}", t(1)));
+                    self.inst_error(
+                        inst,
+                        "ir.type",
+                        &format!("store address must be ptr, found {}", t(1)),
+                    );
                 }
             }
             Opcode::Ptradd => {
@@ -338,7 +402,11 @@ impl<'a> FuncVerifier<'a> {
                     self.inst_error(
                         inst,
                         "ir.type",
-                        &format!("ptradd needs a ptr and an i64 offset, found {} and {}", t(0), t(1)),
+                        &format!(
+                            "ptradd needs a ptr and an i64 offset, found {} and {}",
+                            t(0),
+                            t(1)
+                        ),
                     );
                 }
                 self.expect_result(inst, result, Type::Ptr);
@@ -356,7 +424,11 @@ impl<'a> FuncVerifier<'a> {
             }
             Opcode::CallIndirect => {
                 if t(0) != Type::Ptr {
-                    self.inst_error(inst, "ir.type", &format!("call_indirect callee must be ptr, found {}", t(0)));
+                    self.inst_error(
+                        inst,
+                        "ir.type",
+                        &format!("call_indirect callee must be ptr, found {}", t(0)),
+                    );
                 }
                 let sig = m.inst_sig(inst);
                 if sig.index() >= m.sigs.len() {
@@ -380,13 +452,20 @@ impl<'a> FuncVerifier<'a> {
                     self.inst_error(
                         inst,
                         "ir.type",
-                        &format!("cannot set a variable of type {vt} to a value of type {}", t(0)),
+                        &format!(
+                            "cannot set a variable of type {vt} to a value of type {}",
+                            t(0)
+                        ),
                     );
                 }
             }
             Opcode::If => {
                 if t(0) != Type::I1 {
-                    self.inst_error(inst, "ir.type", &format!("if condition must be i1, found {}", t(0)));
+                    self.inst_error(
+                        inst,
+                        "ir.type",
+                        &format!("if condition must be i1, found {}", t(0)),
+                    );
                 }
                 match m.inst_region(inst, 0) {
                     Some(then) => self.region(then),
@@ -416,7 +495,11 @@ impl<'a> FuncVerifier<'a> {
                         self.inst_error(inst, "ir.return", "void function returns a value");
                     }
                     (Some(t), None) => {
-                        self.inst_error(inst, "ir.return", &format!("return needs a value of type {t}"));
+                        self.inst_error(
+                            inst,
+                            "ir.return",
+                            &format!("return needs a value of type {t}"),
+                        );
                     }
                     (Some(t), Some(&v)) if self.ty(v) != t => {
                         self.inst_error(
@@ -434,15 +517,15 @@ impl<'a> FuncVerifier<'a> {
     }
 
     fn expect_result(&mut self, inst: Inst, result: Option<Type>, expected: Type) {
-        if let Some(found) = result {
-            if found != expected {
-                let op = self.m.inst_opcode(inst);
-                self.inst_error(
-                    inst,
-                    "ir.type",
-                    &format!("{op} produces {expected}, but the result is declared as {found}"),
-                );
-            }
+        if let Some(found) = result
+            && found != expected
+        {
+            let op = self.m.inst_opcode(inst);
+            self.inst_error(
+                inst,
+                "ir.type",
+                &format!("{op} produces {expected}, but the result is declared as {found}"),
+            );
         }
     }
 
@@ -459,7 +542,11 @@ impl<'a> FuncVerifier<'a> {
             self.inst_error(
                 inst,
                 "ir.type",
-                &format!("{callee} takes {} arguments but {} were given", params.len(), args.len()),
+                &format!(
+                    "{callee} takes {} arguments but {} were given",
+                    params.len(),
+                    args.len()
+                ),
             );
             return;
         }
@@ -468,13 +555,25 @@ impl<'a> FuncVerifier<'a> {
                 self.inst_error(
                     inst,
                     "ir.type",
-                    &format!("argument {} of {callee} must be {p}, found {}", i + 1, self.ty(a)),
+                    &format!(
+                        "argument {} of {callee} must be {p}, found {}",
+                        i + 1,
+                        self.ty(a)
+                    ),
                 );
             }
         }
         match (ret, result) {
-            (None, Some(_)) => self.inst_error(inst, "ir.type", &format!("{callee} returns nothing, so the call has no result")),
-            (Some(t), None) => self.inst_error(inst, "ir.type", &format!("{callee} returns {t}; give the call a result")),
+            (None, Some(_)) => self.inst_error(
+                inst,
+                "ir.type",
+                &format!("{callee} returns nothing, so the call has no result"),
+            ),
+            (Some(t), None) => self.inst_error(
+                inst,
+                "ir.type",
+                &format!("{callee} returns {t}; give the call a result"),
+            ),
             (Some(t), Some(r)) if t != r => self.inst_error(
                 inst,
                 "ir.type",
@@ -487,7 +586,9 @@ impl<'a> FuncVerifier<'a> {
     fn cast(&mut self, inst: Inst, op: Opcode, from: Type, to: Type) {
         let int_bits = |t: Type| if t.is_int() { t.bits() } else { None };
         let ok = match op {
-            Opcode::Zext | Opcode::Sext => matches!((int_bits(from), int_bits(to)), (Some(a), Some(b)) if a < b),
+            Opcode::Zext | Opcode::Sext => {
+                matches!((int_bits(from), int_bits(to)), (Some(a), Some(b)) if a < b)
+            }
             Opcode::Trunc => matches!((int_bits(from), int_bits(to)), (Some(a), Some(b)) if a > b),
             Opcode::Sitofp | Opcode::Uitofp => from.is_int() && to.is_float(),
             Opcode::Fptosi | Opcode::Fptoui => from.is_float() && to.is_int(),
@@ -495,7 +596,10 @@ impl<'a> FuncVerifier<'a> {
             Opcode::Ftrunc => from == Type::F64 && to == Type::F32,
             Opcode::Bitcast => matches!(
                 (from, to),
-                (Type::I32, Type::F32) | (Type::F32, Type::I32) | (Type::I64, Type::F64) | (Type::F64, Type::I64)
+                (Type::I32, Type::F32)
+                    | (Type::F32, Type::I32)
+                    | (Type::I64, Type::F64)
+                    | (Type::F64, Type::I64)
             ),
             Opcode::Ptrtoint => from == Type::Ptr && to.is_int(),
             Opcode::Inttoptr => from.is_int() && to == Type::Ptr,

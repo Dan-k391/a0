@@ -116,16 +116,35 @@ fn native_programs_match_expectations() {
 fn check_and_fmt_report_diagnostics() {
     let dir = scratch_dir("cli");
     let bad = dir.join("bad.a0ir");
-    std::fs::write(&bad, "module \"m\"\nfunc @f() -> i64 {\n  %x: f64 = fconst 1.0\n  return %x\n}\n").unwrap();
-    let out = Command::new(env!("CARGO_BIN_EXE_a0")).arg("check").arg(&bad).output().unwrap();
+    std::fs::write(
+        &bad,
+        "module \"m\"\nfunc @f() -> i64 {\n  %x: f64 = fconst 1.0\n  return %x\n}\n",
+    )
+    .unwrap();
+    let out = Command::new(env!("CARGO_BIN_EXE_a0"))
+        .arg("check")
+        .arg(&bad)
+        .output()
+        .unwrap();
     assert_eq!(out.status.code(), Some(1));
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("returns f64 but the function returns i64"), "{stderr}");
+    assert!(
+        stderr.contains("returns f64 but the function returns i64"),
+        "{stderr}"
+    );
     assert!(stderr.contains("bad.a0ir:4:3"), "{stderr}");
 
     let good = dir.join("good.a0ir");
-    std::fs::write(&good, "module \"m\"\nfunc @f()   ->   i64 {\n%x: i64 = iconst 1 ; one\nreturn %x\n}\n").unwrap();
-    let out = Command::new(env!("CARGO_BIN_EXE_a0")).arg("fmt").arg(&good).output().unwrap();
+    std::fs::write(
+        &good,
+        "module \"m\"\nfunc @f()   ->   i64 {\n%x: i64 = iconst 1 ; one\nreturn %x\n}\n",
+    )
+    .unwrap();
+    let out = Command::new(env!("CARGO_BIN_EXE_a0"))
+        .arg("fmt")
+        .arg(&good)
+        .output()
+        .unwrap();
     assert_eq!(
         String::from_utf8_lossy(&out.stdout),
         "module \"m\"\n\nfunc @f() -> i64 {\n  %x: i64 = iconst 1\n  return %x\n}\n"
@@ -136,7 +155,10 @@ fn check_and_fmt_report_diagnostics() {
 #[test]
 fn obj_emits_for_other_targets() {
     let dir = scratch_dir("obj");
-    let file = programs().into_iter().find(|p| p.ends_with("hello.a0ir")).unwrap();
+    let file = programs()
+        .into_iter()
+        .find(|p| p.ends_with("hello.a0ir"))
+        .unwrap();
     let out_path = dir.join("hello.o");
     let out = Command::new(env!("CARGO_BIN_EXE_a0"))
         .args(["obj", "--target", "aarch64-linux", "-o"])
@@ -144,7 +166,11 @@ fn obj_emits_for_other_targets() {
         .arg(&file)
         .output()
         .unwrap();
-    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let bytes = std::fs::read(&out_path).unwrap();
     assert_eq!(&bytes[..4], b"\x7fELF");
     std::fs::remove_dir_all(&dir).ok();
@@ -166,14 +192,27 @@ sum = NUM (\"+\" NUM)*;
     .unwrap();
     let good = dir.join("good.txt");
     std::fs::write(&good, "1 + 2").unwrap();
-    let out = Command::new(env!("CARGO_BIN_EXE_a0")).arg("parse").arg(&grammar).arg(&good).output().unwrap();
+    let out = Command::new(env!("CARGO_BIN_EXE_a0"))
+        .arg("parse")
+        .arg(&grammar)
+        .arg(&good)
+        .output()
+        .unwrap();
     assert!(out.status.success());
-    assert_eq!(String::from_utf8_lossy(&out.stdout), "(program (sum '1' '+' '2'))
-");
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "(program (sum '1' '+' '2'))
+"
+    );
 
     let bad = dir.join("bad.txt");
     std::fs::write(&bad, "1 + + 2").unwrap();
-    let out = Command::new(env!("CARGO_BIN_EXE_a0")).arg("parse").arg(&grammar).arg(&bad).output().unwrap();
+    let out = Command::new(env!("CARGO_BIN_EXE_a0"))
+        .arg("parse")
+        .arg(&grammar)
+        .arg(&bad)
+        .output()
+        .unwrap();
     assert_eq!(out.status.code(), Some(1));
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("expected NUM, found '+'"), "{stderr}");

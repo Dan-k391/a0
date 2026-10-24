@@ -117,11 +117,17 @@ pub(crate) fn inst_text(m: &Module, names: &Names, inst: Inst) -> String {
     let a = |i: usize| names.value(args.get(i).copied().unwrap_or(Value::NONE));
     let operands = match op {
         Opcode::Iconst => {
-            let ty = m.inst_result(inst).map(|v| m.value_type(v)).unwrap_or(Type::I64);
+            let ty = m
+                .inst_result(inst)
+                .map(|v| m.value_type(v))
+                .unwrap_or(Type::I64);
             format_scalar(ty, m.inst_iconst(inst) as u64)
         }
         Opcode::Fconst => {
-            let ty = m.inst_result(inst).map(|v| m.value_type(v)).unwrap_or(Type::F64);
+            let ty = m
+                .inst_result(inst)
+                .map(|v| m.value_type(v))
+                .unwrap_or(Type::F64);
             format_scalar(ty, m.inst_fconst_bits(inst))
         }
         Opcode::Null | Opcode::Break | Opcode::Continue | Opcode::Unreachable | Opcode::Loop => {
@@ -143,7 +149,12 @@ pub(crate) fn inst_text(m: &Module, names: &Names, inst: Inst) -> String {
                 Some(t) => format!(" -> {t}"),
                 None => String::new(),
             };
-            format!("{}({}) : ({}){ret}", a(0), list.join(", "), params.join(", "))
+            format!(
+                "{}({}) : ({}){ret}",
+                a(0),
+                list.join(", "),
+                params.join(", ")
+            )
         }
         Opcode::Get => names.var(m.inst_var(inst)),
         Opcode::Set => format!("{}, {}", names.var(m.inst_var(inst)), a(0)),

@@ -81,7 +81,9 @@ fn generate_ffi_call() -> String {
                 let call = match rk {
                     0 => format!("((void (*)({params}))fn)({args});"),
                     1 => format!("*ret = ((I (*)({params}))fn)({args});"),
-                    _ => format!("{{ F r = ((F (*)({params}))fn)({args}); memcpy(ret, &r, sizeof r); }}"),
+                    _ => format!(
+                        "{{ F r = ((F (*)({params}))fn)({args}); memcpy(ret, &r, sizeof r); }}"
+                    ),
                 };
                 let _ = writeln!(c, "    case {key}: {call} return 0;");
             }

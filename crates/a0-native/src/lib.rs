@@ -27,7 +27,12 @@ pub struct BuildOptions {
 }
 
 /// Compiles a module with an `@main` into an executable at `output`.
-pub fn build_executable(m: &Module, target: Target, output: &Path, opts: &BuildOptions) -> Result<(), Diagnostics> {
+pub fn build_executable(
+    m: &Module,
+    target: Target,
+    output: &Path,
+    opts: &BuildOptions,
+) -> Result<(), Diagnostics> {
     let object = compile_object(
         m,
         target,

@@ -191,7 +191,9 @@ struct DslToken {
     span: Span,
 }
 
-const PUNCT: [&str; 15] = ["=>", "=", ";", "|", "(", ")", "*", "+", "?", "!", "&", ":", "~", "{", "}"];
+const PUNCT: [&str; 15] = [
+    "=>", "=", ";", "|", "(", ")", "*", "+", "?", "!", "&", ":", "~", "{", "}",
+];
 
 fn lex_dsl(text: &str, source: SourceId) -> Result<Vec<DslToken>, Diagnostics> {
     let bytes = text.as_bytes();
@@ -199,7 +201,9 @@ fn lex_dsl(text: &str, source: SourceId) -> Result<Vec<DslToken>, Diagnostics> {
     let mut i = 0;
     let span = |a: usize, b: usize| Span::new(source, a as u32, b as u32);
     let err = |a: usize, b: usize, m: &str| -> Diagnostics {
-        Diagnostic::error("grammar.syntax", m).with_span(span(a, b)).into()
+        Diagnostic::error("grammar.syntax", m)
+            .with_span(span(a, b))
+            .into()
     };
     'outer: while i < bytes.len() {
         let c = bytes[i];
@@ -236,7 +240,11 @@ fn lex_dsl(text: &str, source: SourceId) -> Result<Vec<DslToken>, Diagnostics> {
                         i += 2;
                     }
                     Some(b'\\') => {
-                        let ch_len = text[i + 1..].chars().next().map(char::len_utf8).unwrap_or(0);
+                        let ch_len = text[i + 1..]
+                            .chars()
+                            .next()
+                            .map(char::len_utf8)
+                            .unwrap_or(0);
                         pat.push_str(&text[i..i + 1 + ch_len]);
                         i += 1 + ch_len;
                     }
@@ -352,11 +360,11 @@ enum PrecLine {
 #[derive(Clone, Debug)]
 enum RuleBody {
     Plain(Ast),
-    Prec {
-        atom: Ast,
-        lines: Vec<PrecLine>,
-    },
+    Prec { atom: Ast, lines: Vec<PrecLine> },
 }
+
+/// Literals listed in `@recover(after ... before ...)`, with their spans.
+type SyncTokens = Vec<(String, Span)>;
 
 #[derive(Clone, Debug)]
 enum Item {
@@ -369,7 +377,7 @@ enum Item {
         name: String,
         span: Span,
         inline: bool,
-        recover: Option<(Vec<(String, Span)>, Vec<(String, Span)>)>,
+        recover: Option<(SyncTokens, SyncTokens)>,
         body: RuleBody,
     },
 }
@@ -412,9 +420,11 @@ impl DslParser {
             Tok::Punct(p) => format!("'{p}'"),
             Tok::Eof => "end of file".to_string(),
         };
-        Err(Diagnostic::error("grammar.syntax", &format!("expected {what}, found {found}"))
-            .with_span(self.span())
-            .into())
+        Err(
+            Diagnostic::error("grammar.syntax", &format!("expected {what}, found {found}"))
+                .with_span(self.span())
+                .into(),
+        )
     }
 
     fn punct(&mut self, p: &'static str) -> Result<(), Diagnostics> {
@@ -617,7 +627,11 @@ impl DslParser {
 
     fn seq(&mut self) -> Result<Ast, Diagnostics> {
         let mut items = Vec::new();
-        while !(self.is_punct("|") || self.is_punct(")") || self.is_punct(";") || *self.peek() == Tok::Eof) {
+        while !(self.is_punct("|")
+            || self.is_punct(")")
+            || self.is_punct(";")
+            || *self.peek() == Tok::Eof)
+        {
             items.push(self.item_expr()?);
         }
         Ok(if items.len() == 1 {
@@ -630,12 +644,12 @@ impl DslParser {
     /// `[field:] [!|&] primary [*|+|?]... [~ "message"]`
     fn item_expr(&mut self) -> Result<Ast, Diagnostics> {
         let mut field = None;
-        if let (Tok::Ident(name), Some(next)) = (self.peek().clone(), self.toks.get(self.pos + 1)) {
-            if next.tok == Tok::Punct(":") {
-                self.bump();
-                self.bump();
-                field = Some(name);
-            }
+        if let (Tok::Ident(name), Some(next)) = (self.peek().clone(), self.toks.get(self.pos + 1))
+            && next.tok == Tok::Punct(":")
+        {
+            self.bump();
+            self.bump();
+            field = Some(name);
         }
         let prefix = if self.is_punct("!") || self.is_punct("&") {
             let p = self.bump();
@@ -746,7 +760,8 @@ impl Builder {
     }
 
     fn error(&mut self, span: Option<Span>, msg: &str) {
-        self.diags.push(Diagnostic::error("grammar.invalid", msg).with_span_opt(span));
+        self.diags
+            .push(Diagnostic::error("grammar.invalid", msg).with_span_opt(span));
     }
 
     fn new_kind(&mut self, name: &str, token: bool, literal: Option<&str>) -> KindId {
@@ -832,12 +847,25 @@ impl Builder {
 
         let mut rules = Vec::new();
         for item in &rule_items {
-            if let Item::Rule { name: rname, span, inline, .. } = item {
-                if self.rule_map.contains_key(rname) || self.token_map.contains_key(rname) || rname == "EOF" {
+            if let Item::Rule {
+                name: rname,
+                span,
+                inline,
+                ..
+            } = item
+            {
+                if self.rule_map.contains_key(rname)
+                    || self.token_map.contains_key(rname)
+                    || rname == "EOF"
+                {
                     self.error(Some(*span), &format!("'{rname}' is defined more than once"));
                     continue;
                 }
-                let kind = if *inline { None } else { Some(self.node_kind(rname)) };
+                let kind = if *inline {
+                    None
+                } else {
+                    Some(self.node_kind(rname))
+                };
                 self.rule_map.insert(rname.clone(), rules.len());
                 rules.push(Rule {
                     name: rname.clone(),
@@ -885,7 +913,10 @@ impl Builder {
         }
         if rules[0].kind.is_none() {
             let span = rules[0].span;
-            self.error(Some(span), "the start rule (the first rule) cannot be @inline");
+            self.error(
+                Some(span),
+                "the start rule (the first rule) cannot be @inline",
+            );
         }
 
         self.validate(&rules);
@@ -896,7 +927,11 @@ impl Builder {
         // Literals first (they win ties), then the other patterns in declaration order.
         let mut matcher = Matcher::new();
         let mut actions = Vec::new();
-        let mut literals: Vec<(String, KindId)> = self.literal_map.iter().map(|(t, &k)| (t.clone(), k)).collect();
+        let mut literals: Vec<(String, KindId)> = self
+            .literal_map
+            .iter()
+            .map(|(t, &k)| (t.clone(), k))
+            .collect();
         literals.sort_by_key(|(_, k)| *k);
         for (text, kind) in literals {
             matcher.add_literal(&text, actions.len() as u32);
@@ -933,7 +968,10 @@ impl Builder {
         match regex::parse(pat) {
             Ok(node) => {
                 if regex::matches_empty(&node) {
-                    self.error(Some(span), "this pattern can match empty text, which would never advance the lexer");
+                    self.error(
+                        Some(span),
+                        "this pattern can match empty text, which would never advance the lexer",
+                    );
                     None
                 } else {
                     Some(node)
@@ -1010,7 +1048,10 @@ impl Builder {
             _ => false,
         };
         if !single {
-            self.error(None, "the operand of @prec must be a token or a (non-inline) rule");
+            self.error(
+                None,
+                "the operand of @prec must be a token or a (non-inline) rule",
+            );
         }
         let mut prec = Prec {
             atom: atom_id,
@@ -1026,7 +1067,10 @@ impl Builder {
                     for (op, span) in ops {
                         let k = self.literal(op);
                         if prec.binary.insert(k, (level, *assoc, kind)).is_some() {
-                            self.error(Some(*span), &format!("binary operator \"{op}\" is listed twice"));
+                            self.error(
+                                Some(*span),
+                                &format!("binary operator \"{op}\" is listed twice"),
+                            );
                         }
                     }
                 }
@@ -1035,21 +1079,32 @@ impl Builder {
                     for (op, span) in ops {
                         let k = self.literal(op);
                         if prec.prefix.insert(k, (level, kind)).is_some() {
-                            self.error(Some(*span), &format!("prefix operator \"{op}\" is listed twice"));
+                            self.error(
+                                Some(*span),
+                                &format!("prefix operator \"{op}\" is listed twice"),
+                            );
                         }
                     }
                 }
                 PrecLine::Postfix(seq, node, span) => {
                     let kind = self.node_kind(node);
                     let Some(Ast::Lit(first)) = seq.first() else {
-                        self.error(Some(*span), "a postfix form must start with a literal token");
+                        self.error(
+                            Some(*span),
+                            "a postfix form must start with a literal token",
+                        );
                         continue;
                     };
                     let k = self.literal(first);
                     let rest = Ast::Seq(seq[1..].to_vec());
                     let rest_id = self.lower(&rest);
-                    if prec.binary.contains_key(&k) || prec.postfix.insert(k, (level, rest_id, kind)).is_some() {
-                        self.error(Some(*span), &format!("\"{first}\" already starts another operator"));
+                    if prec.binary.contains_key(&k)
+                        || prec.postfix.insert(k, (level, rest_id, kind)).is_some()
+                    {
+                        self.error(
+                            Some(*span),
+                            &format!("\"{first}\" already starts another operator"),
+                        );
                     }
                 }
             }
@@ -1084,10 +1139,14 @@ impl Builder {
             }
         }
         for id in 0..n {
-            if let Expr::Repeat { expr, at_most_once: false, .. } = self.exprs[id] {
-                if nullable[expr] {
-                    self.error(None, "a repetition (* or +) applies to something that can match nothing; it would loop forever");
-                }
+            if let Expr::Repeat {
+                expr,
+                at_most_once: false,
+                ..
+            } = self.exprs[id]
+                && nullable[expr]
+            {
+                self.error(None, "a repetition (* or +) applies to something that can match nothing; it would loop forever");
             }
         }
         // Left recursion: a rule reachable from itself without consuming input.
@@ -1153,9 +1212,11 @@ impl Builder {
                     self.first_calls(i, nullable, out);
                 }
             }
-            Expr::Repeat { expr, .. } | Expr::Not(expr) | Expr::And(expr) | Expr::Field(_, expr) | Expr::Expect(expr, _) => {
-                self.first_calls(*expr, nullable, out)
-            }
+            Expr::Repeat { expr, .. }
+            | Expr::Not(expr)
+            | Expr::And(expr)
+            | Expr::Field(_, expr)
+            | Expr::Expect(expr, _) => self.first_calls(*expr, nullable, out),
             Expr::Prec(p) => self.first_calls(self.precs[*p].atom, nullable, out),
         }
     }

@@ -81,7 +81,12 @@ mod tests {
         fn go(steps: &[Combine], ops: &[&str], o: Operand) -> String {
             if o.is_step {
                 let s = steps[o.index as usize];
-                format!("({} {} {})", go(steps, ops, s.left), ops[s.op as usize], go(steps, ops, s.right))
+                format!(
+                    "({} {} {})",
+                    go(steps, ops, s.left),
+                    ops[s.op as usize],
+                    go(steps, ops, s.right)
+                )
             } else {
                 ((b'a' + o.index as u8) as char).to_string()
             }

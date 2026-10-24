@@ -54,7 +54,9 @@ impl fmt::Display for CompileError {
         match &self.place {
             ErrorPlace::Lexical => write!(f, "[line {}] Error: {}", self.line, self.message),
             ErrorPlace::End => write!(f, "[line {}] Error at end: {}", self.line, self.message),
-            ErrorPlace::Token(t) => write!(f, "[line {}] Error at '{}': {}", self.line, t, self.message),
+            ErrorPlace::Token(t) => {
+                write!(f, "[line {}] Error at '{}': {}", self.line, t, self.message)
+            }
         }
     }
 }
@@ -65,7 +67,10 @@ pub fn compile(text: &str) -> Result<Module, Vec<CompileError>> {
     let id = sources.add("script", text);
     let g = grammar();
     let (tree, diags) = g.parse(text, id);
-    let lines = Lines { sources: &sources, source: id };
+    let lines = Lines {
+        sources: &sources,
+        source: id,
+    };
 
     // Syntax errors, plus jlox's checks that happen while parsing (assignment targets, argument and
     // parameter limits). If there are any, the resolver does not run, just like jlox.
@@ -122,7 +127,12 @@ impl Lines<'_> {
     }
 
     /// The error a token produces in jlox's format.
-    pub fn error(&self, tree: &a0_syntax::SyntaxTree, token: a0_syntax::NodeId, message: &str) -> CompileError {
+    pub fn error(
+        &self,
+        tree: &a0_syntax::SyntaxTree,
+        token: a0_syntax::NodeId,
+        message: &str,
+    ) -> CompileError {
         CompileError {
             line: self.of(tree, token),
             place: ErrorPlace::Token(tree.text(token).to_string()),

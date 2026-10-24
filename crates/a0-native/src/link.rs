@@ -69,14 +69,20 @@ impl Drop for ScratchDir {
 ///
 /// Linking needs the target's system linker and a runtime built for the target, so `target` must be
 /// the host: cross-linking is out of scope.
-pub fn link_executable(object: &[u8], target: Target, output: &Path, opts: &LinkOptions) -> Result<(), Diagnostics> {
+pub fn link_executable(
+    object: &[u8],
+    target: Target,
+    output: &Path,
+    opts: &LinkOptions,
+) -> Result<(), Diagnostics> {
     if Target::host() != Some(target) {
         return Err(link_error(&format!(
             "cannot link for {target}: linking is only supported for the host target ({})",
             Target::host().map(|t| t.triple()).unwrap_or("unknown")
         )));
     }
-    let scratch = ScratchDir::new().map_err(|e| link_error(&format!("cannot create a temporary directory: {e}")))?;
+    let scratch = ScratchDir::new()
+        .map_err(|e| link_error(&format!("cannot create a temporary directory: {e}")))?;
     let write = |name: String, bytes: &[u8]| -> Result<PathBuf, Diagnostics> {
         let path = scratch.0.join(name);
         std::fs::write(&path, bytes)
@@ -86,9 +92,15 @@ pub fn link_executable(object: &[u8], target: Target, output: &Path, opts: &Link
     let object_path = write(format!("program{}", target.object_suffix()), object)?;
     let mut libs = Vec::new();
     for lib in &opts.libraries {
-        libs.push(write(format!("{}{}", lib.name, target.static_lib_suffix()), &lib.bytes)?);
+        libs.push(write(
+            format!("{}{}", lib.name, target.static_lib_suffix()),
+            &lib.bytes,
+        )?);
     }
-    libs.push(write(format!("a0rt{}", target.static_lib_suffix()), a0_runtime::static_library())?);
+    libs.push(write(
+        format!("a0rt{}", target.static_lib_suffix()),
+        a0_runtime::static_library(),
+    )?);
 
     let mut cmd = match target.linker_flavor() {
         LinkerFlavor::Msvc => {
@@ -105,7 +117,11 @@ pub fn link_executable(object: &[u8], target: Target, output: &Path, opts: &Link
         }
         LinkerFlavor::Gnu => {
             let mut cmd = Command::new(std::env::var("CC").unwrap_or_else(|_| "cc".to_string()));
-            cmd.arg("-o").arg(output).arg(&object_path).args(&libs).arg("-lm");
+            cmd.arg("-o")
+                .arg(output)
+                .arg(&object_path)
+                .args(&libs)
+                .arg("-lm");
             cmd
         }
         LinkerFlavor::Darwin => {
@@ -118,9 +134,12 @@ pub fn link_executable(object: &[u8], target: Target, output: &Path, opts: &Link
             cmd
         }
     };
-    let result = cmd
-        .output()
-        .map_err(|e| link_error(&format!("cannot run the linker {:?}: {e}", cmd.get_program())))?;
+    let result = cmd.output().map_err(|e| {
+        link_error(&format!(
+            "cannot run the linker {:?}: {e}",
+            cmd.get_program()
+        ))
+    })?;
     if !result.status.success() {
         let mut text = String::from_utf8_lossy(&result.stdout).into_owned();
         text.push_str(&String::from_utf8_lossy(&result.stderr));

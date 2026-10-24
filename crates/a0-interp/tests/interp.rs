@@ -7,7 +7,8 @@ fn module(text: &str) -> Module {
 }
 
 fn interp(text: &str) -> Interpreter {
-    Interpreter::new(module(text), &HostSymbols::new()).unwrap_or_else(|d| panic!("{}", d.summary()))
+    Interpreter::new(module(text), &HostSymbols::new())
+        .unwrap_or_else(|d| panic!("{}", d.summary()))
 }
 
 fn func(i: &Interpreter, name: &str) -> FuncId {
@@ -139,21 +140,44 @@ func @sat(%a: f64) -> i32 {
 ",
     );
     // 100 + 100 wraps to -56 in i8.
-    assert_eq!(call(&mut i, "wrap8", &[100, 100]).unwrap(), Some(-56i64 as u64));
+    assert_eq!(
+        call(&mut i, "wrap8", &[100, 100]).unwrap(),
+        Some(-56i64 as u64)
+    );
     // -1 as an unsigned byte is 255; 255 / 2 = 127.
-    assert_eq!(call(&mut i, "udiv8", &[-1i64 as u64, 2]).unwrap(), Some(127));
-    assert_eq!(call(&mut i, "sdiv", &[-7i64 as u64, 2]).unwrap(), Some(-3i64 as u64));
-    assert_eq!(call(&mut i, "sdiv", &[1, 0]).unwrap_err().message, "integer division by zero");
+    assert_eq!(
+        call(&mut i, "udiv8", &[-1i64 as u64, 2]).unwrap(),
+        Some(127)
+    );
+    assert_eq!(
+        call(&mut i, "sdiv", &[-7i64 as u64, 2]).unwrap(),
+        Some(-3i64 as u64)
+    );
+    assert_eq!(
+        call(&mut i, "sdiv", &[1, 0]).unwrap_err().message,
+        "integer division by zero"
+    );
     let min = i32::MIN as i64 as u64;
-    assert_eq!(call(&mut i, "sdiv", &[min, -1i64 as u64]).unwrap_err().message, "integer overflow");
-    assert_eq!(call(&mut i, "srem", &[i64::MIN as u64, -1i64 as u64]).unwrap(), Some(0));
+    assert_eq!(
+        call(&mut i, "sdiv", &[min, -1i64 as u64])
+            .unwrap_err()
+            .message,
+        "integer overflow"
+    );
+    assert_eq!(
+        call(&mut i, "srem", &[i64::MIN as u64, -1i64 as u64]).unwrap(),
+        Some(0)
+    );
     // Shift amounts are taken modulo the width.
     assert_eq!(call(&mut i, "shl", &[1, 33]).unwrap(), Some(2));
     assert_eq!(call(&mut i, "lshr", &[-128i64 as u64, 7]).unwrap(), Some(1));
     assert_eq!(call(&mut i, "ult", &[1, -1i64 as u64]).unwrap(), Some(1));
     assert_eq!(call(&mut i, "zext", &[-1i64 as u64]).unwrap(), Some(255));
     assert_eq!(call(&mut i, "sext1", &[1]).unwrap(), Some(-1i64 as u64));
-    assert_eq!(call(&mut i, "sat", &[1e20f64.to_bits()]).unwrap(), Some(i32::MAX as u64));
+    assert_eq!(
+        call(&mut i, "sat", &[1e20f64.to_bits()]).unwrap(),
+        Some(i32::MAX as u64)
+    );
     assert_eq!(call(&mut i, "sat", &[f64::NAN.to_bits()]).unwrap(), Some(0));
 }
 
@@ -240,8 +264,14 @@ func @pick(%which: i1) -> ptr {
     let apply = func(&i, "apply");
     let twice = i.call(pick, &[1]).unwrap().unwrap();
     let sqrt = i.call(pick, &[0]).unwrap().unwrap();
-    assert_eq!(f64::from_bits(i.call(apply, &[twice, 21f64.to_bits()]).unwrap().unwrap()), 42.0);
-    assert_eq!(f64::from_bits(i.call(apply, &[sqrt, 81f64.to_bits()]).unwrap().unwrap()), 9.0);
+    assert_eq!(
+        f64::from_bits(i.call(apply, &[twice, 21f64.to_bits()]).unwrap().unwrap()),
+        42.0
+    );
+    assert_eq!(
+        f64::from_bits(i.call(apply, &[sqrt, 81f64.to_bits()]).unwrap().unwrap()),
+        9.0
+    );
 }
 
 #[test]
@@ -262,7 +292,10 @@ func @down(%n: i64) -> i64 {
 #[test]
 fn unreachable_traps() {
     let mut i = interp("module \"m\"\nfunc @f() {\n  unreachable\n}\n");
-    assert_eq!(call(&mut i, "f", &[]).unwrap_err().code, a0_runtime::trap::UNREACHABLE);
+    assert_eq!(
+        call(&mut i, "f", &[]).unwrap_err().code,
+        a0_runtime::trap::UNREACHABLE
+    );
 }
 
 #[test]
@@ -280,7 +313,10 @@ func @f() -> i64 {
     );
     let err = Interpreter::new(m, &HostSymbols::new()).err().unwrap();
     let text = err.summary();
-    assert!(text.contains("unresolved external function @mystery"), "{text}");
+    assert!(
+        text.contains("unresolved external function @mystery"),
+        "{text}"
+    );
     assert!(!text.contains("@unused"), "{text}");
 }
 
@@ -299,5 +335,9 @@ func @f() -> f32 {
     let mut syms = HostSymbols::new();
     syms.add("sinf", 1);
     let err = Interpreter::new(m, &syms).err().unwrap();
-    assert!(err.summary().contains("it has f32 parameters"), "{}", err.summary());
+    assert!(
+        err.summary().contains("it has f32 parameters"),
+        "{}",
+        err.summary()
+    );
 }

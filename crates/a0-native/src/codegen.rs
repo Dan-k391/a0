@@ -5,10 +5,10 @@ use std::collections::HashMap;
 use a0_diag::{Diagnostic, Diagnostics};
 use a0_ir::{FloatCC, FuncId, GlobalId, Inst, IntCC, Module, Opcode, Region, SymbolKind, Type};
 use a0_target::Target;
+use cranelift_codegen::Context;
 use cranelift_codegen::ir::{self, InstBuilder, MemFlagsData, TrapCode, condcodes, types};
 use cranelift_codegen::isa::OwnedTargetIsa;
 use cranelift_codegen::settings::{self, Configurable};
-use cranelift_codegen::Context;
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Variable};
 use cranelift_module::{DataDescription, DataId, Linkage, Module as _};
 use cranelift_object::{ObjectBuilder, ObjectModule};
@@ -46,8 +46,20 @@ fn make_isa(target: Target, optimize: bool) -> Result<OwnedTargetIsa, Diagnostic
             .set(k, v)
             .map_err(|e| backend_error(format!("cannot set Cranelift flag {k}={v}: {e}")))
     };
-    set(&mut flags, "opt_level", if optimize { "speed" } else { "none" })?;
-    set(&mut flags, "is_pic", if target.requires_pic() { "true" } else { "false" })?;
+    set(
+        &mut flags,
+        "opt_level",
+        if optimize { "speed" } else { "none" },
+    )?;
+    set(
+        &mut flags,
+        "is_pic",
+        if target.requires_pic() {
+            "true"
+        } else {
+            "false"
+        },
+    )?;
     let isa = cranelift_codegen::isa::lookup_by_name(target.triple())
         .map_err(|e| backend_error(format!("Cranelift does not support {target}: {e}")))?;
     isa.finish(settings::Flags::new(flags))
@@ -79,13 +91,21 @@ fn unsupported_reason(target: Target) -> Option<&'static str> {
 }
 
 /// Compiles a verified module into an object file for `target`.
-pub fn compile_object(m: &Module, target: Target, opts: &CodegenOptions) -> Result<Vec<u8>, Diagnostics> {
+pub fn compile_object(
+    m: &Module,
+    target: Target,
+    opts: &CodegenOptions,
+) -> Result<Vec<u8>, Diagnostics> {
     if let Some(reason) = unsupported_reason(target) {
-        return Err(backend_error(format!("cannot compile for {target}: {reason}")));
+        return Err(backend_error(format!(
+            "cannot compile for {target}: {reason}"
+        )));
     }
     // The module is verified first, so Cranelift should never panic; if it does anyway, report it as
     // a diagnostic rather than taking the caller down.
-    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| compile_object_inner(m, target, opts))) {
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        compile_object_inner(m, target, opts)
+    })) {
         Ok(result) => result,
         Err(payload) => {
             let detail = payload
@@ -93,12 +113,18 @@ pub fn compile_object(m: &Module, target: Target, opts: &CodegenOptions) -> Resu
                 .cloned()
                 .or_else(|| payload.downcast_ref::<&str>().map(|s| s.to_string()))
                 .unwrap_or_else(|| "unknown error".to_string());
-            Err(backend_error(format!("internal code generator error for {target}: {detail}")))
+            Err(backend_error(format!(
+                "internal code generator error for {target}: {detail}"
+            )))
         }
     }
 }
 
-fn compile_object_inner(m: &Module, target: Target, opts: &CodegenOptions) -> Result<Vec<u8>, Diagnostics> {
+fn compile_object_inner(
+    m: &Module,
+    target: Target,
+    opts: &CodegenOptions,
+) -> Result<Vec<u8>, Diagnostics> {
     let diags = a0_ir::verify(m);
     if diags.has_errors() {
         return Err(diags);
@@ -110,8 +136,12 @@ fn compile_object_inner(m: &Module, target: Target, opts: &CodegenOptions) -> Re
         }
     }
     let isa = make_isa(target, opts.optimize)?;
-    let builder = ObjectBuilder::new(isa, m.name().as_bytes().to_vec(), cranelift_module::default_libcall_names())
-        .map_err(|e| backend_error(format!("cannot create an object for {target}: {e}")))?;
+    let builder = ObjectBuilder::new(
+        isa,
+        m.name().as_bytes().to_vec(),
+        cranelift_module::default_libcall_names(),
+    )
+    .map_err(|e| backend_error(format!("cannot create an object for {target}: {e}")))?;
     let mut obj = ObjectModule::new(builder);
     let ptr = clif_type(Type::Ptr, target);
 
@@ -183,7 +213,14 @@ fn compile_object_inner(m: &Module, target: Target, opts: &CodegenOptions) -> Re
 
     if opts.entry_point {
         let main = m.lookup_func("main").unwrap();
-        emit_c_main(&mut obj, &mut ctx, &mut fctx, func_ids[main.index()], &rt, target)?;
+        emit_c_main(
+            &mut obj,
+            &mut ctx,
+            &mut fctx,
+            func_ids[main.index()],
+            &rt,
+            target,
+        )?;
     }
 
     let product = obj.finish();
@@ -192,7 +229,12 @@ fn compile_object_inner(m: &Module, target: Target, opts: &CodegenOptions) -> Re
         .map_err(|e| backend_error(format!("cannot write the object file: {e}")))
 }
 
-fn define(obj: &mut ObjectModule, id: cranelift_module::FuncId, ctx: &mut Context, name: &str) -> Result<(), Diagnostics> {
+fn define(
+    obj: &mut ObjectModule,
+    id: cranelift_module::FuncId,
+    ctx: &mut Context,
+    name: &str,
+) -> Result<(), Diagnostics> {
     obj.define_function(id, ctx).map_err(|e| {
         let detail = match e {
             cranelift_module::ModuleError::Compilation(err) => {
@@ -204,7 +246,12 @@ fn define(obj: &mut ObjectModule, id: cranelift_module::FuncId, ctx: &mut Contex
     })
 }
 
-fn signature(obj: &ObjectModule, params: &[Type], ret: Option<Type>, target: Target) -> ir::Signature {
+fn signature(
+    obj: &ObjectModule,
+    params: &[Type],
+    ret: Option<Type>,
+    target: Target,
+) -> ir::Signature {
     let mut sig = obj.make_signature();
     for &p in params {
         sig.params.push(ir::AbiParam::new(clif_type(p, target)));
@@ -215,7 +262,12 @@ fn signature(obj: &ObjectModule, params: &[Type], ret: Option<Type>, target: Tar
     sig
 }
 
-fn define_global(obj: &mut ObjectModule, m: &Module, g: GlobalId, target: Target) -> Result<DataId, Diagnostics> {
+fn define_global(
+    obj: &mut ObjectModule,
+    m: &Module,
+    g: GlobalId,
+    target: Target,
+) -> Result<DataId, Diagnostics> {
     let name = m.global_name(g);
     let writable = !m.global_is_data(g);
     let id = obj
@@ -226,7 +278,11 @@ fn define_global(obj: &mut ObjectModule, m: &Module, g: GlobalId, target: Target
         None => {
             let bytes = m.global_bytes(g);
             // Zero-sized data still needs an address.
-            let contents = if bytes.is_empty() { vec![0u8] } else { bytes.to_vec() };
+            let contents = if bytes.is_empty() {
+                vec![0u8]
+            } else {
+                bytes.to_vec()
+            };
             desc.define(contents.into_boxed_slice());
             desc.set_align(1);
         }
@@ -413,7 +469,8 @@ impl Lower<'_> {
     }
 
     fn finish_trap_blocks(&mut self) {
-        let mut blocks: Vec<(i32, ir::Block)> = self.trap_blocks.iter().map(|(&c, &b)| (c, b)).collect();
+        let mut blocks: Vec<(i32, ir::Block)> =
+            self.trap_blocks.iter().map(|(&c, &b)| (c, b)).collect();
         blocks.sort();
         for (code, block) in blocks {
             self.b.switch_to_block(block);
@@ -425,7 +482,11 @@ impl Lower<'_> {
     /// `iconst` with the immediate truncated to the type's width, as Cranelift expects.
     fn iconst(&mut self, ty: ir::Type, value: i64) -> ir::Value {
         let bits = ty.bits();
-        let masked = if bits >= 64 { value } else { value & ((1i64 << bits) - 1) };
+        let masked = if bits >= 64 {
+            value
+        } else {
+            value & ((1i64 << bits) - 1)
+        };
         self.b.ins().iconst(ty, masked)
     }
 
@@ -476,9 +537,13 @@ impl Lower<'_> {
             Opcode::Fconst => {
                 let bits = m.inst_fconst_bits(inst);
                 let v = if result_ty == Some(Type::F32) {
-                    self.b.ins().f32const(ir::immediates::Ieee32::with_bits(bits as u32))
+                    self.b
+                        .ins()
+                        .f32const(ir::immediates::Ieee32::with_bits(bits as u32))
                 } else {
-                    self.b.ins().f64const(ir::immediates::Ieee64::with_bits(bits))
+                    self.b
+                        .ins()
+                        .f64const(ir::immediates::Ieee64::with_bits(bits))
                 };
                 self.set(inst, v);
             }
@@ -494,7 +559,9 @@ impl Lower<'_> {
                         self.b.ins().func_addr(self.ptr, fr)
                     }
                     SymbolKind::Global => {
-                        let gv = self.obj.declare_data_in_func(self.data_ids[sym.index as usize], self.b.func);
+                        let gv = self
+                            .obj
+                            .declare_data_in_func(self.data_ids[sym.index as usize], self.b.func);
                         self.b.ins().symbol_value(self.ptr, gv)
                     }
                 };
@@ -558,12 +625,20 @@ impl Lower<'_> {
                     Opcode::Lshr => self.b.ins().ushr(args[0], amount),
                     _ => self.b.ins().sshr(args[0], amount),
                 };
-                let v = if ty == Type::I1 { self.b.ins().band_imm_u(v, 1) } else { v };
+                let v = if ty == Type::I1 {
+                    self.b.ins().band_imm_u(v, 1)
+                } else {
+                    v
+                };
                 self.set(inst, v);
             }
             Opcode::Ineg => {
                 let v = self.b.ins().ineg(args[0]);
-                let v = if arg_ty(0) == Type::I1 { self.b.ins().band_imm_u(v, 1) } else { v };
+                let v = if arg_ty(0) == Type::I1 {
+                    self.b.ins().band_imm_u(v, 1)
+                } else {
+                    v
+                };
                 self.set(inst, v);
             }
             Opcode::Not => {
@@ -616,7 +691,11 @@ impl Lower<'_> {
                 let ty = result_ty.unwrap();
                 let cty = self.ty(ty);
                 let v = self.b.ins().load(cty, MemFlagsData::new(), args[0], 0);
-                let v = if ty == Type::I1 { self.b.ins().band_imm_u(v, 1) } else { v };
+                let v = if ty == Type::I1 {
+                    self.b.ins().band_imm_u(v, 1)
+                } else {
+                    v
+                };
                 self.set(inst, v);
             }
             Opcode::Store => {
@@ -636,7 +715,12 @@ impl Lower<'_> {
             }
             Opcode::CallIndirect => {
                 let sig_id = m.inst_sig(inst);
-                let sig = signature(self.obj, m.sig_params(sig_id), m.sig_ret(sig_id), self.target);
+                let sig = signature(
+                    self.obj,
+                    m.sig_params(sig_id),
+                    m.sig_ret(sig_id),
+                    self.target,
+                );
                 let sig_ref = self.b.import_signature(sig);
                 let call = self.b.ins().call_indirect(sig_ref, args[0], &args[1..]);
                 if let Some(&r) = self.b.inst_results(call).first() {
@@ -752,12 +836,28 @@ impl Lower<'_> {
             }
             Opcode::Sext => {
                 // An i1 is 0 or 1 in an i8; sign extension turns 1 into all ones.
-                let a = if from == Type::I1 { self.b.ins().ineg(a) } else { a };
-                if cf == ct { a } else { self.b.ins().sextend(ct, a) }
+                let a = if from == Type::I1 {
+                    self.b.ins().ineg(a)
+                } else {
+                    a
+                };
+                if cf == ct {
+                    a
+                } else {
+                    self.b.ins().sextend(ct, a)
+                }
             }
             Opcode::Trunc => {
-                let v = if cf == ct { a } else { self.b.ins().ireduce(ct, a) };
-                if to == Type::I1 { self.b.ins().band_imm_u(v, 1) } else { v }
+                let v = if cf == ct {
+                    a
+                } else {
+                    self.b.ins().ireduce(ct, a)
+                };
+                if to == Type::I1 {
+                    self.b.ins().band_imm_u(v, 1)
+                } else {
+                    v
+                }
             }
             Opcode::Sitofp => self.b.ins().fcvt_from_sint(ct, a),
             Opcode::Uitofp => self.b.ins().fcvt_from_uint(ct, a),
@@ -773,7 +873,11 @@ impl Lower<'_> {
                 } else {
                     self.b.ins().uextend(ct, a)
                 };
-                if to == Type::I1 { self.b.ins().band_imm_u(v, 1) } else { v }
+                if to == Type::I1 {
+                    self.b.ins().band_imm_u(v, 1)
+                } else {
+                    v
+                }
             }
             Opcode::Inttoptr => {
                 if cf == ct {

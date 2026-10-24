@@ -185,7 +185,10 @@ impl<'g> Parser<'g> {
     fn wrap(&mut self, kind: KindId, from: usize) {
         let kids: Vec<(NodeId, FieldId)> = self.pending.drain(from..).collect();
         let (start, end) = match (kids.first(), kids.last()) {
-            (Some(first), Some(last)) => (self.nodes[first.0.0 as usize].start, self.nodes[last.0.0 as usize].end),
+            (Some(first), Some(last)) => (
+                self.nodes[first.0.0 as usize].start,
+                self.nodes[last.0.0 as usize].end,
+            ),
             _ => {
                 let s = self.toks[self.pos].start;
                 (s, s)
@@ -404,7 +407,11 @@ impl<'g> Parser<'g> {
                 let ok = self.expr(*inner);
                 self.suppress -= 1;
                 self.reset(mark);
-                if matches!(g.exprs[e], Expr::Not(_)) { !ok } else { ok }
+                if matches!(g.exprs[e], Expr::Not(_)) {
+                    !ok
+                } else {
+                    ok
+                }
             }
             Expr::Field(field, inner) => {
                 let from = self.pending.len();
@@ -473,7 +480,11 @@ impl<'g> Parser<'g> {
                 self.label_last(std.left);
                 self.push_token();
                 self.label_last(std.op);
-                let next = if assoc == Assoc::Left { level + 1 } else { level };
+                let next = if assoc == Assoc::Left {
+                    level + 1
+                } else {
+                    level
+                };
                 if !self.prec(p, next) {
                     return false;
                 }

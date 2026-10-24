@@ -49,7 +49,10 @@ pub fn compile(text: &str, source: SourceId) -> Result<Module, Diagnostics> {
         Ok(m) => Ok(m),
         Err(ir_diags) => {
             // The compiler produced invalid IR: a bug in this crate, but report it rather than crash.
-            diags.push(Diagnostic::error("kaleidoscope.internal", "the compiler produced invalid IR"));
+            diags.push(Diagnostic::error(
+                "kaleidoscope.internal",
+                "the compiler produced invalid IR",
+            ));
             diags.extend(ir_diags);
             Err(diags)
         }
@@ -125,8 +128,14 @@ struct Names {
 
 impl Names {
     fn new(g: &Grammar) -> Names {
-        let f = |n: &str| g.field(n).unwrap_or_else(|| panic!("grammar has no field {n}"));
-        let k = |n: &str| g.kind(n).unwrap_or_else(|| panic!("grammar has no kind {n}"));
+        let f = |n: &str| {
+            g.field(n)
+                .unwrap_or_else(|| panic!("grammar has no field {n}"))
+        };
+        let k = |n: &str| {
+            g.kind(n)
+                .unwrap_or_else(|| panic!("grammar has no kind {n}"))
+        };
         Names {
             proto: f("proto"),
             body: f("body"),
@@ -259,22 +268,30 @@ impl<'a> Lower<'a> {
             let binary = first_kind == n.binary_kw;
             let want = if binary { 2 } else { 1 };
             if params.len() != want {
-                return self.error(proto, &format!(
-                    "a {} operator takes {want} operand{}, not {}",
-                    if binary { "binary" } else { "unary" },
-                    if want == 1 { "" } else { "s" },
-                    params.len()
-                ));
+                return self.error(
+                    proto,
+                    &format!(
+                        "a {} operator takes {want} operand{}, not {}",
+                        if binary { "binary" } else { "unary" },
+                        if want == 1 { "" } else { "s" },
+                        params.len()
+                    ),
+                );
             }
-            if binary {
-                if let Some(p) = self.field(proto, n.precedence) {
-                    let value: f64 = self.text(p).parse().unwrap_or(-1.0);
-                    if !(1.0..=100.0).contains(&value) || value.fract() != 0.0 {
-                        return self.error(p, "invalid precedence: must be a whole number from 1 to 100");
-                    }
+            if binary && let Some(p) = self.field(proto, n.precedence) {
+                let value: f64 = self.text(p).parse().unwrap_or(-1.0);
+                if !(1.0..=100.0).contains(&value) || value.fract() != 0.0 {
+                    return self.error(
+                        p,
+                        "invalid precedence: must be a whole number from 1 to 100",
+                    );
                 }
             }
-            format!("{}{}", if binary { "binary" } else { "unary" }, self.text(op))
+            format!(
+                "{}{}",
+                if binary { "binary" } else { "unary" },
+                self.text(op)
+            )
         } else {
             let name_node = self.field(proto, n.name).unwrap();
             let name = self.text(name_node).to_string();
@@ -323,7 +340,10 @@ impl<'a> Lower<'a> {
         if self.tree.kind(first) == self.n.binary_kw {
             let op = self.text(self.field(proto, self.n.op).unwrap()).to_string();
             if op == "=" || op == "<" || op == "+" || op == "-" || op == "*" {
-                let _: R<()> = self.error(proto, &format!("cannot redefine the built-in operator '{op}'"));
+                let _: R<()> = self.error(
+                    proto,
+                    &format!("cannot redefine the built-in operator '{op}'"),
+                );
                 return;
             }
             let prec = match self.field(proto, self.n.precedence) {
@@ -431,7 +451,10 @@ impl<'a> Lower<'a> {
         if arity != args.len() {
             return self.error(
                 node,
-                &format!("'{name}' takes {arity} argument(s) but {} were given", args.len()),
+                &format!(
+                    "'{name}' takes {arity} argument(s) but {} were given",
+                    args.len()
+                ),
             );
         }
         let mut values = Vec::with_capacity(args.len());
@@ -530,7 +553,8 @@ impl<'a> Lower<'a> {
             node = self.field(node, self.n.inner).unwrap();
         }
         // A one-operand chain is just its operand.
-        if self.tree.kind(node) == self.n.expr_kind && self.tree.fields(node, self.n.op).is_empty() {
+        if self.tree.kind(node) == self.n.expr_kind && self.tree.fields(node, self.n.op).is_empty()
+        {
             let inner = self.tree.fields(node, self.n.operand)[0];
             return self.unparen(inner);
         }

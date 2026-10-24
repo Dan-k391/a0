@@ -48,14 +48,22 @@ fn c_name(t: Target, name: &str) -> String {
 
 /// Targets Cranelift can emit objects for (see `docs/milestones.md`, M2 open questions).
 fn emittable_targets() -> Vec<Target> {
-    Target::ALL.into_iter().filter(|&t| t != Target::AARCH64_WINDOWS).collect()
+    Target::ALL
+        .into_iter()
+        .filter(|&t| t != Target::AARCH64_WINDOWS)
+        .collect()
 }
 
 #[test]
 fn aarch64_windows_is_reported_not_crashed() {
     let (_, m) = corpus().remove(0);
     let err = compile_object(&m, Target::AARCH64_WINDOWS, &CodegenOptions::default()).unwrap_err();
-    assert!(err.summary().contains("cannot compile for aarch64-pc-windows-msvc"), "{}", err.summary());
+    assert!(
+        err.summary()
+            .contains("cannot compile for aarch64-pc-windows-msvc"),
+        "{}",
+        err.summary()
+    );
 }
 
 #[test]
@@ -68,9 +76,18 @@ fn every_program_compiles_for_every_target() {
             };
             let bytes = compile_object(&m, target, &opts)
                 .unwrap_or_else(|d| panic!("{name} for {target}: {}", d.summary()));
-            let file = object::File::parse(&*bytes).unwrap_or_else(|e| panic!("{name} for {target}: {e}"));
-            assert_eq!(file.format(), expected_format(target), "{name} for {target}");
-            assert_eq!(file.architecture(), expected_arch(target), "{name} for {target}");
+            let file =
+                object::File::parse(&*bytes).unwrap_or_else(|e| panic!("{name} for {target}: {e}"));
+            assert_eq!(
+                file.format(),
+                expected_format(target),
+                "{name} for {target}"
+            );
+            assert_eq!(
+                file.architecture(),
+                expected_arch(target),
+                "{name} for {target}"
+            );
             let defined: Vec<String> = file
                 .symbols()
                 .filter(|s| s.is_definition())
@@ -78,7 +95,10 @@ fn every_program_compiles_for_every_target() {
                 .collect();
             for sym in ["main", a0_native::ENTRY_SYMBOL] {
                 let want = c_name(target, sym);
-                assert!(defined.contains(&want), "{name} for {target}: {want} missing in {defined:?}");
+                assert!(
+                    defined.contains(&want),
+                    "{name} for {target}: {want} missing in {defined:?}"
+                );
             }
             let undefined: Vec<String> = file
                 .symbols()
@@ -106,9 +126,18 @@ fn library_objects_export_functions_under_their_names() {
             .filter_map(|s| s.name().ok().map(str::to_string))
             .collect();
         // Without an entry point, @main keeps its own name and no C wrapper is generated.
-        assert!(names.contains(&c_name(target, "main")), "{target}: {names:?}");
-        assert!(!names.contains(&c_name(target, a0_native::ENTRY_SYMBOL)), "{target}: {names:?}");
-        assert!(names.contains(&c_name(target, "binary|")), "{target}: {names:?}");
+        assert!(
+            names.contains(&c_name(target, "main")),
+            "{target}: {names:?}"
+        );
+        assert!(
+            !names.contains(&c_name(target, a0_native::ENTRY_SYMBOL)),
+            "{target}: {names:?}"
+        );
+        assert!(
+            names.contains(&c_name(target, "binary|")),
+            "{target}: {names:?}"
+        );
     }
 }
 
@@ -117,7 +146,10 @@ fn invalid_modules_are_rejected_with_diagnostics() {
     let text = "module \"m\"\nfunc @f() -> i64 {\n  %x: f64 = fconst 1.0\n  return %x\n}\n";
     let m = a0_ir::parse(text, SourceId(0)).unwrap();
     let err = compile_object(&m, Target::X86_64_LINUX, &CodegenOptions::default()).unwrap_err();
-    assert!(err.summary().contains("returns f64 but the function returns i64"));
+    assert!(
+        err.summary()
+            .contains("returns f64 but the function returns i64")
+    );
 
     let no_main = a0_ir::parse_and_verify("module \"m\"\n", SourceId(0)).unwrap();
     let opts = CodegenOptions {
@@ -132,6 +164,10 @@ fn invalid_modules_are_rejected_with_diagnostics() {
 fn linking_for_another_target_is_refused() {
     let host = Target::host().unwrap();
     let other = Target::ALL.into_iter().find(|&t| t != host).unwrap();
-    let err = a0_native::link_executable(&[], other, Path::new("never"), &Default::default()).unwrap_err();
-    assert!(err.summary().contains("linking is only supported for the host target"));
+    let err = a0_native::link_executable(&[], other, Path::new("never"), &Default::default())
+        .unwrap_err();
+    assert!(
+        err.summary()
+            .contains("linking is only supported for the host target")
+    );
 }

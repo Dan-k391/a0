@@ -36,9 +36,18 @@ fn jlox_errors(g: &Grammar, source: &str) -> Vec<String> {
             if d.code == "syntax.lexical" {
                 format!("[line {}] Error: {}", sm.line(id, span.end), d.message)
             } else if span.start as usize == source.len() {
-                format!("[line {}] Error at end: {}", sm.line(id, span.start), d.message)
+                format!(
+                    "[line {}] Error at end: {}",
+                    sm.line(id, span.start),
+                    d.message
+                )
             } else {
-                format!("[line {}] Error at '{}': {}", sm.line(id, span.start), sm.slice(span), d.message)
+                format!(
+                    "[line {}] Error at '{}': {}",
+                    sm.line(id, span.start),
+                    sm.slice(span),
+                    d.message
+                )
             }
         })
         .collect()
@@ -103,7 +112,11 @@ fn lexer_reports_and_skips_bad_characters() {
     let g = lox();
     let (toks, diags) = g.lex("a | b @", SourceId(0));
     assert_eq!(toks.len(), 3); // a, b, EOF
-    let msgs: Vec<&str> = diags.as_slice().iter().map(|d| d.message.as_str()).collect();
+    let msgs: Vec<&str> = diags
+        .as_slice()
+        .iter()
+        .map(|d| d.message.as_str())
+        .collect();
     assert_eq!(msgs, vec!["Unexpected character.", "Unexpected character."]);
 }
 
@@ -160,39 +173,99 @@ fn jlox_error_messages() {
     let cases: &[(&str, &[&str])] = &[
         ("print;", &["[line 1] Error at ';': Expect expression."]),
         (".123;", &["[line 1] Error at '.': Expect expression."]),
-        ("123.;", &["[line 1] Error at ';': Expect property name after '.'."]),
-        ("123.", &["[line 1] Error at end: Expect property name after '.'."]),
-        ("print 1", &["[line 1] Error at end: Expect ';' after value."]),
-        ("var false = \"value\";", &["[line 1] Error at 'false': Expect variable name."]),
-        ("fun f() 123;", &["[line 1] Error at '123': Expect '{' before function body."]),
-        ("fun foo(a, b c, d, e, f) {}", &["[line 1] Error at 'c': Expect ')' after parameters."]),
-        ("if (true) class Foo {}", &["[line 1] Error at 'class': Expect expression."]),
-        ("if (true) \"ok\"; else var foo;", &["[line 1] Error at 'var': Expect expression."]),
-        ("while (true) fun foo() {}", &["[line 1] Error at 'fun': Expect expression."]),
-        ("class Bar < (Foo) {}", &["[line 1] Error at '(': Expect superclass name."]),
-        ("class A { method() { (super).method(); } }", &["[line 1] Error at ')': Expect '.' after 'super'."]),
-        ("class A { method() { super; } }", &["[line 1] Error at ';': Expect '.' after 'super'."]),
-        ("class A { method() { super.; } }", &["[line 1] Error at ';': Expect superclass method name."]),
-        ("class A { 123 }", &["[line 1] Error at '123': Expect method name."]),
-        ("{ var a = 1;", &["[line 1] Error at end: Expect '}' after block."]),
+        (
+            "123.;",
+            &["[line 1] Error at ';': Expect property name after '.'."],
+        ),
+        (
+            "123.",
+            &["[line 1] Error at end: Expect property name after '.'."],
+        ),
+        (
+            "print 1",
+            &["[line 1] Error at end: Expect ';' after value."],
+        ),
+        (
+            "var false = \"value\";",
+            &["[line 1] Error at 'false': Expect variable name."],
+        ),
+        (
+            "fun f() 123;",
+            &["[line 1] Error at '123': Expect '{' before function body."],
+        ),
+        (
+            "fun foo(a, b c, d, e, f) {}",
+            &["[line 1] Error at 'c': Expect ')' after parameters."],
+        ),
+        (
+            "if (true) class Foo {}",
+            &["[line 1] Error at 'class': Expect expression."],
+        ),
+        (
+            "if (true) \"ok\"; else var foo;",
+            &["[line 1] Error at 'var': Expect expression."],
+        ),
+        (
+            "while (true) fun foo() {}",
+            &["[line 1] Error at 'fun': Expect expression."],
+        ),
+        (
+            "class Bar < (Foo) {}",
+            &["[line 1] Error at '(': Expect superclass name."],
+        ),
+        (
+            "class A { method() { (super).method(); } }",
+            &["[line 1] Error at ')': Expect '.' after 'super'."],
+        ),
+        (
+            "class A { method() { super; } }",
+            &["[line 1] Error at ';': Expect '.' after 'super'."],
+        ),
+        (
+            "class A { method() { super.; } }",
+            &["[line 1] Error at ';': Expect superclass method name."],
+        ),
+        (
+            "class A { 123 }",
+            &["[line 1] Error at '123': Expect method name."],
+        ),
+        (
+            "{ var a = 1;",
+            &["[line 1] Error at end: Expect '}' after block."],
+        ),
         (
             "for (var a = 1; {}; a = a + 1) {}",
-            &["[line 1] Error at '{': Expect expression.", "[line 1] Error at ')': Expect ';' after expression."],
+            &[
+                "[line 1] Error at '{': Expect expression.",
+                "[line 1] Error at ')': Expect ';' after expression.",
+            ],
         ),
         (
             "for ({}; a < 2; a = a + 1) {}",
-            &["[line 1] Error at '{': Expect expression.", "[line 1] Error at ')': Expect ';' after expression."],
+            &[
+                "[line 1] Error at '{': Expect expression.",
+                "[line 1] Error at ')': Expect ';' after expression.",
+            ],
         ),
-        ("for (var a = 1; a < 2; {}) {}", &["[line 1] Error at '{': Expect expression."]),
+        (
+            "for (var a = 1; a < 2; {}) {}",
+            &["[line 1] Error at '{': Expect expression."],
+        ),
         (
             "// comment\n\"this string has no close quote",
             &["[line 2] Error: Unterminated string."],
         ),
         (
             "\n\nfoo(a | b);",
-            &["[line 3] Error: Unexpected character.", "[line 3] Error at 'b': Expect ')' after arguments."],
+            &[
+                "[line 3] Error: Unexpected character.",
+                "[line 3] Error at 'b': Expect ')' after arguments.",
+            ],
         ),
-        ("print 1;\nprint 2", &["[line 2] Error at end: Expect ';' after value."]),
+        (
+            "print 1;\nprint 2",
+            &["[line 2] Error at end: Expect ';' after value."],
+        ),
     ];
     let mut failures = Vec::new();
     for (src, expected) in cases {
@@ -226,7 +299,10 @@ fn recovery_continues_after_errors() {
         .iter()
         .map(|&n| tree.kind_name(n).to_string())
         .collect();
-    assert_eq!(kinds, vec!["error", "error", "print_stmt", "block", "error"]);
+    assert_eq!(
+        kinds,
+        vec!["error", "error", "print_stmt", "block", "error"]
+    );
     // The block kept its good statement next to the error.
     let block = tree.children(tree.root())[3];
     let inner: Vec<String> = tree

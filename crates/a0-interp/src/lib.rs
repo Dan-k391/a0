@@ -15,7 +15,9 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use a0_diag::{Diagnostic, Diagnostics};
-use a0_ir::{FloatCC, FuncId, GlobalId, Inst, IntCC, Module, Opcode, Region, SymbolKind, Type, Value};
+use a0_ir::{
+    FloatCC, FuncId, GlobalId, Inst, IntCC, Module, Opcode, Region, SymbolKind, Type, Value,
+};
 use a0_runtime::{A0Symbol, ffi_ret, trap};
 
 /// Names and addresses of C functions that `extern func` declarations may resolve to.
@@ -112,22 +114,95 @@ type Slot = u32;
 
 /// One compiled instruction. Operands are frame slots.
 enum Op {
-    Const { dst: Slot, bits: u64 },
-    IntBin { op: Opcode, ty: Type, dst: Slot, a: Slot, b: Slot },
-    FloatBin { op: Opcode, ty: Type, dst: Slot, a: Slot, b: Slot },
-    Unary { op: Opcode, ty: Type, dst: Slot, a: Slot },
-    Icmp { cc: IntCC, ty: Type, dst: Slot, a: Slot, b: Slot },
-    Fcmp { cc: FloatCC, ty: Type, dst: Slot, a: Slot, b: Slot },
-    Cast { op: Opcode, from: Type, to: Type, dst: Slot, a: Slot },
-    Select { dst: Slot, c: Slot, a: Slot, b: Slot },
-    Load { ty: Type, dst: Slot, p: Slot },
-    Store { ty: Type, v: Slot, p: Slot },
-    Ptradd { dst: Slot, p: Slot, off: Slot },
-    Call { func: u32, args: Box<[Slot]>, dst: Option<Slot> },
-    CallIndirect { sig: Rc<Shape>, callee: Slot, args: Box<[Slot]>, dst: Option<Slot> },
-    Copy { dst: Slot, src: Slot },
-    If { c: Slot, then: Box<[Op]>, els: Box<[Op]> },
-    Loop { body: Box<[Op]> },
+    Const {
+        dst: Slot,
+        bits: u64,
+    },
+    IntBin {
+        op: Opcode,
+        ty: Type,
+        dst: Slot,
+        a: Slot,
+        b: Slot,
+    },
+    FloatBin {
+        op: Opcode,
+        ty: Type,
+        dst: Slot,
+        a: Slot,
+        b: Slot,
+    },
+    Unary {
+        op: Opcode,
+        ty: Type,
+        dst: Slot,
+        a: Slot,
+    },
+    Icmp {
+        cc: IntCC,
+        ty: Type,
+        dst: Slot,
+        a: Slot,
+        b: Slot,
+    },
+    Fcmp {
+        cc: FloatCC,
+        ty: Type,
+        dst: Slot,
+        a: Slot,
+        b: Slot,
+    },
+    Cast {
+        op: Opcode,
+        from: Type,
+        to: Type,
+        dst: Slot,
+        a: Slot,
+    },
+    Select {
+        dst: Slot,
+        c: Slot,
+        a: Slot,
+        b: Slot,
+    },
+    Load {
+        ty: Type,
+        dst: Slot,
+        p: Slot,
+    },
+    Store {
+        ty: Type,
+        v: Slot,
+        p: Slot,
+    },
+    Ptradd {
+        dst: Slot,
+        p: Slot,
+        off: Slot,
+    },
+    Call {
+        func: u32,
+        args: Box<[Slot]>,
+        dst: Option<Slot>,
+    },
+    CallIndirect {
+        sig: Rc<Shape>,
+        callee: Slot,
+        args: Box<[Slot]>,
+        dst: Option<Slot>,
+    },
+    Copy {
+        dst: Slot,
+        src: Slot,
+    },
+    If {
+        c: Slot,
+        then: Box<[Op]>,
+        els: Box<[Op]>,
+    },
+    Loop {
+        body: Box<[Op]>,
+    },
     Break,
     Continue,
     Return(Option<Slot>),
@@ -144,10 +219,7 @@ impl Shape {
     /// The `a0_ffi_call` description of this shape, or why it cannot be called from the interpreter.
     fn ffi(&self) -> Result<(u32, i32), String> {
         if self.params.len() > a0_runtime::FFI_MAX_ARGS {
-            return Err(format!(
-                "more than {} arguments",
-                a0_runtime::FFI_MAX_ARGS
-            ));
+            return Err(format!("more than {} arguments", a0_runtime::FFI_MAX_ARGS));
         }
         let mut mask = 0u32;
         for (i, &t) in self.params.iter().enumerate() {
@@ -176,7 +248,11 @@ struct Code {
 enum FuncKind {
     Defined(Rc<Code>),
     /// A resolved C function.
-    Native { address: usize, mask: u32, ret_kind: i32 },
+    Native {
+        address: usize,
+        mask: u32,
+        ret_kind: i32,
+    },
     /// An extern that is never called or referenced; calling it is a bug in the verifier's sense.
     Unresolved,
 }
@@ -235,7 +311,11 @@ impl Interpreter {
                     let mut words = vec![0u64; bytes.len().div_ceil(8).max(1)].into_boxed_slice();
                     // SAFETY: the buffer holds at least `bytes.len()` bytes.
                     unsafe {
-                        std::ptr::copy_nonoverlapping(bytes.as_ptr(), words.as_mut_ptr() as *mut u8, bytes.len())
+                        std::ptr::copy_nonoverlapping(
+                            bytes.as_ptr(),
+                            words.as_mut_ptr() as *mut u8,
+                            bytes.len(),
+                        )
                     };
                     words
                 }
@@ -269,7 +349,9 @@ impl Interpreter {
                                     &format!("unresolved external function @{name}"),
                                 )
                                 .with_span_opt(module.func_span(f))
-                                .with_note("register its address in HostSymbols before interpreting"),
+                                .with_note(
+                                    "register its address in HostSymbols before interpreting",
+                                ),
                             );
                             FuncKind::Unresolved
                         }
@@ -283,7 +365,9 @@ impl Interpreter {
                                 diags.push(
                                     Diagnostic::error(
                                         "interp.ffi",
-                                        &format!("the interpreter cannot call @{name}: it has {why}"),
+                                        &format!(
+                                            "the interpreter cannot call @{name}: it has {why}"
+                                        ),
                                     )
                                     .with_span_opt(module.func_span(f)),
                                 );
@@ -313,7 +397,11 @@ impl Interpreter {
         let mut codes = Vec::new();
         for f in 0..module.func_count() {
             let f = FuncId(f);
-            codes.push(module.func_body(f).map(|_| compile_function(&module, f, &addr_of)));
+            codes.push(
+                module
+                    .func_body(f)
+                    .map(|_| compile_function(&module, f, &addr_of)),
+            );
         }
         for (info, code) in funcs.iter_mut().zip(codes) {
             if let Some(code) = code {
@@ -431,7 +519,13 @@ impl Interpreter {
         }
     }
 
-    fn call_indirect(&mut self, sig: &Shape, callee: u64, base: usize, args: &[Slot]) -> Result<u64, Trap> {
+    fn call_indirect(
+        &mut self,
+        sig: &Shape,
+        callee: u64,
+        base: usize,
+        args: &[Slot],
+    ) -> Result<u64, Trap> {
         let token_base = self.tokens.as_ptr() as u64;
         if callee >= token_base && callee < token_base + self.tokens.len() as u64 {
             let f = (callee - token_base) as u32;
@@ -445,10 +539,14 @@ impl Interpreter {
             return self.call_func(f, base, args);
         }
         if callee == 0 {
-            return Err(Trap::panic("call_indirect through a null pointer".to_string()));
+            return Err(Trap::panic(
+                "call_indirect through a null pointer".to_string(),
+            ));
         }
         match sig.ffi() {
-            Ok((mask, ret_kind)) => self.native_call(callee as usize, mask, ret_kind, sig.ret, base, args),
+            Ok((mask, ret_kind)) => {
+                self.native_call(callee as usize, mask, ret_kind, sig.ret, base, args)
+            }
             Err(why) => Err(Trap::panic(format!(
                 "the interpreter cannot call a C function pointer with {why}"
             ))),
@@ -501,7 +599,13 @@ impl Interpreter {
                     let v = fcmp(cc, ty, self.get(base, a), self.get(base, b));
                     self.put(base, dst, v as u64)
                 }
-                &Op::Cast { op, from, to, dst, a } => {
+                &Op::Cast {
+                    op,
+                    from,
+                    to,
+                    dst,
+                    a,
+                } => {
                     let v = cast(op, from, to, self.get(base, a));
                     self.put(base, dst, v)
                 }
@@ -518,7 +622,9 @@ impl Interpreter {
                     let v = unsafe { load(ty, self.get(base, p)) };
                     self.put(base, dst, v)
                 }
-                &Op::Store { ty, v, p } => unsafe { store(ty, self.get(base, p), self.get(base, v)) },
+                &Op::Store { ty, v, p } => unsafe {
+                    store(ty, self.get(base, p), self.get(base, v))
+                },
                 &Op::Ptradd { dst, p, off } => {
                     let v = self.get(base, p).wrapping_add(self.get(base, off));
                     self.put(base, dst, v)
@@ -560,7 +666,9 @@ impl Interpreter {
                 },
                 Op::Break => return Ok(Flow::Break),
                 Op::Continue => return Ok(Flow::Continue),
-                &Op::Return(v) => return Ok(Flow::Return(v.map(|s| self.get(base, s)).unwrap_or(0))),
+                &Op::Return(v) => {
+                    return Ok(Flow::Return(v.map(|s| self.get(base, s)).unwrap_or(0)));
+                }
                 Op::Unreachable => return Err(Trap::new(trap::UNREACHABLE)),
             }
         }
@@ -616,7 +724,11 @@ impl FuncCompiler<'_> {
     }
 
     fn region(&self, r: Region) -> Box<[Op]> {
-        self.m.region_insts(r).iter().map(|&i| self.inst(i)).collect()
+        self.m
+            .region_insts(r)
+            .iter()
+            .map(|&i| self.inst(i))
+            .collect()
     }
 
     fn inst(&self, i: Inst) -> Op {
@@ -882,7 +994,10 @@ fn icmp(cc: IntCC, ty: Type, a: u64, b: u64) -> bool {
 
 fn fcmp(cc: FloatCC, ty: Type, a: u64, b: u64) -> bool {
     let (x, y) = if ty == Type::F32 {
-        (f32::from_bits(a as u32) as f64, f32::from_bits(b as u32) as f64)
+        (
+            f32::from_bits(a as u32) as f64,
+            f32::from_bits(b as u32) as f64,
+        )
     } else {
         (f64::from_bits(a), f64::from_bits(b))
     };
@@ -992,7 +1107,11 @@ unsafe fn store(ty: Type, addr: u64, v: u64) {
 
 /// Runs `@main` of a module on a thread with a large stack and returns its exit status. This is
 /// what command-line drivers use; traps are returned rather than reported.
-pub fn run_main(module: Module, symbols: HostSymbols, args: Vec<String>) -> Result<Result<i32, Trap>, Diagnostics> {
+pub fn run_main(
+    module: Module,
+    symbols: HostSymbols,
+    args: Vec<String>,
+) -> Result<Result<i32, Trap>, Diagnostics> {
     let handle = std::thread::Builder::new()
         .name("a0-interp".to_string())
         .stack_size(1 << 30)

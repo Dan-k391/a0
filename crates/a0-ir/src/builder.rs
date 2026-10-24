@@ -102,10 +102,7 @@ impl Builder {
         if ty.is_float() {
             self.error("add_global_int needs an integer or pointer type");
         }
-        self.add_global_item(
-            name,
-            GlobalInit::Scalar(ty, canonical_int(ty, init) as u64),
-        )
+        self.add_global_item(name, GlobalInit::Scalar(ty, canonical_int(ty, init) as u64))
     }
 
     /// Adds a mutable float global.
@@ -249,7 +246,12 @@ impl Builder {
     // ---------------------------------------------------------------- constants
 
     pub fn iconst(&mut self, ty: Type, value: i64) -> Value {
-        self.inst(Opcode::Iconst, &[], canonical_int(ty, value) as u64, Some(ty))
+        self.inst(
+            Opcode::Iconst,
+            &[],
+            canonical_int(ty, value) as u64,
+            Some(ty),
+        )
     }
 
     pub fn fconst(&mut self, ty: Type, value: f64) -> Value {
@@ -292,7 +294,12 @@ impl Builder {
 
     /// The address of a `data` or `global` item.
     pub fn global_addr(&mut self, g: GlobalId) -> Value {
-        self.inst(Opcode::Addr, &[], Symbol::global(g).to_imm(), Some(Type::Ptr))
+        self.inst(
+            Opcode::Addr,
+            &[],
+            Symbol::global(g).to_imm(),
+            Some(Type::Ptr),
+        )
     }
 
     // ---------------------------------------------------------------- arithmetic
@@ -592,7 +599,10 @@ impl Builder {
             self.error(&format!("{op} built outside a function"));
             return None;
         }
-        if args.iter().any(|a| a.is_none() || a.index() >= self.module.values.len()) {
+        if args
+            .iter()
+            .any(|a| a.is_none() || a.index() >= self.module.values.len())
+        {
             self.error(&format!("{op} has an invalid operand"));
             return None;
         }

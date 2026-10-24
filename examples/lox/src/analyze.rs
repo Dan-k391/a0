@@ -70,9 +70,18 @@ pub struct Names {
 
 impl Names {
     pub fn new(g: &Grammar) -> Names {
-        let f = |n: &str| g.field(n).unwrap_or_else(|| panic!("lox.a0g has no field {n}"));
-        let k = |n: &str| g.kind(n).unwrap_or_else(|| panic!("lox.a0g has no kind {n}"));
-        let l = |n: &str| g.literal(n).unwrap_or_else(|| panic!("lox.a0g has no literal {n}"));
+        let f = |n: &str| {
+            g.field(n)
+                .unwrap_or_else(|| panic!("lox.a0g has no field {n}"))
+        };
+        let k = |n: &str| {
+            g.kind(n)
+                .unwrap_or_else(|| panic!("lox.a0g has no kind {n}"))
+        };
+        let l = |n: &str| {
+            g.literal(n)
+                .unwrap_or_else(|| panic!("lox.a0g has no literal {n}"))
+        };
         Names {
             name: f("name"),
             superclass: f("superclass"),
@@ -137,7 +146,10 @@ pub fn first_token(tree: &SyntaxTree, mut node: NodeId) -> NodeId {
 
 /// The non-token children of a node (statements in a block, declarations in the program).
 pub fn statements(tree: &SyntaxTree, node: NodeId) -> Vec<NodeId> {
-    tree.children(node).into_iter().filter(|&c| !tree.is_token(c)).collect()
+    tree.children(node)
+        .into_iter()
+        .filter(|&c| !tree.is_token(c))
+        .collect()
 }
 
 /// jlox reports these while parsing: invalid assignment targets and more than 255 arguments or
@@ -163,11 +175,11 @@ pub fn parse_time_checks(tree: &SyntaxTree, n: &Names, lines: &Lines) -> Vec<Com
                     errors.push(lines.error(tree, tok, "Can't have more than 255 arguments."));
                 }
             }
-        } else if kind == n.fun_decl || kind == n.method_kind {
-            if let Some(params) = tree.field(node, n.params) {
-                for &p in tree.fields(params, n.param).iter().skip(255) {
-                    errors.push(lines.error(tree, p, "Can't have more than 255 parameters."));
-                }
+        } else if (kind == n.fun_decl || kind == n.method_kind)
+            && let Some(params) = tree.field(node, n.params)
+        {
+            for &p in tree.fields(params, n.param).iter().skip(255) {
+                errors.push(lines.error(tree, p, "Can't have more than 255 parameters."));
             }
         }
         for c in tree.children(node).into_iter().rev() {
@@ -286,7 +298,11 @@ pub fn resolve(tree: &SyntaxTree, n: &Names, lines: &Lines) -> Result<Analysis, 
     for stmt in statements(tree, tree.root()) {
         r.stmt(stmt);
     }
-    if r.errors.is_empty() { Ok(r.a) } else { Err(r.errors) }
+    if r.errors.is_empty() {
+        Ok(r.a)
+    } else {
+        Err(r.errors)
+    }
 }
 
 impl Resolver<'_> {
@@ -518,10 +534,10 @@ impl Resolver<'_> {
     /// A variable read: `token` is the name, `node` the expression node to annotate.
     fn variable_use(&mut self, token: NodeId, node: NodeId) {
         let name = self.tree.text(token);
-        if let Some(s) = self.scopes.lookup_in_current(name) {
-            if !self.scopes.is_defined(s) {
-                self.error(token, "Can't read local variable in its own initializer.");
-            }
+        if let Some(s) = self.scopes.lookup_in_current(name)
+            && !self.scopes.is_defined(s)
+        {
+            self.error(token, "Can't read local variable in its own initializer.");
         }
         let place = self.resolve_name(name);
         self.a.uses.insert(node, place);

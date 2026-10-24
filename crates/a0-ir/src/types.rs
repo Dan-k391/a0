@@ -44,7 +44,10 @@ impl Type {
     }
 
     pub fn is_int(self) -> bool {
-        matches!(self, Type::I1 | Type::I8 | Type::I16 | Type::I32 | Type::I64)
+        matches!(
+            self,
+            Type::I1 | Type::I8 | Type::I16 | Type::I32 | Type::I64
+        )
     }
 
     pub fn is_float(self) -> bool {
@@ -273,7 +276,10 @@ impl Opcode {
 
     /// Two float operands, float result of the same type.
     pub fn is_float_binary(self) -> bool {
-        matches!(self, Opcode::Fadd | Opcode::Fsub | Opcode::Fmul | Opcode::Fdiv)
+        matches!(
+            self,
+            Opcode::Fadd | Opcode::Fsub | Opcode::Fmul | Opcode::Fdiv
+        )
     }
 
     pub fn is_unary(self) -> bool {

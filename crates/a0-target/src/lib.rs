@@ -109,11 +109,14 @@ impl Target {
             Some("aarch64" | "arm64") => Arch::Aarch64,
             _ => return Err(format!("unsupported architecture in target '{name}'")),
         };
-        let os = if parts.iter().any(|p| *p == "linux") {
+        let os = if parts.contains(&"linux") {
             Os::Linux
-        } else if parts.iter().any(|p| matches!(*p, "darwin" | "macos" | "apple")) {
+        } else if parts
+            .iter()
+            .any(|p| matches!(*p, "darwin" | "macos" | "apple"))
+        {
             Os::MacOs
-        } else if parts.iter().any(|p| *p == "windows") {
+        } else if parts.contains(&"windows") {
             Os::Windows
         } else {
             return Err(format!("unsupported operating system in target '{name}'"));
@@ -218,7 +221,10 @@ mod tests {
     fn short_names() {
         assert_eq!(Target::parse("aarch64-macos"), Ok(Target::AARCH64_MACOS));
         assert_eq!(Target::parse("x86_64-windows"), Ok(Target::X86_64_WINDOWS));
-        assert_eq!(Target::parse("arm64-apple-darwin"), Ok(Target::AARCH64_MACOS));
+        assert_eq!(
+            Target::parse("arm64-apple-darwin"),
+            Ok(Target::AARCH64_MACOS)
+        );
         assert!(Target::parse("riscv64-linux").is_err());
         assert!(Target::parse("x86_64-freebsd").is_err());
     }
@@ -232,7 +238,10 @@ mod tests {
     #[test]
     fn properties_follow_the_os() {
         assert_eq!(Target::X86_64_WINDOWS.object_format(), ObjectFormat::Coff);
-        assert_eq!(Target::X86_64_WINDOWS.call_conv(), CallConv::WindowsFastcall);
+        assert_eq!(
+            Target::X86_64_WINDOWS.call_conv(),
+            CallConv::WindowsFastcall
+        );
         assert_eq!(Target::AARCH64_MACOS.call_conv(), CallConv::AppleAarch64);
         assert_eq!(Target::AARCH64_LINUX.linker_flavor(), LinkerFlavor::Gnu);
         assert_eq!(Target::X86_64_LINUX.exe_suffix(), "");

@@ -325,8 +325,11 @@ impl Diagnostics {
 
     /// Sorts by source position; diagnostics without a span keep their order and go last.
     pub fn sort_by_position(&mut self) {
-        self.items
-            .sort_by_key(|d| d.span.map(|s| (0, s.source, s.start)).unwrap_or((1, SourceId(0), 0)));
+        self.items.sort_by_key(|d| {
+            d.span
+                .map(|s| (0, s.source, s.start))
+                .unwrap_or((1, SourceId(0), 0))
+        });
     }
 
     /// Renders all diagnostics, separated by blank lines.

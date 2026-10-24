@@ -50,7 +50,11 @@ fn tests() -> Vec<(String, PathBuf)> {
     let mut out = Vec::new();
     walk(&root.join("test"), &root, &mut out);
     out.sort();
-    out.retain(|(rel, _)| !SKIPPED.iter().any(|s| rel == s || rel.starts_with(&format!("{s}/"))));
+    out.retain(|(rel, _)| {
+        !SKIPPED
+            .iter()
+            .any(|s| rel == s || rel.starts_with(&format!("{s}/")))
+    });
     out
 }
 
@@ -94,14 +98,15 @@ fn expectations(text: &str) -> Option<Expectations> {
             if let Some(r) = rest.strip_prefix("line ") {
                 let digits: String = r.chars().take_while(char::is_ascii_digit).collect();
                 let after = &r[digits.len()..];
-                if let Some(msg) = after.strip_prefix("] ") {
-                    if msg.starts_with("Error") && !digits.is_empty() {
-                        if language.is_none() || language == Some("java") {
-                            e.errors.push(format!("[{digits}] {msg}"));
-                            e.exit_code = 65;
-                        }
-                        continue;
+                if let Some(msg) = after.strip_prefix("] ")
+                    && msg.starts_with("Error")
+                    && !digits.is_empty()
+                {
+                    if language.is_none() || language == Some("java") {
+                        e.errors.push(format!("[{digits}] {msg}"));
+                        e.exit_code = 65;
                     }
+                    continue;
                 }
             }
         }
@@ -119,7 +124,10 @@ fn syntax_error(line: &str) -> Option<String> {
     let start = line.find('[')?;
     let rest = &line[start..];
     let at = rest.find("line ")?;
-    let digits: String = rest[at + 5..].chars().take_while(char::is_ascii_digit).collect();
+    let digits: String = rest[at + 5..]
+        .chars()
+        .take_while(char::is_ascii_digit)
+        .collect();
     if digits.is_empty() {
         return None;
     }
@@ -131,7 +139,10 @@ fn syntax_error(line: &str) -> Option<String> {
 /// `\[line (\d+)\]` from test.dart.
 fn stack_trace_line(line: &str) -> Option<usize> {
     let pos = line.find("[line ")?;
-    let digits: String = line[pos + 6..].chars().take_while(char::is_ascii_digit).collect();
+    let digits: String = line[pos + 6..]
+        .chars()
+        .take_while(char::is_ascii_digit)
+        .collect();
     let after = &line[pos + 6 + digits.len()..];
     if digits.is_empty() || !after.starts_with(']') {
         return None;
@@ -152,13 +163,19 @@ fn validate(e: &Expectations, out: &Output) -> Vec<String> {
             failures.push(format!("Expected runtime error '{msg}' and got none."));
         } else {
             if error_lines[0] != msg {
-                failures.push(format!("Expected runtime error '{msg}' and got: {}", error_lines[0]));
+                failures.push(format!(
+                    "Expected runtime error '{msg}' and got: {}",
+                    error_lines[0]
+                ));
             }
             match error_lines[1..].iter().find_map(|l| stack_trace_line(l)) {
-                None => failures.push(format!("Expected stack trace and got: {:?}", &error_lines[1..])),
-                Some(n) if n != *line => {
-                    failures.push(format!("Expected runtime error on line {line} but was on line {n}."))
-                }
+                None => failures.push(format!(
+                    "Expected stack trace and got: {:?}",
+                    &error_lines[1..]
+                )),
+                Some(n) if n != *line => failures.push(format!(
+                    "Expected runtime error on line {line} but was on line {n}."
+                )),
                 _ => {}
             }
         }
@@ -193,14 +210,16 @@ fn validate(e: &Expectations, out: &Output) -> Vec<String> {
     for (i, line) in output_lines.iter().enumerate() {
         match e.output.get(i) {
             None => failures.push(format!("Got output '{line}' when none was expected.")),
-            Some((at, expected)) if expected != line => {
-                failures.push(format!("Expected output '{expected}' on line {at} and got '{line}'."))
-            }
+            Some((at, expected)) if expected != line => failures.push(format!(
+                "Expected output '{expected}' on line {at} and got '{line}'."
+            )),
             _ => {}
         }
     }
     for (at, expected) in e.output.iter().skip(output_lines.len()) {
-        failures.push(format!("Missing expected output '{expected}' on line {at}."));
+        failures.push(format!(
+            "Missing expected output '{expected}' on line {at}."
+        ));
     }
     failures
 }
@@ -208,11 +227,18 @@ fn validate(e: &Expectations, out: &Output) -> Vec<String> {
 /// Runs `run` on every test in parallel and asserts that all pass.
 fn run_suite(mode: &str, run: &(dyn Fn(&str, &Path) -> Output + Sync)) {
     let all = tests();
-    assert!(all.len() > 200, "the suite is missing ({} tests found)", all.len());
+    assert!(
+        all.len() > 200,
+        "the suite is missing ({} tests found)",
+        all.len()
+    );
     let failures = Mutex::new(Vec::new());
     let passed = Mutex::new(0usize);
     let next = Mutex::new(0usize);
-    let workers = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4).min(16);
+    let workers = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(4)
+        .min(16);
     std::thread::scope(|s| {
         for _ in 0..workers {
             s.spawn(|| {
@@ -225,13 +251,18 @@ fn run_suite(mode: &str, run: &(dyn Fn(&str, &Path) -> Output + Sync)) {
                     };
                     let Some((rel, path)) = all.get(i) else { break };
                     let text = std::fs::read_to_string(path).unwrap();
-                    let Some(e) = expectations(&text) else { continue };
+                    let Some(e) = expectations(&text) else {
+                        continue;
+                    };
                     let out = run(rel, path);
                     let f = validate(&e, &out);
                     if f.is_empty() {
                         *passed.lock().unwrap() += 1;
                     } else {
-                        failures.lock().unwrap().push(format!("FAIL {rel}\n     {}", f.join("\n     ")));
+                        failures
+                            .lock()
+                            .unwrap()
+                            .push(format!("FAIL {rel}\n     {}", f.join("\n     ")));
                     }
                 }
             });
@@ -251,7 +282,10 @@ fn run_suite(mode: &str, run: &(dyn Fn(&str, &Path) -> Output + Sync)) {
 #[test]
 fn suite_interpreted() {
     run_suite("interpreted", &|_, path| {
-        Command::new(env!("CARGO_BIN_EXE_lox")).arg(path).output().unwrap()
+        Command::new(env!("CARGO_BIN_EXE_lox"))
+            .arg(path)
+            .output()
+            .unwrap()
     });
 }
 
@@ -271,7 +305,11 @@ fn suite_native() {
     let dir = std::env::temp_dir().join(format!("lox-suite-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     run_suite("native", &|rel, path| {
-        let exe = dir.join(format!("{}{}", rel.replace('/', "_"), std::env::consts::EXE_SUFFIX));
+        let exe = dir.join(format!(
+            "{}{}",
+            rel.replace('/', "_"),
+            std::env::consts::EXE_SUFFIX
+        ));
         let build = Command::new(env!("CARGO_BIN_EXE_lox"))
             .arg("build")
             .arg(path)
@@ -295,10 +333,22 @@ fn expectation_parsing_matches_test_dart() {
     )
     .unwrap();
     assert_eq!(e.output, vec![(1, "1".to_string()), (2, "2".to_string())]);
-    assert_eq!(e.errors, vec!["[3] Error at 'x': bad".to_string(), "[9] Error: j".to_string()]);
+    assert_eq!(
+        e.errors,
+        vec![
+            "[3] Error at 'x': bad".to_string(),
+            "[9] Error: j".to_string()
+        ]
+    );
     assert_eq!(e.runtime_error, Some((6, "Boom.".to_string())));
     assert!(expectations("// nontest\n").is_none());
-    assert_eq!(syntax_error("[line 3] Error at 'b': x"), Some("[3] Error at 'b': x".to_string()));
-    assert_eq!(syntax_error("[java line 3] Error: x"), Some("[3] Error: x".to_string()));
+    assert_eq!(
+        syntax_error("[line 3] Error at 'b': x"),
+        Some("[3] Error at 'b': x".to_string())
+    );
+    assert_eq!(
+        syntax_error("[java line 3] Error: x"),
+        Some("[3] Error: x".to_string())
+    );
     assert_eq!(stack_trace_line("[line 12] in script"), Some(12));
 }

@@ -58,7 +58,12 @@ pub mod ffi_ret {
 ///
 /// # Safety
 /// `address` must point to a C function whose signature matches the described shape.
-pub unsafe fn ffi_call(address: usize, args: &[u64], float_mask: u32, ret_kind: i32) -> Option<u64> {
+pub unsafe fn ffi_call(
+    address: usize,
+    args: &[u64],
+    float_mask: u32,
+    ret_kind: i32,
+) -> Option<u64> {
     let mut ret = 0u64;
     let status = unsafe {
         a0_ffi_call(
@@ -85,7 +90,9 @@ pub unsafe fn read_symbol_table(table: *const A0Symbol) -> Vec<(String, usize)> 
         if entry.name.is_null() {
             return out;
         }
-        let name = unsafe { CStr::from_ptr(entry.name) }.to_string_lossy().into_owned();
+        let name = unsafe { CStr::from_ptr(entry.name) }
+            .to_string_lossy()
+            .into_owned();
         out.push((name, entry.address as usize));
         p = unsafe { p.add(1) };
     }
@@ -145,7 +152,10 @@ mod tests {
     fn symbol_table_has_runtime_and_libc() {
         let syms = runtime_symbols();
         for name in ["a0_print_f64", "a0_alloc", "sin", "putchar", "memcpy"] {
-            assert!(syms.iter().any(|(n, a)| n == name && *a != 0), "{name} missing");
+            assert!(
+                syms.iter().any(|(n, a)| n == name && *a != 0),
+                "{name} missing"
+            );
         }
     }
 
@@ -171,7 +181,14 @@ mod tests {
         // memset(buf, 'x', 3): mixed pointer and int arguments.
         let memset = lookup("memset");
         let mut buf = [0u8; 4];
-        let r = unsafe { ffi_call(memset, &[buf.as_mut_ptr() as u64, b'x' as u64, 3], 0, ffi_ret::INT) };
+        let r = unsafe {
+            ffi_call(
+                memset,
+                &[buf.as_mut_ptr() as u64, b'x' as u64, 3],
+                0,
+                ffi_ret::INT,
+            )
+        };
         assert!(r.is_some());
         assert_eq!(&buf, b"xxx\0");
     }

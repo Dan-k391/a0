@@ -146,7 +146,10 @@ data @msg = \"hi\\0a\"
     assert_eq!(print_module(&m), expected);
     let again = parse_text(&print_module(&m));
     assert_eq!(print_module(&again), expected);
-    assert_eq!(again.value_name(again.func_param_values(again.lookup_func("fib").unwrap())[0]), Some("n"));
+    assert_eq!(
+        again.value_name(again.func_param_values(again.lookup_func("fib").unwrap())[0]),
+        Some("n")
+    );
 }
 
 #[test]
@@ -209,7 +212,10 @@ func @f(%a: i64, %b: f64) -> i64 {
 }
 ";
     let out = errors_of(text);
-    assert!(out.contains("iadd needs two operands of the same integer type, found i64 and f64"), "{out}");
+    assert!(
+        out.contains("iadd needs two operands of the same integer type, found i64 and f64"),
+        "{out}"
+    );
     assert!(out.contains("t.a0ir:3:3"), "{out}");
 }
 
@@ -252,7 +258,10 @@ func @f(%c: i1) -> i64 {
 }
 ";
     let out = errors_of(text);
-    assert!(out.contains("the end of the function is reachable"), "{out}");
+    assert!(
+        out.contains("the end of the function is reachable"),
+        "{out}"
+    );
 
     // An infinite loop never falls through.
     let ok = "module \"m\"
@@ -277,8 +286,14 @@ func @f(%a: f64) {
 }
 ";
     let out = errors_of(text);
-    assert!(out.contains("argument 1 of @g must be i64, found f64"), "{out}");
-    assert!(out.contains("cannot set a variable of type i64 to a value of type f64"), "{out}");
+    assert!(
+        out.contains("argument 1 of @g must be i64, found f64"),
+        "{out}"
+    );
+    assert!(
+        out.contains("cannot set a variable of type i64 to a value of type f64"),
+        "{out}"
+    );
     assert!(out.contains("break outside a loop"), "{out}");
     assert!(out.contains("void function returns a value"), "{out}");
 }
@@ -298,10 +313,14 @@ func @f(%a: i64) -> i32 {
 #[test]
 fn parser_reports_syntax_errors() {
     let out = errors_of("module \"m\"\nfunc @f() {\n  %x: i64 = frobnicate\n}\n");
-    assert!(out.contains("expected an opcode, found 'frobnicate'"), "{out}");
+    assert!(
+        out.contains("expected an opcode, found 'frobnicate'"),
+        "{out}"
+    );
     assert!(out.contains("t.a0ir:3:13"), "{out}");
 
-    let out = errors_of("module \"m\"\nfunc @f() {\n  %x: i64 = iconst 1\n  %x: i64 = iconst 2\n}\n");
+    let out =
+        errors_of("module \"m\"\nfunc @f() {\n  %x: i64 = iconst 1\n  %x: i64 = iconst 2\n}\n");
     assert!(out.contains("value name is already used"), "{out}");
 
     let out = errors_of("module \"m\"\nfunc @f() -> i8 {\n  %x: i8 = iconst 300\n  return %x\n}\n");
@@ -330,7 +349,8 @@ global @later: i64 = 7
 
 #[test]
 fn entry_point_check() {
-    let ok = parse_text("module \"m\"\nfunc @main() -> i32 {\n  %0: i32 = iconst 0\n  return %0\n}\n");
+    let ok =
+        parse_text("module \"m\"\nfunc @main() -> i32 {\n  %0: i32 = iconst 0\n  return %0\n}\n");
     assert!(check_entry(&ok).is_empty());
     let bad = parse_text("module \"m\"\nfunc @main() {\n}\n");
     assert!(check_entry(&bad).summary().contains("() -> i32"));
@@ -351,8 +371,14 @@ fn quoted_names_round_trip() {
     b.end_function();
     let m = b.finish().unwrap();
     let text = print_module(&m);
-    assert!(text.contains("func @\"unary-\"(%\"123\": f64) -> f64"), "{text}");
-    assert!(text.contains("%\"with space\": f64 = fneg %\"123\""), "{text}");
+    assert!(
+        text.contains("func @\"unary-\"(%\"123\": f64) -> f64"),
+        "{text}"
+    );
+    assert!(
+        text.contains("%\"with space\": f64 = fneg %\"123\""),
+        "{text}"
+    );
     let again = parse_text(&text);
     assert_eq!(print_module(&again), text);
 }

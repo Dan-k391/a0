@@ -15,10 +15,7 @@ use crate::verify::verify;
 /// Parses a module from text. `source` is the id under which `text` is registered in the caller's
 /// `SourceMap`; it is only used for spans. The result is not verified; see [`parse_and_verify`].
 pub fn parse(text: &str, source: SourceId) -> Result<Module, Diagnostics> {
-    let tokens = match lex(text, source) {
-        Ok(t) => t,
-        Err(d) => return Err(d.into()),
-    };
+    let tokens = lex(text, source)?;
     let mut p = Parser {
         toks: tokens,
         pos: 0,
@@ -37,7 +34,11 @@ pub fn parse(text: &str, source: SourceId) -> Result<Module, Diagnostics> {
 pub fn parse_and_verify(text: &str, source: SourceId) -> Result<Module, Diagnostics> {
     let m = parse(text, source)?;
     let diags = verify(&m);
-    if diags.has_errors() { Err(diags) } else { Ok(m) }
+    if diags.has_errors() {
+        Err(diags)
+    } else {
+        Ok(m)
+    }
 }
 
 // ------------------------------------------------------------------------------------------ lexer
@@ -230,7 +231,10 @@ fn is_ident_byte(b: u8) -> bool {
     b.is_ascii_alphanumeric() || b == b'_' || b == b'.'
 }
 
-fn lex_string(bytes: &[u8], start: usize) -> Result<(Vec<u8>, usize), (usize, usize, &'static str)> {
+fn lex_string(
+    bytes: &[u8],
+    start: usize,
+) -> Result<(Vec<u8>, usize), (usize, usize, &'static str)> {
     let mut out = Vec::new();
     let mut i = start + 1;
     loop {
@@ -427,11 +431,11 @@ impl Parser {
     }
 
     fn ty(&mut self) -> PResult<Type> {
-        if let Tok::Word(w) = self.peek() {
-            if let Some(t) = Type::from_name(w) {
-                self.bump();
-                return Ok(t);
-            }
+        if let Tok::Word(w) = self.peek()
+            && let Some(t) = Type::from_name(w)
+        {
+            self.bump();
+            return Ok(t);
         }
         self.unexpected("a type")
     }
@@ -548,7 +552,11 @@ impl Parser {
                     self.expect(Tok::RParen, "')'")?;
                     let ret = self.ret_type()?;
                     let span = start.to(self.toks[self.pos - 1].span);
-                    if self.module.add_func(&name, &params, ret, Some(span)).is_none() {
+                    if self
+                        .module
+                        .add_func(&name, &params, ret, Some(span))
+                        .is_none()
+                    {
                         return self.error_at(span, &format!("symbol @{name} is already defined"));
                     }
                     self.end_of_line()?;
@@ -660,11 +668,16 @@ impl Parser {
                     self.bump();
                     let bits = match self.bump() {
                         Tok::Int(v) if v >= 0 => v as u64,
-                        _ => return self.error_at(span, "expected NaN bits like nan(0x7ff8000000000001)"),
+                        _ => {
+                            return self
+                                .error_at(span, "expected NaN bits like nan(0x7ff8000000000001)");
+                        }
                     };
                     self.expect(Tok::RParen, "')'")?;
                     let is_nan = match ty {
-                        Type::F32 => bits <= u32::MAX as u64 && f32::from_bits(bits as u32).is_nan(),
+                        Type::F32 => {
+                            bits <= u32::MAX as u64 && f32::from_bits(bits as u32).is_nan()
+                        }
                         _ => f64::from_bits(bits).is_nan(),
                     };
                     if !is_nan {
@@ -783,7 +796,10 @@ impl Parser {
                         Name::Named(s) => s.clone(),
                         Name::Num(x) => x.to_string(),
                     };
-                    self.error_at(span, &format!("unknown value %{shown} (not defined here or not in scope)"))
+                    self.error_at(
+                        span,
+                        &format!("unknown value %{shown} (not defined here or not in scope)"),
+                    )
                 }
             },
             _ => {
@@ -863,7 +879,10 @@ impl Parser {
                 | Opcode::CallIndirect
         );
         if needs_result && result.is_none() {
-            return self.error_at(op_span, &format!("'{op}' produces a value; write '%name: type = {op} ...'"));
+            return self.error_at(
+                op_span,
+                &format!("'{op}' produces a value; write '%name: type = {op} ...'"),
+            );
         }
         if !needs_result && result.is_some() && !matches!(op, Opcode::Call | Opcode::CallIndirect) {
             return self.error_at(op_span, &format!("'{op}' does not produce a value"));
@@ -903,12 +922,18 @@ impl Parser {
                 imm = if op == Opcode::Icmp {
                     match IntCC::from_name(&cc) {
                         Some(c) => c as u64,
-                        None => return self.error_at(span, "expected an integer condition (eq, ne, slt, ...)"),
+                        None => {
+                            return self
+                                .error_at(span, "expected an integer condition (eq, ne, slt, ...)");
+                        }
                     }
                 } else {
                     match FloatCC::from_name(&cc) {
                         Some(c) => c as u64,
-                        None => return self.error_at(span, "expected a float condition (eq, ne, lt, ...)"),
+                        None => {
+                            return self
+                                .error_at(span, "expected a float condition (eq, ne, lt, ...)");
+                        }
                     }
                 };
                 args.push(self.value(scope)?);

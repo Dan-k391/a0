@@ -528,7 +528,9 @@ impl Module {
 
 /// Whether control can never fall off the end of `region` (see `docs/ir.md`, "termination").
 pub fn region_terminates(m: &Module, region: Region) -> bool {
-    m.region_insts(region).iter().any(|&i| inst_terminates(m, i))
+    m.region_insts(region)
+        .iter()
+        .any(|&i| inst_terminates(m, i))
 }
 
 fn inst_terminates(m: &Module, i: Inst) -> bool {
@@ -538,16 +540,20 @@ fn inst_terminates(m: &Module, i: Inst) -> bool {
             (Some(t), Some(e)) => region_terminates(m, t) && region_terminates(m, e),
             _ => false,
         },
-        Opcode::Loop => m.inst_region(i, 0).is_some_and(|body| !region_breaks(m, body)),
+        Opcode::Loop => m
+            .inst_region(i, 0)
+            .is_some_and(|body| !region_breaks(m, body)),
         _ => false,
     }
 }
 
 /// Whether `region` contains a `break` that targets the loop owning it (not a nested loop).
 fn region_breaks(m: &Module, region: Region) -> bool {
-    m.region_insts(region).iter().any(|&i| match m.inst_opcode(i) {
-        Opcode::Break => true,
-        Opcode::If => (0..2).any(|n| m.inst_region(i, n).is_some_and(|r| region_breaks(m, r))),
-        _ => false,
-    })
+    m.region_insts(region)
+        .iter()
+        .any(|&i| match m.inst_opcode(i) {
+            Opcode::Break => true,
+            Opcode::If => (0..2).any(|n| m.inst_region(i, n).is_some_and(|r| region_breaks(m, r))),
+            _ => false,
+        })
 }

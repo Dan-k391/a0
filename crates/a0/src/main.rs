@@ -175,8 +175,10 @@ fn build(args: &[String], executable: bool) -> ExitCode {
     let args = match parse_build_args(args) {
         Ok(a) => a,
         Err(e) => {
-            eprintln!("a0: {e}
-");
+            eprintln!(
+                "a0: {e}
+"
+            );
             eprint!("{USAGE}");
             return ExitCode::from(2);
         }
