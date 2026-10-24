@@ -31,6 +31,9 @@ it directly.
 | 7. A shared language driver | done: `a0-driver`, used by every example language |
 | 8. CI on Linux, macOS and Windows | done: x86-64 and aarch64 Linux, aarch64 macOS, x86-64 Windows |
 | 9. Static types toolkit, a typed example language | done: `a0_sema::Types` and Minnow |
+| 10. Known issues: inline ints in `any`, 48-bit references, string equality | done |
+| 11. HIR inference, generics, nullable references | done |
+| 12. Frontend API: a typed language without a checker | done: Minnow 1513 → 692 lines, with more features |
 
 `docs/milestones.md` has the summary of each milestone and the open questions.
 

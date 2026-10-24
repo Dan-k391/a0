@@ -345,15 +345,70 @@ One entry per milestone: what was done, what changed along the way, and open que
 
 - None.
 
+## M11. HIR types: inference, generics, nullable references
+
+**Done**
+
+- The HIR builder infers types (D24): inference variables, unification, and nodes typed again at
+  `finish` when their rule needed a type that was still open. Errors point at the sub-expression they
+  are about, in user-facing wording.
+- References are non-null unless their type is `T?` (D23): `null` is a `T?`, a `T` fits a `T?`, `e!`
+  unwraps (panicking on null), and generated code checks for null only there. Globals of reference type
+  must be nullable. `T?` works in generic code; each instance is checked.
+- Generic structs, enums and functions, type checked once with opaque type parameters and
+  monomorphized by A0 before lowering (D25); type arguments are inferred or written out.
+- The text format covers all of it (`struct Pair<A, B>`, `Cell<T>?`, `f::<int>(x)`, `x!`, `[]`).
+  `tests/hir/generics.hir` runs in all three modes, the round trip holds for every corpus file, and the
+  HIR tests check the builder API directly.
+
+**Changed**
+
+- The checker no longer re-derives types on its own; it types every finished node again as a safety
+  net and keeps the structural rules.
+- A latent bug in the HIR text parser (closure parameters bound under their uniquified names) showed up
+  and was fixed.
+
+**Open questions**
+
+1. Flow typing (`if x != null` making `x` non-null) was left out (D23); frontends bind `x!` where
+   needed. Wanted?
+
+## M12. The frontend API: a typed language without a checker
+
+**Done**
+
+- Name resolution and construction by name in the builder (D26): bodies and scopes, `let_named`,
+  `name`, `call_named`, `assign_named`, `named_type`, `new_struct_named`, `variant_named`, `report`,
+  `error_expr`. An error type keeps one mistake from causing more errors; diagnostics can show types
+  in the language's syntax; item names may be HIR keywords.
+- Framework helpers every frontend needed: `a0_syntax::unquote` for string literals,
+  `SyntaxTree::nodes` and `nodes_of_kind`.
+- Minnow rewritten as one walk over its tree and extended with enums and `match`, generics and nullable
+  references (brief item 4). Its 26 error cases grew to 37.
+
+  | Lines | Before | After |
+  |---|---|---|
+  | Minnow (grammar + Rust) | 1513 | 692 (with enums, generics, nullable types) |
+  | Lox (grammar + Rust + prelude) | 1486 | 1486 |
+
+**Changed**
+
+- Lox keeps its own resolver: jlox's error messages and rules (declared-but-not-defined, `this`
+  outside a class, ...) are Lox's, not the framework's, so the name helpers do not apply. Its count
+  may change with the speed work (M14).
+- Some error messages changed wording to the framework's (for example "this function can end without
+  returning a value of type `int`" is now reported at the function body rather than its name).
+
+**Open questions**
+
+- None.
+
 ## Overall open questions
 
 These need a decision from you:
 
 1. **C-bindable APIs** (M1, D2): is the interpretation in D2 the intended line?
-2. **Lox speed on the HIR** (M6): close the remaining gap to the hand-written runtime (an inlining
-   hint, interned strings, fixed-arity calls), or leave it until a language needs the speed?
-3. **Generics** (M9): let-polymorphism in the toolkit, explicit generic functions monomorphized by
-   frontends, or neither for now?
+2. **Flow typing for nullable references** (M11): add it, or keep `x!`?
 
 Settled since earlier milestones: aarch64-windows is out of scope; the collector lives in `a0rt`
 (D16); linking on Linux and macOS is tested in CI on every push (M8); a reusable language driver
