@@ -11,6 +11,14 @@ dependencies = [
  "a0-ir",
  "a0-native",
  "a0-runtime",
+ "a0-syntax",
+]
+
+[[package]]
+name = "a0-build"
+version = "0.1.0"
+dependencies = [
+ "cc",
 ]
 
 [[package]]
@@ -359,6 +367,20 @@ checksum = "cc4e190f5d26ca7051642629da2c52fc03bde85a03197c99408dcd291734c855"
 dependencies = [
  "equivalent",
  "hashbrown 0.17.1",
+]
+
+[[package]]
+name = "kaleidoscope"
+version = "0.1.0"
+dependencies = [
+ "a0-build",
+ "a0-diag",
+ "a0-interp",
+ "a0-ir",
+ "a0-native",
+ "a0-runtime",
+ "a0-sema",
+ "a0-syntax",
 ]
 
 [[package]]
