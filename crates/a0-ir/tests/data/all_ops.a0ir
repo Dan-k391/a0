@@ -1,0 +1,155 @@
+module "all ops"
+
+data @greeting = "Hello, \"world\"\\\0a\00"
+
+global @counter: i64 = -42
+
+global @ratio: f64 = 0.1
+
+global @tiny: f32 = 1e-7
+
+global @slot: ptr = null
+
+extern func @putchar(i32) -> i32
+
+extern func @abort()
+
+func @"binary|"(%lhs: f64, %rhs: f64) -> f64 {
+  %0: f64 = fadd %lhs, %rhs
+  return %0
+}
+
+func @arith(%a: i64, %b: i64) -> i64 {
+  %sum: i64 = iadd %a, %b
+  %diff: i64 = isub %a, %b
+  %prod: i64 = imul %sum, %diff
+  %q: i64 = sdiv %prod, %b
+  %uq: i64 = udiv %prod, %b
+  %r: i64 = srem %q, %b
+  %ur: i64 = urem %uq, %b
+  %x: i64 = and %r, %ur
+  %y: i64 = or %x, %a
+  %z: i64 = xor %y, %b
+  %s1: i64 = shl %z, %a
+  %s2: i64 = lshr %s1, %a
+  %s3: i64 = ashr %s2, %a
+  %n: i64 = ineg %s3
+  %inv: i64 = not %n
+  return %inv
+}
+
+func @floats(%x: f64, %y: f32) -> f64 {
+  %a: f64 = fadd %x, %x
+  %b: f64 = fsub %a, %x
+  %c: f64 = fmul %b, %x
+  %d: f64 = fdiv %c, %x
+  %e: f64 = fneg %d
+  %big: f64 = fconst 1e300
+  %neg0: f64 = fconst -0.0
+  %inf: f64 = fconst inf
+  %ninf: f64 = fconst -inf
+  %nan: f64 = fconst nan
+  %odd: f64 = fconst nan(0x7ff8000000000001)
+  %half: f32 = fconst 0.5
+  %ext: f64 = fext %y
+  %tr: f32 = ftrunc %x
+  %sum: f64 = fadd %e, %ext
+  return %sum
+}
+
+func @compare(%a: i32, %b: i32, %x: f64, %p: ptr) -> i1 {
+  %0: i1 = icmp eq %a, %b
+  %1: i1 = icmp ne %a, %b
+  %2: i1 = icmp slt %a, %b
+  %3: i1 = icmp sle %a, %b
+  %4: i1 = icmp sgt %a, %b
+  %5: i1 = icmp sge %a, %b
+  %6: i1 = icmp ult %a, %b
+  %7: i1 = icmp ule %a, %b
+  %8: i1 = icmp ugt %a, %b
+  %9: i1 = icmp uge %a, %b
+  %10: i1 = fcmp eq %x, %x
+  %11: i1 = fcmp ne %x, %x
+  %12: i1 = fcmp lt %x, %x
+  %13: i1 = fcmp le %x, %x
+  %14: i1 = fcmp gt %x, %x
+  %15: i1 = fcmp ge %x, %x
+  %null: ptr = null
+  %16: i1 = icmp eq %p, %null
+  %17: i1 = select %16, %0, %1
+  return %17
+}
+
+func @casts(%a: i8, %f: f64) -> i64 {
+  %z: i32 = zext %a
+  %s: i64 = sext %a
+  %t: i8 = trunc %s
+  %sf: f64 = sitofp %z
+  %uf: f32 = uitofp %t
+  %fi: i64 = fptosi %f
+  %fu: i32 = fptoui %f
+  %bits: i64 = bitcast %f
+  %back: f64 = bitcast %bits
+  %one: i1 = iconst 1
+  %wide: i64 = zext %one
+  %max8: i8 = iconst -128
+  %p: ptr = inttoptr %wide
+  %i: i64 = ptrtoint %p
+  return %i
+}
+
+func @memory() -> i64 {
+  %g: ptr = addr @counter
+  %v: i64 = load %g
+  %eight: i64 = iconst 8
+  %p: ptr = ptradd %g, %eight
+  store %v, %g
+  %fp: ptr = addr @arith
+  %r: i64 = call_indirect %fp(%v, %v) : (i64, i64) -> i64
+  %q: ptr = addr @abort
+  call_indirect %q() : ()
+  return %r
+}
+
+func @control(%n: i64) -> i64 {
+  var $i: i64
+  var $acc: i64
+  var $0: f64
+  %zero: i64 = iconst 0
+  set $i, %zero
+  set $acc, %zero
+  loop {
+    %i: i64 = get $i
+    %done: i1 = icmp sge %i, %n
+    if %done {
+      break
+    }
+    %odd.mask: i64 = iconst 1
+    %bit: i64 = and %i, %odd.mask
+    %is_odd: i1 = icmp ne %bit, %zero
+    if %is_odd {
+      %one: i64 = iconst 1
+      %next: i64 = iadd %i, %one
+      set $i, %next
+      continue
+    } else {
+    }
+    %acc: i64 = get $acc
+    %acc2: i64 = iadd %acc, %i
+    set $acc, %acc2
+    %one.1: i64 = iconst 1
+    %next.1: i64 = iadd %i, %one.1
+    set $i, %next.1
+  }
+  %result: i64 = get $acc
+  return %result
+  unreachable
+}
+
+func @main() -> i32 {
+  %c: i32 = iconst 65
+  %0: i32 = call @putchar(%c)
+  call @abort()
+  %1: i32 = iconst 0
+  return %1
+}
