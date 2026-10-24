@@ -262,3 +262,15 @@ map buffers up to 256 bytes come from the same free lists as small objects (D18)
 entry its last lookup found (so `has(m, k)` followed by `m[k]` hashes once), and string equality
 compares cached hashes before bytes. The alternative, letting each language write such paths in its
 prelude, would contradict the goal that programs run fast without tuning by the language author.
+
+## D29. Lox functions take up to three parameters directly
+
+Lox checks arity at run time, so the first port compiled every function to a closure taking an
+argument array, and every call allocated that array. Functions with at most three parameters now
+compile to closures that take them directly, stored in the `LoxFunction` field for their arity
+(`code0` .. `code3`; `code` holds the array form of longer ones). Call sites with up to three
+arguments call the prelude's `call0` .. `call3`, which call the code of matching arity directly and
+send everything else (classes, natives, arity errors) through the general `call`. They are written
+without early returns so the optimizer inlines them at every call site. This is what any frontend
+for a language with dynamic arity does on a typed IR; it costs the prelude about 100 lines and
+halves the time of call-heavy programs (`invocation`, `fib`).

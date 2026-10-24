@@ -270,16 +270,27 @@ impl Emit<'_> {
     }
 
     /// A `LoxFunction` for a function or method declaration. Its code takes the receiver (`()` for
-    /// plain functions) and the arguments, whose number `call` has already checked.
+    /// plain functions) and the arguments: up to three directly, more in an array. The prelude's
+    /// `call` functions have checked their number.
     fn function(&mut self, node: NodeId, initializer: bool) -> ExprId {
         let n = self.n;
         let tree = self.tree;
-        let body = self.b.new_closure_body(
-            self.body,
-            &["this", "args"],
-            &[TypeId::ANY, self.args_ty],
-            TypeId::ANY,
-        );
+        let params = match tree.field(node, n.params) {
+            Some(p) => tree.fields(p, n.param),
+            None => Vec::new(),
+        };
+        let direct = params.len() <= 3;
+        let (names, types) = if direct {
+            let names: Vec<&str> = std::iter::once("this")
+                .chain(params.iter().map(|&p| tree.text(p)))
+                .collect();
+            (names, vec![TypeId::ANY; params.len() + 1])
+        } else {
+            (vec!["this", "args"], vec![TypeId::ANY, self.args_ty])
+        };
+        let body = self
+            .b
+            .new_closure_body(self.body, &names, &types, TypeId::ANY);
         let outer = (self.body, self.init_this);
         self.body = body;
         let this = self.b.param(body, 0);
@@ -288,11 +299,14 @@ impl Emit<'_> {
             self.locals.insert(d, this);
         }
         let mut items = Vec::new();
-        let params = match tree.field(node, n.params) {
-            Some(p) => tree.fields(p, n.param),
-            None => Vec::new(),
-        };
         for (i, &p) in params.iter().enumerate() {
+            if direct {
+                let Place::Local(d) = self.a.defs[&p] else {
+                    unreachable!("parameters are locals")
+                };
+                self.locals.insert(d, self.b.param(body, i as u32 + 1));
+                continue;
+            }
             let args = self.b.param(body, 1);
             let args = self.b.local(args);
             let i = self.b.int(i as i64);
@@ -317,7 +331,21 @@ impl Emit<'_> {
         let name = self.text(tree.field(node, n.name).unwrap());
         let arity = self.b.int(params.len() as i64);
         let code = self.b.lambda(body);
-        self.b.new_struct(s, &[name, arity, code])
+        // Fields `code`, `code0` .. `code3`: this function's code in the one for its arity.
+        let slot = if direct { params.len() + 1 } else { 0 };
+        let mut fields = vec![name, arity];
+        for k in 0..5 {
+            if k == slot {
+                fields.push(code);
+                continue;
+            }
+            let t = match k {
+                0 => self.b.fn_type(&[TypeId::ANY, self.args_ty], TypeId::ANY),
+                k => self.b.fn_type(&vec![TypeId::ANY; k], TypeId::ANY),
+            };
+            fields.push(self.b.null(t));
+        }
+        self.b.new_struct(s, &fields)
     }
 
     fn class_decl(&mut self, node: NodeId, out: &mut Vec<ExprId>) {
@@ -450,12 +478,16 @@ impl Emit<'_> {
                 None => Vec::new(),
             };
             let args: Vec<ExprId> = args.into_iter().map(|a| self.expr(a)).collect();
-            let args = if args.is_empty() {
-                self.b.new_array(self.args_ty)
-            } else {
-                self.b.array(&args)
-            };
             let paren = tree.child(node, tree.child_count(node) - 1);
+            if args.len() <= 3 {
+                // `call0` .. `call3` take the arguments directly.
+                let name = format!("call{}", args.len());
+                let mut all = vec![callee];
+                all.extend(args);
+                all.push(self.line(paren));
+                return self.rt(&name, &all);
+            }
+            let args = self.b.array(&args);
             let line = self.line(paren);
             self.rt("call", &[callee, args, line])
         } else {

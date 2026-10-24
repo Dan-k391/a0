@@ -2,7 +2,18 @@
 // value is an `any`. Error messages and the exit status (70) match jlox.
 module "lox";
 
-struct LoxFunction { name: string, arity: int, code: fn(any, array<any>) -> any }
+// A function's code takes the receiver (`()` for plain functions) and the arguments. Functions of up
+// to three parameters take them directly (`code0` to `code3`), so most calls build no array; others
+// take an array (`code`). Exactly one of the five is set.
+struct LoxFunction {
+  name: string,
+  arity: int,
+  code: (fn(any, array<any>) -> any)?,
+  code0: (fn(any) -> any)?,
+  code1: (fn(any, any) -> any)?,
+  code2: (fn(any, any, any) -> any)?,
+  code3: (fn(any, any, any, any) -> any)?
+}
 struct LoxNative { arity: int, code: fn(array<any>) -> any }
 struct LoxClass { name: string, methods: map<string, LoxFunction> }
 struct LoxInstance { class: LoxClass, fields: map<string, any> }
@@ -34,10 +45,16 @@ fn numbers(a: any, b: any, line: int) {
   }
 }
 
+// Numbers first and small, so that the optimizer inlines it; strings and errors are rarer.
 fn add(a: any, b: any, line: int) -> any {
   if a is float && b is float {
-    return ((a as float) + (b as float)) as any;
+    ((a as float) + (b as float)) as any
+  } else {
+    add_strings(a, b, line)
   }
+}
+
+fn add_strings(a: any, b: any, line: int) -> any {
   if a is string && b is string {
     return ((a as string) + (b as string)) as any;
   }
@@ -118,28 +135,44 @@ fn arity(expected: int, given: int, line: int) {
   }
 }
 
-// Calls a Lox value. Each Lox call is two native frames (this and the callee), so the limit keeps
-// deep recursion a Lox error rather than a stack overflow of the host.
-fn call(callee: any, args: array<any>, line: int) -> any {
+// Counts nested calls: each Lox call is at least two native frames, and the limit keeps deep
+// recursion a Lox error rather than a stack overflow of the host.
+fn enter(line: int) {
   depth = depth + 1;
   if depth > 3000 {
     runtime_error("Stack overflow.", line);
   }
+}
+
+// Runs a function with its arguments in an array.
+fn invoke(f: LoxFunction, this: any, args: array<any>, line: int) -> any {
+  arity(f.arity, len(args), line);
+  if f.arity == 0 {
+    f.code0!(this)
+  } else if f.arity == 1 {
+    f.code1!(this, args[0])
+  } else if f.arity == 2 {
+    f.code2!(this, args[0], args[1])
+  } else if f.arity == 3 {
+    f.code3!(this, args[0], args[1], args[2])
+  } else {
+    f.code!(this, args)
+  }
+}
+
+// Calls a Lox value with its arguments in an array: functions, methods, classes and natives.
+fn call(callee: any, args: array<any>, line: int) -> any {
+  enter(line);
   let result: any = if callee is LoxFunction {
-    let f = callee as LoxFunction;
-    arity(f.arity, len(args), line);
-    f.code(() as any, args)
+    invoke(callee as LoxFunction, () as any, args, line)
   } else if callee is LoxBound {
     let b = callee as LoxBound;
-    arity(b.method.arity, len(args), line);
-    b.method.code(b.receiver, args)
+    invoke(b.method, b.receiver, args, line)
   } else if callee is LoxClass {
     let k = callee as LoxClass;
     let instance = new LoxInstance { class: k, fields: new map<string, any> } as any;
     if has(k.methods, "init") {
-      let init = k.methods["init"];
-      arity(init.arity, len(args), line);
-      init.code(instance, args);
+      invoke(k.methods["init"], instance, args, line);
     } else {
       arity(0, len(args), line);
     }
@@ -153,6 +186,113 @@ fn call(callee: any, args: array<any>, line: int) -> any {
   };
   depth = depth - 1;
   result
+}
+
+// Calls with zero to three arguments: functions and methods of that arity directly, anything else
+// (classes, natives, wrong arities, errors) through `call`. Written without early returns so that
+// the optimizer inlines them at each call site.
+fn call0(callee: any, line: int) -> any {
+  if callee is LoxFunction {
+    let f = callee as LoxFunction;
+    if f.code0 != null<fn(any) -> any> {
+      enter(line);
+      let r = f.code0!(() as any);
+      depth = depth - 1;
+      r
+    } else {
+      call(callee, new array<any>, line)
+    }
+  } else if callee is LoxBound {
+    let m = callee as LoxBound;
+    if m.method.code0 != null<fn(any) -> any> {
+      enter(line);
+      let r = m.method.code0!(m.receiver);
+      depth = depth - 1;
+      r
+    } else {
+      call(callee, new array<any>, line)
+    }
+  } else {
+    call(callee, new array<any>, line)
+  }
+}
+
+fn call1(callee: any, a: any, line: int) -> any {
+  if callee is LoxFunction {
+    let f = callee as LoxFunction;
+    if f.code1 != null<fn(any, any) -> any> {
+      enter(line);
+      let r = f.code1!(() as any, a);
+      depth = depth - 1;
+      r
+    } else {
+      call(callee, [a], line)
+    }
+  } else if callee is LoxBound {
+    let m = callee as LoxBound;
+    if m.method.code1 != null<fn(any, any) -> any> {
+      enter(line);
+      let r = m.method.code1!(m.receiver, a);
+      depth = depth - 1;
+      r
+    } else {
+      call(callee, [a], line)
+    }
+  } else {
+    call(callee, [a], line)
+  }
+}
+
+fn call2(callee: any, a: any, b: any, line: int) -> any {
+  if callee is LoxFunction {
+    let f = callee as LoxFunction;
+    if f.code2 != null<fn(any, any, any) -> any> {
+      enter(line);
+      let r = f.code2!(() as any, a, b);
+      depth = depth - 1;
+      r
+    } else {
+      call(callee, [a, b], line)
+    }
+  } else if callee is LoxBound {
+    let m = callee as LoxBound;
+    if m.method.code2 != null<fn(any, any, any) -> any> {
+      enter(line);
+      let r = m.method.code2!(m.receiver, a, b);
+      depth = depth - 1;
+      r
+    } else {
+      call(callee, [a, b], line)
+    }
+  } else {
+    call(callee, [a, b], line)
+  }
+}
+
+fn call3(callee: any, a: any, b: any, c: any, line: int) -> any {
+  if callee is LoxFunction {
+    let f = callee as LoxFunction;
+    if f.code3 != null<fn(any, any, any, any) -> any> {
+      enter(line);
+      let r = f.code3!(() as any, a, b, c);
+      depth = depth - 1;
+      r
+    } else {
+      call(callee, [a, b, c], line)
+    }
+  } else if callee is LoxBound {
+    let m = callee as LoxBound;
+    if m.method.code3 != null<fn(any, any, any, any) -> any> {
+      enter(line);
+      let r = m.method.code3!(m.receiver, a, b, c);
+      depth = depth - 1;
+      r
+    } else {
+      call(callee, [a, b, c], line)
+    }
+  } else {
+    call(callee, [a, b, c], line)
+  }
 }
 
 fn get_property(object: any, name: string, line: int) -> any {
