@@ -923,8 +923,10 @@ impl Parser {
                     match IntCC::from_name(&cc) {
                         Some(c) => c as u64,
                         None => {
-                            return self
-                                .error_at(span, "expected an integer condition (eq, ne, slt, ...)");
+                            return self.error_at(
+                                span,
+                                "expected an integer condition (eq, ne, slt, ...)",
+                            );
                         }
                     }
                 } else {
