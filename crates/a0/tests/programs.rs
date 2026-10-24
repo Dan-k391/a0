@@ -8,6 +8,54 @@
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
+/// Runs a program, killing it after a minute: a collector bug can make a program loop forever, and
+/// the test should then fail rather than hang.
+fn run(cmd: &mut Command) -> Output {
+    use std::io::Read;
+    use std::process::Stdio;
+    use std::time::{Duration, Instant};
+    let mut child = cmd
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut out = child.stdout.take().unwrap();
+    let mut err = child.stderr.take().unwrap();
+    let stdout = std::thread::spawn(move || {
+        let mut v = Vec::new();
+        out.read_to_end(&mut v).ok();
+        v
+    });
+    let stderr = std::thread::spawn(move || {
+        let mut v = Vec::new();
+        err.read_to_end(&mut v).ok();
+        v
+    });
+    let start = Instant::now();
+    let mut timed_out = false;
+    let status = loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            break status;
+        }
+        if start.elapsed() > Duration::from_secs(60) {
+            child.kill().ok();
+            timed_out = true;
+            break child.wait().unwrap();
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    };
+    let mut stderr = stderr.join().unwrap();
+    if timed_out {
+        stderr.extend_from_slice(b"\n(killed after 60 seconds)\n");
+    }
+    Output {
+        status,
+        stdout: stdout.join().unwrap(),
+        stderr,
+    }
+}
+
 struct Expect {
     stdout: String,
     stderr: String,
@@ -94,24 +142,16 @@ fn check_programs(run: &dyn Fn(&Path) -> Output) {
 
 #[test]
 fn interpreted_programs_match_expectations() {
-    check_programs(&|file| {
-        Command::new(env!("CARGO_BIN_EXE_a0"))
-            .arg("run")
-            .arg(file)
-            .output()
-            .unwrap()
-    });
+    check_programs(&|file| run(Command::new(env!("CARGO_BIN_EXE_a0")).arg("run").arg(file)));
 }
 
 #[test]
 fn interpreted_programs_survive_gc_stress() {
     check_programs(&|file| {
-        Command::new(env!("CARGO_BIN_EXE_a0"))
+        run(Command::new(env!("CARGO_BIN_EXE_a0"))
             .arg("run")
             .arg(file)
-            .env("A0_GC_STRESS", "1")
-            .output()
-            .unwrap()
+            .env("A0_GC_STRESS", "1"))
     });
 }
 
@@ -127,20 +167,18 @@ fn native_programs_match_expectations() {
                 .replace('.', "_"),
             std::env::consts::EXE_SUFFIX
         ));
-        let build = Command::new(env!("CARGO_BIN_EXE_a0"))
+        let build = run(Command::new(env!("CARGO_BIN_EXE_a0"))
             .arg("build")
             .arg(file)
             .arg("-o")
-            .arg(&exe)
-            .output()
-            .unwrap();
+            .arg(&exe));
         assert!(
             build.status.success(),
             "building {} failed:\n{}",
             file.display(),
             String::from_utf8_lossy(&build.stderr)
         );
-        Command::new(&exe).output().unwrap()
+        run(&mut Command::new(&exe))
     });
     std::fs::remove_dir_all(&dir).ok();
 }
@@ -154,11 +192,9 @@ fn check_and_fmt_report_diagnostics() {
         "module \"m\"\nfunc @f() -> i64 {\n  %x: f64 = fconst 1.0\n  return %x\n}\n",
     )
     .unwrap();
-    let out = Command::new(env!("CARGO_BIN_EXE_a0"))
+    let out = run(Command::new(env!("CARGO_BIN_EXE_a0"))
         .arg("check")
-        .arg(&bad)
-        .output()
-        .unwrap();
+        .arg(&bad));
     assert_eq!(out.status.code(), Some(1));
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
@@ -173,11 +209,7 @@ fn check_and_fmt_report_diagnostics() {
         "module \"m\"\nfunc @f()   ->   i64 {\n%x: i64 = iconst 1 ; one\nreturn %x\n}\n",
     )
     .unwrap();
-    let out = Command::new(env!("CARGO_BIN_EXE_a0"))
-        .arg("fmt")
-        .arg(&good)
-        .output()
-        .unwrap();
+    let out = run(Command::new(env!("CARGO_BIN_EXE_a0")).arg("fmt").arg(&good));
     assert_eq!(
         String::from_utf8_lossy(&out.stdout),
         "module \"m\"\n\nfunc @f() -> i64 {\n  %x: i64 = iconst 1\n  return %x\n}\n"
@@ -193,12 +225,10 @@ fn obj_emits_for_other_targets() {
         .find(|p| p.ends_with("hello.a0ir"))
         .unwrap();
     let out_path = dir.join("hello.o");
-    let out = Command::new(env!("CARGO_BIN_EXE_a0"))
+    let out = run(Command::new(env!("CARGO_BIN_EXE_a0"))
         .args(["obj", "--target", "aarch64-linux", "-o"])
         .arg(&out_path)
-        .arg(&file)
-        .output()
-        .unwrap();
+        .arg(&file));
     assert!(
         out.status.success(),
         "{}",
@@ -225,12 +255,10 @@ sum = NUM (\"+\" NUM)*;
     .unwrap();
     let good = dir.join("good.txt");
     std::fs::write(&good, "1 + 2").unwrap();
-    let out = Command::new(env!("CARGO_BIN_EXE_a0"))
+    let out = run(Command::new(env!("CARGO_BIN_EXE_a0"))
         .arg("parse")
         .arg(&grammar)
-        .arg(&good)
-        .output()
-        .unwrap();
+        .arg(&good));
     assert!(out.status.success());
     assert_eq!(
         String::from_utf8_lossy(&out.stdout),
@@ -240,12 +268,10 @@ sum = NUM (\"+\" NUM)*;
 
     let bad = dir.join("bad.txt");
     std::fs::write(&bad, "1 + + 2").unwrap();
-    let out = Command::new(env!("CARGO_BIN_EXE_a0"))
+    let out = run(Command::new(env!("CARGO_BIN_EXE_a0"))
         .arg("parse")
         .arg(&grammar)
-        .arg(&bad)
-        .output()
-        .unwrap();
+        .arg(&bad));
     assert_eq!(out.status.code(), Some(1));
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("expected NUM, found '+'"), "{stderr}");

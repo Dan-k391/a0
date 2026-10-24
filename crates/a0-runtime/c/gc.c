@@ -75,10 +75,52 @@ static void maybe_collect(size_t incoming) {
     if (stress || bytes_allocated + incoming > next_gc) a0_gc_collect();
 }
 
+/* Small objects come from per-size free lists carved out of chunks, so allocating one is a list pop
+ * and freeing it a list push; bigger ones use malloc. Chunks are never returned to the system. */
+#define GRANULE 16
+#define SMALL_LIMIT 256
+#define CHUNK_SIZE (64 * 1024)
+
+typedef struct FreeCell {
+    struct FreeCell *next;
+} FreeCell;
+
+static FreeCell *free_lists[SMALL_LIMIT / GRANULE + 1];
+
+static Header *small_alloc(size_t size) {
+    size_t cls = size / GRANULE;
+    if (free_lists[cls] == NULL) {
+        char *chunk = (char *)malloc(CHUNK_SIZE);
+        if (chunk == NULL) a0_panic("out of memory");
+        for (size_t off = 0; off + size <= CHUNK_SIZE; off += size) {
+            FreeCell *c = (FreeCell *)(chunk + off);
+            c->next = free_lists[cls];
+            free_lists[cls] = c;
+        }
+    }
+    FreeCell *c = free_lists[cls];
+    free_lists[cls] = c->next;
+    memset(c, 0, size);
+    return (Header *)c;
+}
+
+static void object_free(Header *h) {
+    size_t size = h->size;
+    if (size > SMALL_LIMIT) {
+        free(h);
+        return;
+    }
+    /* Under stress, poison dead objects so a missing root shows up as garbage, not stale data. */
+    if (stress) memset(h, 0xdd, size);
+    FreeCell *c = (FreeCell *)h;
+    c->next = free_lists[size / GRANULE];
+    free_lists[size / GRANULE] = c;
+}
+
 void *a0_gc_alloc(const A0Type *type, size_t payload_size) {
-    size_t size = sizeof(Header) + payload_size;
+    size_t size = (sizeof(Header) + payload_size + GRANULE - 1) / GRANULE * GRANULE;
     maybe_collect(size);
-    Header *h = (Header *)calloc(1, size);
+    Header *h = size <= SMALL_LIMIT ? small_alloc(size) : (Header *)calloc(1, size);
     if (h == NULL) a0_panic("out of memory");
     h->type = type;
     h->size = size;
@@ -200,7 +242,7 @@ void a0_gc_collect(void) {
             *link = h->next;
             finalize(PAYLOAD(h));
             bytes_allocated -= h->size;
-            free(h);
+            object_free(h);
         }
     }
     live_objects = live;
