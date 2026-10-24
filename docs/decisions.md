@@ -89,3 +89,12 @@ Pratt parser with prefix, infix and postfix forms). Tables that programs extend 
 `a0-sema` provides lexical scopes (declare, define, resolve, capture detection), which both example
 languages need. A type checker is not built yet: Kaleidoscope has a single type and Lox is dynamically
 typed, so there is no second language to generalize from (see the fundamentals).
+
+## D13. Lox's object model and garbage collector live in Lox's runtime
+
+Only Lox needs garbage collection, strings and hash tables so far, so they are in
+`examples/lox/runtime/lox.c` rather than in `a0rt`, following "generalize only when two or more
+example languages need something". The collector is precise: compiled code keeps live values in
+shadow-stack frames that the runtime scans, which works the same in the interpreter and in native code
+and needs no stack maps from Cranelift. When a second language needs a collector, the language-neutral
+parts (allocation with type descriptors, gray stack, shadow stack, weak tables) can move into `a0rt`.

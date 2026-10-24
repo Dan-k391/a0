@@ -11,6 +11,7 @@ members = [
     "crates/a0-sema",
     "crates/a0-build",
     "examples/kaleidoscope",
+    "examples/lox",
     "crates/a0",
 ]
 
