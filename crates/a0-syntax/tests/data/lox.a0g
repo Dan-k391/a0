@@ -1,0 +1,81 @@
+// Lox, from Crafting Interpreters. Error messages and recovery follow jlox.
+grammar lox;
+
+skip /[ \t\r\n]+/;
+skip /\/\/[^\n]*/;
+token NUMBER /[0-9]+(\.[0-9]+)?/;
+token STRING /"[^"]*"/;
+token IDENTIFIER /[A-Za-z_][A-Za-z0-9_]*/;
+error "Unterminated string." /"[^"]*/;
+unknown "Unexpected character.";
+
+program = (!EOF declaration)* EOF;
+
+declaration @inline @recover(after ";" before "class" "fun" "var" "for" "if" "while" "print" "return")
+    = class_decl | fun_decl | var_decl | statement;
+
+class_decl = "class" name:IDENTIFIER ~ "Expect class name."
+             ("<" superclass:IDENTIFIER ~ "Expect superclass name.")?
+             "{" ~ "Expect '{' before class body."
+             (!"}" !EOF methods:method)*
+             "}" ~ "Expect '}' after class body.";
+
+fun_decl = "fun" name:IDENTIFIER ~ "Expect function name."
+           "(" ~ "Expect '(' after function name."
+           params:parameters?
+           ")" ~ "Expect ')' after parameters."
+           body:block ~ "Expect '{' before function body.";
+
+method = name:IDENTIFIER ~ "Expect method name."
+         "(" ~ "Expect '(' after method name."
+         params:parameters?
+         ")" ~ "Expect ')' after parameters."
+         body:block ~ "Expect '{' before method body.";
+
+parameters = param:IDENTIFIER ~ "Expect parameter name."
+             ("," param:IDENTIFIER ~ "Expect parameter name.")*;
+
+var_decl = "var" name:IDENTIFIER ~ "Expect variable name."
+           ("=" init:expression)?
+           ";" ~ "Expect ';' after variable declaration.";
+
+statement @inline = for_stmt | if_stmt | print_stmt | return_stmt | while_stmt | block | expr_stmt;
+
+expr_stmt = expr:expression ";" ~ "Expect ';' after expression.";
+
+for_stmt = "for" "(" ~ "Expect '(' after 'for'."
+           (";" | init:var_decl | init:expr_stmt)
+           cond:expression? ";" ~ "Expect ';' after loop condition."
+           incr:expression? ")" ~ "Expect ')' after for clauses."
+           body:statement;
+
+if_stmt = "if" "(" ~ "Expect '(' after 'if'." cond:expression ")" ~ "Expect ')' after if condition."
+          then:statement ("else" else:statement)?;
+
+print_stmt = "print" value:expression ";" ~ "Expect ';' after value.";
+
+return_stmt = "return" value:expression? ";" ~ "Expect ';' after return value.";
+
+while_stmt = "while" "(" ~ "Expect '(' after 'while'." cond:expression ")" ~ "Expect ')' after condition."
+             body:statement;
+
+block = "{" (!"}" !EOF declaration)* "}" ~ "Expect '}' after block.";
+
+expression @inline = @prec primary ~ "Expect expression." {
+    right "=" => assign;
+    left "or" => logical;
+    left "and" => logical;
+    left "==" "!=" => binary;
+    left ">" ">=" "<" "<=" => binary;
+    left "-" "+" => binary;
+    left "/" "*" => binary;
+    prefix "!" "-" => unary;
+    postfix "(" args:arguments? ")" ~ "Expect ')' after arguments." => call;
+    postfix "." name:IDENTIFIER ~ "Expect property name after '.'." => get;
+};
+
+arguments = arg:expression ("," arg:expression)*;
+
+primary = "true" | "false" | "nil" | "this" | NUMBER | STRING | IDENTIFIER
+        | "(" inner:expression ")" ~ "Expect ')' after expression."
+        | "super" "." ~ "Expect '.' after 'super'." method:IDENTIFIER ~ "Expect superclass method name.";

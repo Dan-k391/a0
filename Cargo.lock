@@ -57,6 +57,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "a0-sema"
+version = "0.1.0"
+
+[[package]]
+name = "a0-syntax"
+version = "0.1.0"
+dependencies = [
+ "a0-diag",
+]
+
+[[package]]
 name = "a0-target"
 version = "0.1.0"
 

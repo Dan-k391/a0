@@ -1,0 +1,9 @@
+[package]
+name = "a0-syntax"
+description = "A0 frontend: grammars, lexing, parsing into syntax trees, syntax diagnostics"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+a0-diag.workspace = true
