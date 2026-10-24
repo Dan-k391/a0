@@ -6,6 +6,11 @@
 #include <stdlib.h>
 #include <string.h>
 
+#ifdef _MSC_VER
+/* With optimization these are intrinsics, and an intrinsic's address is not a constant initializer. */
+#pragma function(floor, ceil, log2)
+#endif
+
 #define SYM(f) {#f, (void *)&f}
 
 const A0Symbol a0_rt_symbols[] = {
