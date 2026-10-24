@@ -43,3 +43,41 @@ One entry per milestone: what was done, what changed along the way, and open que
 3. *Small integer arguments to C.* IR integers are signless, so `i8`/`i16` arguments to C functions are
    not extended according to the C type's signedness. This only matters for C functions with `char` or
    `short` parameters (and on Apple AArch64). Frontends should pass `i32`/`i64`.
+
+## M2. Native executables from IR
+
+**Done**
+
+- `a0-target`: explicit `Target` (architecture + OS) with triple, object format, calling convention,
+  PIC requirement, linker flavor and file suffixes. Codegen never asks the host.
+- `a0-native`: lowers IR to Cranelift. IR variables are handed to `cranelift-frontend`, which builds the
+  SSA; `if`/`loop` become blocks; dead code after a terminator is not emitted. Division by zero, signed
+  overflow and `unreachable` call `a0_rt_trap`, so native code prints exactly what the interpreter
+  prints. With an entry point, the IR `@main` is emitted as `a0.main` behind a generated C `main` that
+  initializes the runtime.
+- Linking uses the platform linker (`link.exe` found through the `cc` crate's MSVC discovery, `cc`
+  elsewhere) with the runtime's embedded static library. Only the host target can be linked.
+- `a0 build` (executable) and `a0 obj --target T` (object for any target).
+- Tests: every corpus program runs natively and must meet the same expectations as in the
+  interpreter; every program is compiled for every emittable target and the objects are inspected
+  (format, architecture, exported and imported symbols). A new `semantics.a0ir` exercises integer
+  wrapping, shifts, narrow types, `i1` arithmetic and saturating conversions in both backends.
+
+**Changed**
+
+- The differential tests found one real bug: `i1` lives in an `i8` in Cranelift, so `iadd` on `i1`
+  produced 2. Arithmetic results on `i1` are now masked to one bit.
+- Cranelift 0.137 enables only the host ISA by default; both the `x86` and `arm64` backends are now
+  enabled explicitly.
+
+**Open questions**
+
+1. **aarch64-windows cannot be produced.** `cranelift-object` 0.137 has no AArch64 relocations for
+   COFF (it hits `unimplemented!`). The backend now reports a diagnostic instead of crashing. Fixing it
+   means either contributing COFF/ARM64 relocation support to Cranelift upstream, or writing that part
+   of object emission ourselves, which is close to the "don't write our own linker" line. I have not
+   worked around it. Which way do you want to go, or should the target wait?
+2. Linking was exercised on x86-64 Windows only, the machine available here. The Linux and macOS link
+   paths are written but not run; their objects are checked structurally.
+3. Executables get an 8 MiB main-thread stack where the linker can set it (Windows, macOS). On Linux
+   the stack size comes from `ulimit`.
