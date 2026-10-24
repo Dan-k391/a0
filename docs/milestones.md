@@ -116,3 +116,35 @@ One entry per milestone: what was done, what changed along the way, and open que
 1. The DSL has no parameterized rules or macros; small duplication (as in Lox's `fun_decl`/`method`)
    is the price. Worth adding when a second language needs it?
 2. No static type checker in `a0-sema` yet (D12), since neither example language has static types.
+
+## M4. Kaleidoscope end to end
+
+**Done**
+
+- `examples/kaleidoscope`: the LLVM tutorial language through chapter 7. Grammar file, a compiler
+  from the syntax tree to IR (about 600 lines), a C runtime (`putchard`, `printd`), and a
+  `kaleidoscope run|build|ir` driver.
+- User-defined operators work as in the tutorial: binary operators are parsed as flat chains and
+  resolved with the operator table in effect at that point in the program (a `def binary|`
+  installs its precedence before its own body). `for`, `var`/`in`, assignment and parameter
+  mutation follow the tutorial's semantics, including its quirks (the loop body always runs once, and
+  the end condition sees the old loop value).
+- `a0-build`: a build-script helper that compiles a language's C runtime, links it into the driver
+  for the interpreter and keeps a copy for native linking. Kaleidoscope is its first user and Lox will
+  be its second.
+- Tests: four programs (recursive and iterative fib, the tutorial's Mandelbrot with its operators,
+  variables and scoping, custom operators with recursion) run interpreted and native with the same
+  expected output; 16 diagnostic cases plus multi-error, ordering and IR round-trip checks.
+
+**Changed**
+
+- Nothing in the lower layers needed to change for Kaleidoscope. It used the IR builder, the grammar
+  layer, `resolve_precedence` and `Scopes` as they were.
+- Deliberate differences from the tutorial are listed in `examples/kaleidoscope/README.md`: output
+  goes to stdout, top-level expressions run in order at startup, and redefinitions are errors.
+
+**Open questions**
+
+1. Should the framework offer a reusable "language driver" (run/build/ir subcommands, diagnostics
+   rendering)? Kaleidoscope's driver is small, and Lox needs its own exit codes and error format, so I
+   kept the drivers per language for now.
