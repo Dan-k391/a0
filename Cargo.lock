@@ -459,7 +459,6 @@ dependencies = [
  "a0-diag",
  "a0-driver",
  "a0-hir",
- "a0-sema",
  "a0-syntax",
 ]
 
