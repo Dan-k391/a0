@@ -98,3 +98,35 @@ example languages need something". The collector is precise: compiled code keeps
 shadow-stack frames that the runtime scans, which works the same in the interpreter and in native code
 and needs no stack maps from Cranelift. When a second language needs a collector, the language-neutral
 parts (allocation with type descriptors, gray stack, shadow stack, weak tables) can move into `a0rt`.
+
+## D14. A high-level IR above the core IR, as a typed expression tree
+
+The HIR (`docs/hir.md`) is a typed tree of expressions, not a list of instructions: it is what a
+frontend already has after parsing and resolving names, and it makes closures, `match` and blocks with
+values natural. It lowers to the core IR plus runtime calls, so both backends, the verifier and the
+text format of the core IR keep working unchanged underneath. The core IR stays the low-level layer.
+The "two languages" rule does not apply to the HIR and the default runtime: they are the product.
+
+## D15. `any`: NaN-boxed dynamic values
+
+Dynamically typed languages need a value that can hold anything. `any` is a 64-bit NaN-boxed word:
+floats unboxed, `()`/booleans as NaN patterns, references as tagged pointers, `int`s boxed. Lox numbers
+therefore never allocate, and type tests are a few bit operations in the generated code. Enums alone
+would have forced a heap object per number.
+
+## D16. One precise collector in `a0rt`, generalized from Lox's (supersedes D13)
+
+The default runtime owns the garbage collector. It is Lox's design made general: objects carry a type
+descriptor with a per-word layout (raw, reference, `any`); roots are the shadow stack (every word in the
+`any` encoding), registered globals and C-side temporaries; collection is mark-sweep with an explicit
+gray stack; `A0_GC_STRESS=1` collects on every allocation. It works the same in the interpreter and in
+native code and needs nothing from Cranelift. Strings are not interned; maps hash them by content.
+References are nullable because languages need cyclic and optional structures; a null dereference
+panics.
+
+## D17. The HIR text format is parsed with A0's own grammar layer
+
+`a0-hir` depends on `a0-syntax` and `a0-sema` for its text format (a grammar file plus a tree walk,
+instead of a third hand-written parser). That is a deliberate exception to "frontend and IR are
+independent": the HIR is a layer above both, and using the grammar layer for it is also its biggest
+real-world test.
