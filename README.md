@@ -1,5 +1,7 @@
 # A0
 
+[![CI](https://github.com/Dan-k391/a0/actions/workflows/ci.yml/badge.svg)](https://github.com/Dan-k391/a0/actions/workflows/ci.yml)
+
 A0 is an easy-to-use, front-to-back compiler framework: from a grammar to a native executable, for
 general-purpose languages and DSLs alike. Ease of use comes first; efficiency comes mainly from reusing
 existing backends (Cranelift) rather than building our own.

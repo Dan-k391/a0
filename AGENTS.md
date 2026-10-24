@@ -14,6 +14,10 @@ cargo clippy --workspace --all-targets   # must report no warnings
 cargo fmt --all                     # run before committing
 ```
 
+CI (`.github/workflows/ci.yml`) builds and runs every test, native linking included, on x86-64 and
+aarch64 Linux, aarch64 macOS and x86-64 Windows, and checks rustfmt and clippy (`-D warnings`). Keep
+it green; a test that only passes on one OS is a bug.
+
 Needs a C compiler: MSVC on Windows (found automatically), `cc` on Linux/macOS. Useful while
 debugging: `a0 run|build|fmt|check file.a0ir|file.hir`, `a0 lower file.hir` (the core IR a HIR
 module becomes), `a0 parse lang.a0g input`, `lox hir|ir file.lox`, `kaleidoscope ir file.k`, and
