@@ -25,6 +25,17 @@ impl Grammar {
     /// Splits `text` into tokens. Skipped text is dropped; error patterns and unknown characters are
     /// reported and dropped. The last token is always [`KindId::EOF`].
     pub fn lex(&self, text: &str, source: SourceId) -> (Vec<Token>, Diagnostics) {
+        self.lex_keeping(text, source, None)
+    }
+
+    /// Like [`Grammar::lex`], also collecting the byte ranges of skipped text (whitespace,
+    /// comments) into `skipped`.
+    pub(crate) fn lex_keeping(
+        &self,
+        text: &str,
+        source: SourceId,
+        mut skipped: Option<&mut Vec<(u32, u32)>>,
+    ) -> (Vec<Token>, Diagnostics) {
         let mut toks = Vec::new();
         let mut diags = Diagnostics::new();
         let mut pos = 0usize;
@@ -37,7 +48,11 @@ impl Grammar {
                             start: pos as u32,
                             end: end as u32,
                         }),
-                        LexAction::Skip => {}
+                        LexAction::Skip => {
+                            if let Some(skipped) = skipped.as_deref_mut() {
+                                skipped.push((pos as u32, end as u32));
+                            }
+                        }
                         LexAction::Error(msg) => diags.push(
                             Diagnostic::error("syntax.lexical", msg)
                                 .with_span(Span::new(source, pos as u32, end as u32)),

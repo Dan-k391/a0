@@ -97,3 +97,36 @@ them in its own style. The Lox grammar reproduces jlox's messages and recovery e
 `fields(node, f)` (all children with that label), `field_named` for convenience, and `to_sexpr` for
 debugging. Kinds and fields are interned by the grammar (`grammar.kind("call")`,
 `grammar.literal("+")`, `grammar.field("cond")`).
+
+## Names: `@def` and `@scope`
+
+Two more attributes say where a language declares names. Editors need nothing else from a language:
+the language server every A0 language gets (`lang lsp`, see `docs/editors.md`) builds its outline,
+highlighting, go-to-definition and hovers from them, and `SyntaxIndex` exposes the same information
+to Rust code.
+
+- `@def(kind)`: each node of the rule declares one symbol, named by the first token in its `name`
+  field (looked for in its children, then in child nodes that declare nothing themselves). The name
+  is visible in the innermost `@scope` around the node, so a function's name is visible next to it.
+- `@def(kind: field)`: every token in `field` declares a symbol of its own, visible in the innermost
+  `@scope` around it, this node included: `parameters @def(parameter: param) = param:ID ("," param:ID)*`.
+- `@scope`: nodes of the rule open a scope (blocks, functions, loops that declare a variable).
+
+Kinds are `function`, `method`, `class`, `struct`, `enum`, `variant`, `field`, `variable`,
+`constant`, `parameter`, `type_parameter`, `type` and `module`.
+
+A name refers to the closest declaration before it in the innermost scope that declares the name.
+Functions, types and members are visible in their whole scope, as is everything declared at file
+level; a variable is not visible in its own declaration (`var a = a + 1` reads an outer `a`). A name
+after `.` or `::` refers to every method, field and variant of that name, since which one is meant
+depends on types the grammar does not know. Tokens are classified for highlighting from the grammar
+too: literals that look like words are keywords, other literals operators, and named tokens are
+numbers, strings or names according to what they match; skipped text other than whitespace is a
+comment.
+
+```
+fun_decl @def(function) @scope = "fun" name:IDENTIFIER "(" params:parameters? ")" body:block;
+parameters @def(parameter: param) = param:IDENTIFIER ("," param:IDENTIFIER)*;
+var_decl @def(variable) = "var" name:IDENTIFIER ("=" init:expression)? ";";
+block @scope = "{" (!"}" !EOF declaration)* "}";
+```

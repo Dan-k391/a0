@@ -31,13 +31,15 @@
 //! ```
 
 mod grammar;
+mod index;
 mod literal;
 mod parser;
 mod precedence;
 mod regex;
 mod tree;
 
-pub use grammar::{FieldId, Grammar, KindId};
+pub use grammar::{Definition, FieldId, Grammar, KindId, SymbolKind};
+pub use index::{IndexedToken, SyntaxIndex, TokenClass};
 pub use literal::unquote;
 pub use parser::Token;
 pub use precedence::{Combine, Operand, resolve_precedence};

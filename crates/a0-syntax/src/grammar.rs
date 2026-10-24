@@ -29,6 +29,93 @@ impl FieldId {
     pub const NONE: FieldId = FieldId(u32::MAX);
 }
 
+/// What a grammar's `@def` rules declare, for editors (outline, highlighting, navigation).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[repr(u32)]
+pub enum SymbolKind {
+    Function,
+    Method,
+    Class,
+    Struct,
+    Enum,
+    Variant,
+    Field,
+    Variable,
+    Constant,
+    Parameter,
+    TypeParameter,
+    Type,
+    Module,
+}
+
+impl SymbolKind {
+    pub const ALL: [SymbolKind; 13] = [
+        SymbolKind::Function,
+        SymbolKind::Method,
+        SymbolKind::Class,
+        SymbolKind::Struct,
+        SymbolKind::Enum,
+        SymbolKind::Variant,
+        SymbolKind::Field,
+        SymbolKind::Variable,
+        SymbolKind::Constant,
+        SymbolKind::Parameter,
+        SymbolKind::TypeParameter,
+        SymbolKind::Type,
+        SymbolKind::Module,
+    ];
+
+    /// The name used in `@def(...)`.
+    pub fn name(self) -> &'static str {
+        match self {
+            SymbolKind::Function => "function",
+            SymbolKind::Method => "method",
+            SymbolKind::Class => "class",
+            SymbolKind::Struct => "struct",
+            SymbolKind::Enum => "enum",
+            SymbolKind::Variant => "variant",
+            SymbolKind::Field => "field",
+            SymbolKind::Variable => "variable",
+            SymbolKind::Constant => "constant",
+            SymbolKind::Parameter => "parameter",
+            SymbolKind::TypeParameter => "type_parameter",
+            SymbolKind::Type => "type",
+            SymbolKind::Module => "module",
+        }
+    }
+
+    pub fn from_name(name: &str) -> Option<SymbolKind> {
+        SymbolKind::ALL.into_iter().find(|k| k.name() == name)
+    }
+
+    /// Whether a symbol of this kind is visible in its whole scope, not only after its declaration.
+    pub fn is_hoisted(self) -> bool {
+        !matches!(
+            self,
+            SymbolKind::Variable | SymbolKind::Constant | SymbolKind::Parameter
+        )
+    }
+
+    /// Whether the symbol is reached with `.` or `::` from a value or type (`p.x`, `Shape::Circle`).
+    pub fn is_member(self) -> bool {
+        matches!(
+            self,
+            SymbolKind::Method | SymbolKind::Field | SymbolKind::Variant
+        )
+    }
+}
+
+/// A rule marked `@def`: its nodes declare names.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Definition {
+    pub kind: SymbolKind,
+    /// The field that holds the name.
+    pub field: FieldId,
+    /// `@def(kind: field)`: every token in the field is a declaration of its own. Otherwise
+    /// (`@def(kind)`) the node is one declaration, named by the first token in its `name` field.
+    pub each: bool,
+}
+
 pub(crate) type ExprId = usize;
 pub(crate) type RuleId = usize;
 
@@ -67,6 +154,14 @@ pub(crate) struct Rule {
     pub body: ExprId,
     pub recover: Option<Recover>,
     pub span: Span,
+}
+
+/// `@def(kind)` or `@def(kind: field)` as written, before the field is checked.
+#[derive(Clone, Debug)]
+struct DefAttr {
+    kind: String,
+    field: Option<String>,
+    span: Span,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -120,6 +215,9 @@ pub struct Grammar {
     pub(crate) precs: Vec<Prec>,
     pub(crate) start: RuleId,
     pub(crate) std_fields: StdFields,
+    /// Per kind: whether its nodes are `@scope`s, and what they declare (`@def`).
+    pub(crate) scopes: Vec<bool>,
+    pub(crate) definitions: Vec<Option<Definition>>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -170,6 +268,21 @@ impl Grammar {
 
     pub fn is_token_kind(&self, kind: KindId) -> bool {
         self.names.is_token[kind.0 as usize]
+    }
+
+    /// The text of a literal token kind (`while` for the kind of `"while"`).
+    pub fn literal_text(&self, kind: KindId) -> Option<&str> {
+        self.names.literal_text[kind.0 as usize].as_deref()
+    }
+
+    /// Whether nodes of this kind open a scope for the names declared in them (`@scope`).
+    pub fn is_scope(&self, kind: KindId) -> bool {
+        self.scopes.get(kind.0 as usize).copied().unwrap_or(false)
+    }
+
+    /// What nodes of this kind declare (`@def`).
+    pub fn definition(&self, kind: KindId) -> Option<Definition> {
+        self.definitions.get(kind.0 as usize).copied().flatten()
     }
 }
 
@@ -378,6 +491,8 @@ enum Item {
         span: Span,
         inline: bool,
         recover: Option<(SyncTokens, SyncTokens)>,
+        scope: bool,
+        def: Option<DefAttr>,
         body: RuleBody,
     },
 }
@@ -521,11 +636,31 @@ impl DslParser {
         let (name, span) = self.ident("a rule or declaration")?;
         let mut inline = false;
         let mut recover = None;
+        let mut scope = false;
+        let mut def = None;
         while let Tok::Attr(a) = self.peek().clone() {
             match a.as_str() {
                 "inline" => {
                     self.bump();
                     inline = true;
+                }
+                "scope" => {
+                    self.bump();
+                    scope = true;
+                }
+                "def" => {
+                    let span = self.span();
+                    self.bump();
+                    self.punct("(")?;
+                    let (kind, _) = self.ident("a symbol kind")?;
+                    let field = if self.is_punct(":") {
+                        self.bump();
+                        Some(self.ident("a field name")?.0)
+                    } else {
+                        None
+                    };
+                    self.punct(")")?;
+                    def = Some(DefAttr { kind, field, span });
                 }
                 "recover" => {
                     self.bump();
@@ -566,6 +701,8 @@ impl DslParser {
             span,
             inline,
             recover,
+            scope,
+            def,
             body,
         })
     }
@@ -884,16 +1021,23 @@ impl Builder {
         };
 
         // Second pass: rule bodies.
+        let mut annotations = Vec::new();
         for item in rule_items {
             let Item::Rule {
                 name: rname,
+                span,
                 recover,
+                scope,
+                def,
                 body,
                 ..
             } = item
             else {
                 continue;
             };
+            if scope || def.is_some() {
+                annotations.push((rname.clone(), span, scope, def));
+            }
             let Some(&rid) = self.rule_map.get(&rname) else {
                 continue;
             };
@@ -920,6 +1064,7 @@ impl Builder {
         }
 
         self.validate(&rules);
+        let (scopes, definitions) = self.annotations(&rules, annotations);
         if self.diags.has_errors() {
             return Err(self.diags);
         }
@@ -961,7 +1106,63 @@ impl Builder {
             precs: self.precs,
             start: 0,
             std_fields,
+            scopes,
+            definitions,
         })
+    }
+
+    /// Checks `@scope` and `@def` and indexes them by node kind.
+    fn annotations(
+        &mut self,
+        rules: &[Rule],
+        annotations: Vec<(String, Span, bool, Option<DefAttr>)>,
+    ) -> (Vec<bool>, Vec<Option<Definition>>) {
+        let mut scopes = vec![false; self.kinds.len()];
+        let mut definitions = vec![None; self.kinds.len()];
+        for (rname, span, scope, def) in annotations {
+            let Some(kind) = self.rule_map.get(&rname).and_then(|&r| rules[r].kind) else {
+                self.error(
+                    Some(span),
+                    &format!(
+                        "'{rname}' is @inline, so it has no nodes to mark with @scope or @def"
+                    ),
+                );
+                continue;
+            };
+            scopes[kind.0 as usize] = scope;
+            let Some(def) = def else { continue };
+            let Some(symbol) = SymbolKind::from_name(&def.kind) else {
+                let names: Vec<&str> = SymbolKind::ALL.iter().map(|k| k.name()).collect();
+                self.error(
+                    Some(def.span),
+                    &format!(
+                        "unknown symbol kind '{}' (expected one of: {})",
+                        def.kind,
+                        names.join(", ")
+                    ),
+                );
+                continue;
+            };
+            let field_name = def.field.as_deref().unwrap_or("name");
+            let Some(&field) = self.field_map.get(field_name) else {
+                let what = match def.field {
+                    Some(_) => format!("there is no field '{field_name}'"),
+                    None => {
+                        "@def(kind) reads the name from a field called 'name', and there is none; \
+                             write @def(kind: field)"
+                            .to_string()
+                    }
+                };
+                self.error(Some(def.span), &what);
+                continue;
+            };
+            definitions[kind.0 as usize] = Some(Definition {
+                kind: symbol,
+                field,
+                each: def.field.is_some(),
+            });
+        }
+        (scopes, definitions)
     }
 
     fn pattern(&mut self, pat: &str, span: Span) -> Option<regex::Node> {
