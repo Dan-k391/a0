@@ -16,6 +16,8 @@ commands:
                             compile to a native executable (host target only)
   obj <file> [-o out] [--target T] [--no-opt]
                             compile to an object file for any supported target
+  parse <grammar.a0g> <file>
+                            parse a file with a grammar; print the tree or the errors
 
 targets: x86_64-linux, aarch64-linux, x86_64-macos, aarch64-macos, x86_64-windows,
          aarch64-windows (or full triples); the default is the host
@@ -34,6 +36,7 @@ fn main() -> ExitCode {
         "run" => run(rest),
         "build" => build(rest, true),
         "obj" => build(rest, false),
+        "parse" => parse_with_grammar(rest),
         "help" | "--help" | "-h" => {
             print!("{USAGE}");
             ExitCode::SUCCESS
@@ -213,5 +216,36 @@ fn build(args: &[String], executable: bool) -> ExitCode {
     match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(d) => report(&sources, &d),
+    }
+}
+
+fn parse_with_grammar(args: &[String]) -> ExitCode {
+    let [grammar_path, file] = args else {
+        eprint!("{USAGE}");
+        return ExitCode::from(2);
+    };
+    let read = |path: &str| {
+        std::fs::read_to_string(path).map_err(|e| {
+            eprintln!("a0: cannot read {path}: {e}");
+            ExitCode::from(2)
+        })
+    };
+    let (grammar_text, text) = match (read(grammar_path), read(file)) {
+        (Ok(g), Ok(t)) => (g, t),
+        (Err(c), _) | (_, Err(c)) => return c,
+    };
+    let mut sources = SourceMap::new();
+    let gid = sources.add(grammar_path, &grammar_text);
+    let grammar = match a0_syntax::Grammar::from_str(&grammar_text, gid) {
+        Ok(g) => g,
+        Err(d) => return report(&sources, &d),
+    };
+    let id = sources.add(file, &text);
+    let (tree, diags) = grammar.parse(&text, id);
+    println!("{}", tree.to_sexpr(tree.root()));
+    if diags.is_empty() {
+        ExitCode::SUCCESS
+    } else {
+        report(&sources, &diags)
     }
 }

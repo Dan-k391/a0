@@ -81,3 +81,38 @@ One entry per milestone: what was done, what changed along the way, and open que
    paths are written but not run; their objects are checked structurally.
 3. Executables get an 8 MiB main-thread stack where the linker can set it (Windows, macOS). On Linux
    the stack size comes from `ulimit`.
+
+## M3. Frontend: grammar layer and diagnostics
+
+**Done**
+
+- `a0-syntax`: grammars are text files in a small DSL (`docs/grammar.md`), loaded at run time.
+  - Lexer: our own longest-match NFA regex engine; literals used in rules become tokens; ties go to
+    literals, then to patterns in file order. Error patterns (`error "Unterminated string." /.../`) and
+    unknown characters are reported and skipped.
+  - Parser: ordered choice with backtracking, fields (`cond:expr`), lookahead, `@inline` rules,
+    `@prec` blocks (Pratt parsing with prefix, infix and postfix forms), per-expectation messages
+    (`x ~ "Expect ';' after value."`) and `@recover` panic-mode recovery that yields `error` nodes.
+  - Grammar validation: undefined names, duplicates, left recursion, repetition of empty matches,
+    patterns that match empty text.
+  - `resolve_precedence` for operator tables known only after parsing.
+  - Trees are arenas with `NodeId` handles, field lookup and an s-expression dump.
+- `a0-sema`: lexical scopes with duplicate detection, declared/defined state and capture detection.
+- `a0 parse grammar.a0g file` prints the tree or rendered errors.
+- Tests: regex engine, grammar validation, lexing, tree shapes, precedence and associativity, and a
+  complete Lox grammar that reproduces jlox's error messages and recovery on 23 cases taken from the
+  official test suite (including the multi-error `for` cases and the unexpected-character case).
+
+**Changed**
+
+- The first version reset the furthest-failure position at every recovery point. That lost the error
+  inside a broken `else` branch (backtracking had already abandoned it), so the furthest failure is now
+  kept across recovered constructs (D10).
+- Methods and functions need different jlox messages ("Expect method name." vs "Expect function
+  name."), and the DSL has no parameterized rules, so the Lox grammar spells out both forms.
+
+**Open questions**
+
+1. The DSL has no parameterized rules or macros; small duplication (as in Lox's `fun_decl`/`method`)
+   is the price. Worth adding when a second language needs it?
+2. No static type checker in `a0-sema` yet (D12), since neither example language has static types.

@@ -149,3 +149,34 @@ fn obj_emits_for_other_targets() {
     assert_eq!(&bytes[..4], b"\x7fELF");
     std::fs::remove_dir_all(&dir).ok();
 }
+
+#[test]
+fn parse_prints_trees_and_errors() {
+    let dir = scratch_dir("parse");
+    let grammar = dir.join("calc.a0g");
+    std::fs::write(
+        &grammar,
+        "grammar calc;
+skip /[ ]+/;
+token NUM /[0-9]+/;
+program = sum EOF;
+sum = NUM (\"+\" NUM)*;
+",
+    )
+    .unwrap();
+    let good = dir.join("good.txt");
+    std::fs::write(&good, "1 + 2").unwrap();
+    let out = Command::new(env!("CARGO_BIN_EXE_a0")).arg("parse").arg(&grammar).arg(&good).output().unwrap();
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "(program (sum '1' '+' '2'))
+");
+
+    let bad = dir.join("bad.txt");
+    std::fs::write(&bad, "1 + + 2").unwrap();
+    let out = Command::new(env!("CARGO_BIN_EXE_a0")).arg("parse").arg(&grammar).arg(&bad).output().unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("expected NUM, found '+'"), "{stderr}");
+    assert!(stderr.contains("bad.txt:1:5"), "{stderr}");
+    std::fs::remove_dir_all(&dir).ok();
+}

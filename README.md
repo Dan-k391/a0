@@ -16,9 +16,12 @@ The core is written in Rust; the runtime is written in C.
 | `crates/a0-interp` | Interpreter for the IR |
 | `crates/a0-target` | Explicit target descriptions |
 | `crates/a0-native` | Native code through Cranelift, linked by the system linker |
+| `crates/a0-syntax` | Grammar layer: grammar DSL, lexer, parser, syntax trees and syntax errors |
+| `crates/a0-sema` | Semantic toolkit: scopes and name resolution |
 | `crates/a0` | The `a0` command-line driver |
 | `tests/programs` | IR programs with expected output, run by every backend |
 | `docs/ir.md` | IR design |
+| `docs/grammar.md` | Grammar DSL |
 | `docs/decisions.md` | Design decisions |
 
 ## Building and testing
@@ -38,4 +41,5 @@ a0 fmt prog.a0ir       # print the canonical form
 a0 run prog.a0ir       # interpret @main
 a0 build prog.a0ir     # native executable for the host
 a0 obj --target aarch64-linux prog.a0ir   # object file for any supported target
+a0 parse lang.a0g input.txt               # try a grammar: print the tree or the errors
 ```
