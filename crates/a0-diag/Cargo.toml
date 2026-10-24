@@ -1,0 +1,8 @@
+[package]
+name = "a0-diag"
+description = "Source files, spans and diagnostics shared by every A0 layer"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
