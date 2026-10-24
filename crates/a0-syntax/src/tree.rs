@@ -157,6 +157,22 @@ impl SyntaxTree {
         self.children(n).into_iter().find(|&c| self.kind(c) == kind)
     }
 
+    /// The children of `n` that are nodes, not tokens (the statements of a block, the items of a
+    /// program).
+    pub fn nodes(&self, n: NodeId) -> Vec<NodeId> {
+        let mut out = self.children(n);
+        out.retain(|&c| !self.is_token(c));
+        out
+    }
+
+    /// The children of `n` that are nodes of the rule `kind`: the unlabeled repetitions in
+    /// `(param ("," param)*)`.
+    pub fn nodes_of_kind(&self, n: NodeId, kind: &str) -> Vec<NodeId> {
+        let mut out = self.children(n);
+        out.retain(|&c| !self.is_token(c) && self.kind_name(c) == kind);
+        out
+    }
+
     /// Whether any node in the tree is an error node.
     pub fn has_errors(&self) -> bool {
         self.nodes.iter().any(|d| d.kind == KindId::ERROR)

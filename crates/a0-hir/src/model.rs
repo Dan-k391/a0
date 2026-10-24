@@ -48,6 +48,9 @@ impl TypeId {
     pub const ANY: TypeId = TypeId(5);
     /// The type of expressions that never produce a value (`return`, `break`, `panic`, ...).
     pub const NEVER: TypeId = TypeId(6);
+    /// The type of an expression that had an error (already reported). It fits everything and
+    /// spreads to what is inferred from it, so one mistake is reported once.
+    pub const ERROR: TypeId = TypeId(7);
 }
 
 /// The shape of a type (see `docs/hir.md`).
@@ -60,6 +63,7 @@ pub(crate) enum TypeKind {
     String,
     Any,
     Never,
+    Error,
     Array(TypeId),
     Map(TypeId, TypeId),
     /// A struct and its type arguments (none unless the struct is generic).
@@ -85,6 +89,7 @@ pub enum TypeTag {
     String,
     Any,
     Never,
+    Error,
     Array,
     Map,
     Struct,
@@ -299,6 +304,8 @@ pub(crate) struct FuncDef {
 
 pub(crate) struct BodyData {
     pub params: Vec<LocalId>,
+    /// The parameters' names as the frontend gave them (locals may be renamed to keep them unique).
+    pub param_names: Vec<String>,
     pub ret: TypeId,
     pub root: Option<ExprId>,
     /// The enclosing body, for closures.
@@ -339,6 +346,8 @@ pub struct HirModule {
     pub(crate) arms: Vec<ArmData>,
     /// What each inference variable is bound to.
     pub(crate) vars: Vec<Option<TypeId>>,
+    /// How diagnostics write some types, in the language's own syntax (`[{}]` for arrays).
+    pub(crate) type_syntax: Vec<(TypeTag, String)>,
     /// Declarations in order, for printing.
     pub(crate) items: Vec<Item>,
     pub(crate) type_names: HashMap<String, Item>,
@@ -361,6 +370,7 @@ impl HirModule {
             exprs: Vec::new(),
             arms: Vec::new(),
             vars: Vec::new(),
+            type_syntax: Vec::new(),
             items: Vec::new(),
             type_names: HashMap::new(),
             value_names: HashMap::new(),
@@ -373,6 +383,7 @@ impl HirModule {
             TypeKind::String,
             TypeKind::Any,
             TypeKind::Never,
+            TypeKind::Error,
         ] {
             m.intern(k);
         }
@@ -550,6 +561,7 @@ impl HirModule {
             TypeKind::String => TypeTag::String,
             TypeKind::Any => TypeTag::Any,
             TypeKind::Never => TypeTag::Never,
+            TypeKind::Error => TypeTag::Error,
             TypeKind::Array(_) => TypeTag::Array,
             TypeKind::Map(..) => TypeTag::Map,
             TypeKind::Struct(..) => TypeTag::Struct,
@@ -558,6 +570,22 @@ impl HirModule {
             TypeKind::Nullable(_) => TypeTag::Nullable,
             TypeKind::Param(..) => TypeTag::Param,
             TypeKind::Var(_) => TypeTag::Var,
+        }
+    }
+
+    /// The struct a type is an instance of.
+    pub fn struct_of(&self, t: TypeId) -> Option<StructId> {
+        match self.kind(t) {
+            TypeKind::Struct(s, _) => Some(*s),
+            _ => None,
+        }
+    }
+
+    /// The enum a type is an instance of.
+    pub fn enum_of(&self, t: TypeId) -> Option<EnumId> {
+        match self.kind(t) {
+            TypeKind::Enum(e, _) => Some(*e),
+            _ => None,
         }
     }
 
@@ -601,16 +629,48 @@ impl HirModule {
         )
     }
 
-    fn applied(&self, name: &str, args: &[TypeId]) -> String {
+    fn applied(&self, name: &str, args: &[TypeId], custom: bool) -> String {
+        // Diagnostics show names as the language wrote them; the text format quotes them.
+        let name = if custom {
+            name.into()
+        } else {
+            crate::builder::ident(name)
+        };
         if args.is_empty() {
-            return name.to_string();
+            return name.into_owned();
         }
-        let args: Vec<String> = args.iter().map(|&a| self.type_name(a)).collect();
+        let args: Vec<String> = args.iter().map(|&a| self.format_type(a, custom)).collect();
         format!("{name}<{}>", args.join(", "))
     }
 
     /// The type's text form, such as `map<string, array<int>>`.
     pub fn type_name(&self, t: TypeId) -> String {
+        self.format_type(t, false)
+    }
+
+    /// The type as diagnostics show it: like [`HirModule::type_name`], but in the language's own
+    /// syntax where the frontend gave one (`HirBuilder::set_type_syntax`).
+    pub fn display_type(&self, t: TypeId) -> String {
+        self.format_type(t, true)
+    }
+
+    fn format_type(&self, t: TypeId, custom: bool) -> String {
+        let name = |t: TypeId| self.format_type(t, custom);
+        if custom {
+            let tag = self.type_tag(t);
+            if let Some((_, template)) = self.type_syntax.iter().find(|(g, _)| *g == tag) {
+                let parts: Vec<String> = match self.kind(t) {
+                    TypeKind::Array(e) | TypeKind::Nullable(e) => vec![name(*e)],
+                    TypeKind::Map(k, v) => vec![name(*k), name(*v)],
+                    _ => Vec::new(),
+                };
+                let mut out = template.clone();
+                for p in parts {
+                    out = out.replacen("{}", &p, 1);
+                }
+                return out;
+            }
+        }
         match self.kind(t) {
             TypeKind::Unit => "unit".to_string(),
             TypeKind::Bool => "bool".to_string(),
@@ -619,22 +679,30 @@ impl HirModule {
             TypeKind::String => "string".to_string(),
             TypeKind::Any => "any".to_string(),
             TypeKind::Never => "never".to_string(),
-            TypeKind::Array(e) => format!("array<{}>", self.type_name(*e)),
-            TypeKind::Map(k, v) => format!("map<{}, {}>", self.type_name(*k), self.type_name(*v)),
-            TypeKind::Struct(s, args) => self.applied(&self.structs[s.index()].name, args),
-            TypeKind::Enum(e, args) => self.applied(&self.enums[e.index()].name, args),
+            TypeKind::Error => "{error}".to_string(),
+            TypeKind::Array(e) => format!("array<{}>", name(*e)),
+            TypeKind::Map(k, v) => format!("map<{}, {}>", name(*k), name(*v)),
+            TypeKind::Struct(s, args) => self.applied(&self.structs[s.index()].name, args, custom),
+            TypeKind::Enum(e, args) => self.applied(&self.enums[e.index()].name, args, custom),
             TypeKind::Nullable(inner) => match self.kind(*inner) {
-                TypeKind::Fn(..) => format!("({})?", self.type_name(*inner)),
-                _ => format!("{}?", self.type_name(*inner)),
+                TypeKind::Fn(..) => format!("({})?", name(*inner)),
+                _ => format!("{}?", name(*inner)),
             },
-            TypeKind::Param(item, i) => self.type_params(*item)[*i as usize].clone(),
+            TypeKind::Param(item, i) => {
+                let n = &self.type_params(*item)[*i as usize];
+                if custom {
+                    n.clone()
+                } else {
+                    crate::builder::ident(n).into_owned()
+                }
+            }
             TypeKind::Var(_) => "_".to_string(),
             TypeKind::Fn(params, ret) => {
-                let ps: Vec<String> = params.iter().map(|&p| self.type_name(p)).collect();
+                let ps: Vec<String> = params.iter().map(|&p| name(p)).collect();
                 if *ret == TypeId::UNIT {
                     format!("fn({})", ps.join(", "))
                 } else {
-                    format!("fn({}) -> {}", ps.join(", "), self.type_name(*ret))
+                    format!("fn({}) -> {}", ps.join(", "), name(*ret))
                 }
             }
         }

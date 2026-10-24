@@ -31,12 +31,14 @@
 //! ```
 
 mod grammar;
+mod literal;
 mod parser;
 mod precedence;
 mod regex;
 mod tree;
 
 pub use grammar::{FieldId, Grammar, KindId};
+pub use literal::unquote;
 pub use parser::Token;
 pub use precedence::{Combine, Operand, resolve_precedence};
 pub use tree::{NodeId, SyntaxTree};

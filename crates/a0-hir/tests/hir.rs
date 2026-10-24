@@ -107,7 +107,7 @@ fn type_errors_are_reported_with_locations() {
         ),
         (
             "fn main() -> int { break; 0 }",
-            "break or continue outside a loop",
+            "`break` and `continue` can only be used inside a loop",
         ),
         (
             "fn f() -> int { return \"s\"; }\nfn main() -> int { 0 }",
@@ -226,11 +226,23 @@ fn builder_checks_structure() {
         "{err}"
     );
 
-    // Keywords and builtin names are not item names; locals are renamed instead.
+    // Items may have any name; the text format quotes keywords and non-identifiers. Locals are
+    // renamed instead.
     let mut b = HirBuilder::new("m");
-    b.declare_function("len", &[], &[], TypeId::UNIT);
-    let err = b.finish().unwrap_err().summary();
-    assert!(err.contains("'len' is not a valid name"), "{err}");
+    let f = b.declare_function("len", &[], &[], TypeId::INT);
+    let body = b.function_body(f);
+    let one = b.int(1);
+    b.set_root(body, one);
+    let main = b.declare_function("main", &[], &[], TypeId::INT);
+    let body = b.function_body(main);
+    let call = b.call(f, &[]);
+    b.set_root(body, call);
+    let text = b.finish().unwrap().to_string();
+    assert!(
+        text.contains("fn `len`() -> int") && text.contains("  `len`()"),
+        "{text}"
+    );
+    assert_eq!(parse_ok(&text).to_string(), text);
     let mut b = HirBuilder::new("m");
     let f = b.declare_function(
         "f",
@@ -249,7 +261,7 @@ fn builder_checks_structure() {
 fn lowering_needs_an_entry_point() {
     let m = parse_ok("module \"m\";\nfn helper() -> int { 1 }\n");
     let err = lower(&m).unwrap_err().summary();
-    assert!(err.contains("no fn main"), "{err}");
+    assert!(err.contains("the program has no `main` function"), "{err}");
 }
 
 #[test]

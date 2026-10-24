@@ -93,8 +93,13 @@ impl TextParser<'_> {
         Err(Abort)
     }
 
+    /// A token's text; a backquoted name without its backquotes.
     fn text(&self, n: NodeId) -> &str {
-        self.tree.text(n)
+        let t = self.tree.text(n);
+        match t.strip_prefix('`') {
+            Some(inner) => inner.strip_suffix('`').unwrap_or(inner),
+            None => t,
+        }
     }
 
     fn field(&self, n: NodeId, name: &str) -> Option<NodeId> {
@@ -581,8 +586,10 @@ impl TextParser<'_> {
             let name_node = self.tree.child(callee, 0);
             let name = self.name_of(name_node);
             let targs = self.type_args(name_node)?;
+            // A backquoted name is always a declared item, never a builtin.
+            let quoted = self.tree.text(name_node).starts_with('`');
             if self.lookup_local(&name).is_none() {
-                if let Some(op) = Builtin::from_name(&name) {
+                if let Some(op) = Builtin::from_name(&name).filter(|_| !quoted) {
                     let args = self.args(node)?;
                     self.at(node);
                     return Ok(self.b.builtin(op, &args));

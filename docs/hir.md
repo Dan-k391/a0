@@ -170,6 +170,26 @@ seen by the closure and by the enclosing function, and every execution of a `let
 variable (a closure created in a loop body sees that iteration's variables). A top-level function
 used as a value becomes a closure with no captures.
 
+## Building HIR from a frontend
+
+A frontend walks its syntax tree once and calls `HirBuilder`. Two styles mix freely:
+
+- **By handle**, for a language that resolves names itself (Lox, with jlox's rules): `new_local`,
+  `local`, `call(FuncId, ...)`, `new_struct(StructId, ...)`.
+- **By name** (`frontend.rs`), for everything else (Minnow): `begin_body`/`end_body` put a body's
+  parameters (and a generic function's type parameters) in scope; `push_scope`/`pop_scope` follow
+  blocks; `let_named` and `declare_local` declare locals (shadowing allowed; `is_declared_in_scope`
+  for languages that forbid it); `name`, `call_named`, `assign_named` resolve locals, globals,
+  functions and builtins; `named_type` resolves type names; `new_struct_named` takes fields in any
+  order, keeps their evaluation order and reports unknown, repeated and missing fields;
+  `variant_named` and `field_named` look up by name.
+
+Errors are reported at the span set with `set_span`, in user-facing wording; `report` adds a
+language's own errors and `error_expr` stands in for an expression that could not be built (its type
+fits everything, so it causes no further errors). `set_type_syntax(TypeTag::Array, "[{}]")` makes
+diagnostics write types in the language's syntax. Item names are free: one that is a HIR keyword
+(`map`) or not an identifier is written in backquotes in the text format.
+
 ## Text format
 
 The examples above are the text format. `print(parse(text))` is canonical and

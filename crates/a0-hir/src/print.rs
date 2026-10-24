@@ -5,6 +5,7 @@
 
 use std::fmt::Write as _;
 
+use crate::builder::ident;
 use crate::model::*;
 
 pub fn print_module(m: &HirModule) -> String {
@@ -93,9 +94,9 @@ impl Printer<'_> {
                 let fields: Vec<String> = def
                     .fields
                     .iter()
-                    .map(|(n, t)| format!("{n}: {}", self.ty(*t)))
+                    .map(|(n, t)| format!("{}: {}", ident(n), self.ty(*t)))
                     .collect();
-                let name = format!("{}{}", def.name, params(&def.type_params));
+                let name = format!("{}{}", ident(&def.name), params(&def.type_params));
                 if fields.is_empty() {
                     let _ = writeln!(self.out, "struct {name} {{}}");
                 } else {
@@ -109,17 +110,17 @@ impl Printer<'_> {
                     .iter()
                     .map(|v| {
                         if v.fields.is_empty() {
-                            v.name.clone()
+                            ident(&v.name).into_owned()
                         } else {
                             let fs: Vec<String> = v.fields.iter().map(|&t| self.ty(t)).collect();
-                            format!("{}({})", v.name, fs.join(", "))
+                            format!("{}({})", ident(&v.name), fs.join(", "))
                         }
                     })
                     .collect();
                 let _ = writeln!(
                     self.out,
                     "enum {}{} {{ {} }}",
-                    def.name,
+                    ident(&def.name),
                     params(&def.type_params),
                     variants.join(", ")
                 );
@@ -128,7 +129,7 @@ impl Printer<'_> {
                 let _ = writeln!(
                     self.out,
                     "global {}: {};",
-                    m.global_name(g),
+                    ident(m.global_name(g)),
                     self.ty(m.global_type(g))
                 );
             }
@@ -138,7 +139,7 @@ impl Printer<'_> {
                 let _ = writeln!(
                     self.out,
                     "extern fn {}({}){};",
-                    def.name,
+                    ident(&def.name),
                     ps.join(", "),
                     self.ret(def.ret)
                 );
@@ -148,7 +149,7 @@ impl Printer<'_> {
                 let _ = write!(
                     self.out,
                     "fn {}{}",
-                    m.func_name(f),
+                    ident(m.func_name(f)),
                     params(&m.funcs[f.index()].type_params)
                 );
                 self.signature(body);
@@ -340,9 +341,9 @@ impl Printer<'_> {
                 let _ = write!(self.out, "null<{}>", self.ty(m.non_null(m.expr_type(e))));
             }
             ExprKind::Local(l) => self.out.push_str(m.local_name(l)),
-            ExprKind::Global(g) => self.out.push_str(m.global_name(g)),
+            ExprKind::Global(g) => self.out.push_str(&ident(m.global_name(g))),
             ExprKind::Func(f, targs) => {
-                self.out.push_str(m.func_name(f));
+                self.out.push_str(&ident(m.func_name(f)));
                 self.type_args(&targs);
             }
             ExprKind::Let(..) => self.statement(e, indent),
@@ -351,7 +352,7 @@ impl Printer<'_> {
                 self.expr(v, ASSIGN, indent);
             }
             ExprKind::SetGlobal(g, v) => {
-                let _ = write!(self.out, "{} = ", m.global_name(g));
+                let _ = write!(self.out, "{} = ", ident(m.global_name(g)));
                 self.expr(v, ASSIGN, indent);
             }
             ExprKind::SetField(o, f, v) => {
@@ -361,7 +362,7 @@ impl Printer<'_> {
             }
             ExprKind::SetFieldName(o, name, v) => {
                 self.expr(o, POSTFIX, indent);
-                let _ = write!(self.out, ".{name} = ");
+                let _ = write!(self.out, ".{} = ", ident(&name));
                 self.expr(v, ASSIGN, indent);
             }
             ExprKind::SetIndex(t, i, v) => {
@@ -396,12 +397,12 @@ impl Printer<'_> {
                 self.expr(b, OR + 1, indent);
             }
             ExprKind::Call(f, targs, args) => {
-                self.out.push_str(m.func_name(f));
+                self.out.push_str(&ident(m.func_name(f)));
                 self.type_args(&targs);
                 self.args(&args, indent);
             }
             ExprKind::CallExtern(x, args) => {
-                self.out.push_str(m.extern_name(x));
+                self.out.push_str(&ident(m.extern_name(x)));
                 self.args(&args, indent);
             }
             ExprKind::CallValue(c, args) => {
@@ -441,7 +442,7 @@ impl Printer<'_> {
             }
             ExprKind::FieldName(o, name) => {
                 self.expr(o, POSTFIX, indent);
-                let _ = write!(self.out, ".{name}");
+                let _ = write!(self.out, ".{}", ident(&name));
             }
             ExprKind::Unwrap(o) => {
                 self.expr(o, POSTFIX, indent);
@@ -452,7 +453,7 @@ impl Printer<'_> {
                     self.out,
                     "{}::{}",
                     self.ty(m.expr_type(e)),
-                    m.variant_name(en, v)
+                    ident(m.variant_name(en, v))
                 );
                 if !args.is_empty() {
                     self.args(&args, indent);
@@ -471,7 +472,7 @@ impl Printer<'_> {
                     self.newline(indent + 1);
                     match (arm.variant, en) {
                         (Some(v), Some(en)) => {
-                            self.out.push_str(m.variant_name(en, v));
+                            self.out.push_str(&ident(m.variant_name(en, v)));
                             if !arm.binds.is_empty() {
                                 let names: Vec<&str> =
                                     arm.binds.iter().map(|&l| m.local_name(l)).collect();
@@ -571,7 +572,7 @@ impl Printer<'_> {
             TypeKind::Struct(s, _) => self.m.structs[s.index()]
                 .fields
                 .get(field as usize)
-                .map(|(n, _)| n.clone())
+                .map(|(n, _)| ident(n).into_owned())
                 .unwrap_or_else(|| format!("field{field}")),
             _ => format!("field{field}"),
         }
@@ -602,6 +603,7 @@ fn params(names: &[String]) -> String {
     if names.is_empty() {
         String::new()
     } else {
+        let names: Vec<_> = names.iter().map(|n| ident(n)).collect();
         format!("<{}>", names.join(", "))
     }
 }

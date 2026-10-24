@@ -25,6 +25,7 @@
 
 mod builder;
 mod check;
+mod frontend;
 mod lower;
 mod model;
 mod mono;

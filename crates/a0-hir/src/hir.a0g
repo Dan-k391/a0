@@ -8,7 +8,8 @@ token FLOAT /[0-9]+\.[0-9]+([eE][+-]?[0-9]+)?|[0-9]+[eE][+-]?[0-9]+/;
 token INT /[0-9]+/;
 token HEX /0x[0-9a-fA-F]+/;
 token STRING /"([^"\\\n]|\\.)*"/;
-token NAME /[A-Za-z_][A-Za-z0-9_]*/;
+// Names that are keywords, or not identifiers, are written in backquotes: `map`.
+token NAME /[A-Za-z_][A-Za-z0-9_]*|`[^`\n]+`/;
 error "unterminated string" /"([^"\\\n]|\\.)*/;
 unknown "unexpected character";
 

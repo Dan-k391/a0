@@ -223,3 +223,16 @@ and every instance gets its own object layouts (an `int` field is raw, a `string
 reference). Instance names carry their arguments (`id<int>`), which no frontend name can contain.
 The alternative, a uniform representation with boxing (as Java does), would have kept one copy per
 item but cost an allocation per `int` stored in a generic container.
+
+## D26. Name resolution and error recovery belong to the HIR builder
+
+Every frontend of a typed language repeats the same work: scopes, resolving a name to a local,
+global, function or builtin, struct literals by field name, "unknown name" errors. The builder now
+offers this (`frontend.rs`) on top of its handle-based API, so a frontend is one walk over its tree;
+Minnow went from 1513 lines (with its own checker) to 692 while gaining enums, generics and nullable
+types. Two details make that possible. An error gives its node the error type (`TypeId::ERROR`),
+which fits and unifies with everything and spreads to whatever is inferred from it, so a mistake is
+reported once; earlier, an error typed `never` could not fix an inference variable, and later uses
+then produced follow-on errors. And diagnostics show types in the language's own syntax
+(`set_type_syntax`), while the text format keeps the HIR's. Item names may be anything; the text
+format quotes those that are keywords (`` `map` ``) instead of making frontends rename them.

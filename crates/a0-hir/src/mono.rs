@@ -4,15 +4,18 @@
 
 use std::collections::HashMap;
 
+use a0_diag::{Diagnostic, Diagnostics};
+
 use crate::model::*;
 
-/// The module without generics, or `None` if it has none.
-pub(crate) fn monomorphize(m: &HirModule) -> Option<HirModule> {
+/// The module without generics, or `None` if it has none. Fails if an instance makes a `T?` of a
+/// value type (`T?` in a generic item used with `T = int`).
+pub(crate) fn monomorphize(m: &HirModule) -> Result<Option<HirModule>, Diagnostics> {
     let generic = m.structs.iter().any(|s| !s.type_params.is_empty())
         || m.enums.iter().any(|e| !e.type_params.is_empty())
         || m.funcs.iter().any(|f| !f.type_params.is_empty());
     if !generic {
-        return None;
+        return Ok(None);
     }
     let mut mono = Mono {
         m,
@@ -23,6 +26,8 @@ pub(crate) fn monomorphize(m: &HirModule) -> Option<HirModule> {
         globals: HashMap::new(),
         externs: HashMap::new(),
         queue: Vec::new(),
+        current: None,
+        diags: Diagnostics::new(),
     };
     for item in &m.items {
         match *item {
@@ -63,9 +68,13 @@ pub(crate) fn monomorphize(m: &HirModule) -> Option<HirModule> {
         }
     }
     while let Some((f, args, out_f)) = mono.queue.pop() {
+        mono.current = Some(out_f);
         mono.copy_function(f, &args, out_f);
     }
-    Some(mono.out)
+    if mono.diags.has_errors() {
+        return Err(mono.diags);
+    }
+    Ok(Some(mono.out))
 }
 
 /// The type arguments in force: those of the function being copied (and, for struct fields and
@@ -86,6 +95,9 @@ struct Mono<'a> {
     externs: HashMap<ExternId, ExternId>,
     /// Function instances declared but not copied yet.
     queue: Vec<(FuncId, Vec<TypeId>, FuncId)>,
+    /// The instance being copied, for errors.
+    current: Option<FuncId>,
+    diags: Diagnostics,
 }
 
 /// A body being copied: where its locals went.
@@ -127,14 +139,24 @@ impl Mono<'_> {
             TypeKind::Any => return TypeId::ANY,
             TypeKind::Never => return TypeId::NEVER,
             // A finished module has no inference variables; this is not reached.
-            TypeKind::Var(_) => return TypeId::UNIT,
+            TypeKind::Var(_) | TypeKind::Error => return TypeId::UNIT,
             TypeKind::Param(owner, i) => {
                 debug_assert_eq!(Some(owner), subst.owner);
                 return subst.args[i as usize];
             }
             TypeKind::Array(e) => TypeKind::Array(self.ty(e, subst)),
             TypeKind::Map(a, b) => TypeKind::Map(self.ty(a, subst), self.ty(b, subst)),
-            TypeKind::Nullable(inner) => TypeKind::Nullable(self.ty(inner, subst)),
+            TypeKind::Nullable(inner) => {
+                let inner = self.ty(inner, subst);
+                if matches!(self.out.kind(inner), TypeKind::Nullable(_)) {
+                    // `T?` with `T = string?` is `string?`.
+                    return inner;
+                }
+                if !self.out.is_reference(inner) {
+                    self.value_nullable(inner);
+                }
+                TypeKind::Nullable(inner)
+            }
             TypeKind::Fn(params, ret) => {
                 let params = params.into_iter().map(|p| self.ty(p, subst)).collect();
                 TypeKind::Fn(params, self.ty(ret, subst))
@@ -149,6 +171,24 @@ impl Mono<'_> {
             }
         };
         self.out.intern(k)
+    }
+
+    fn value_nullable(&mut self, inner: TypeId) {
+        let (name, span) = match self.current {
+            Some(f) => (
+                format!("`{}`", self.out.func_name(f)),
+                self.out.funcs[f.index()].span,
+            ),
+            None => ("a generic type".to_string(), None),
+        };
+        let msg = format!(
+            "{name} makes a nullable `{}`, but only reference types can be nullable",
+            self.out.display_type(inner)
+        );
+        if !self.diags.as_slice().iter().any(|d| d.message == msg) {
+            self.diags
+                .push(Diagnostic::error("hir.generic", &msg).with_span_opt(span));
+        }
     }
 
     fn struct_instance(&mut self, s: StructId, args: &[TypeId]) -> StructId {
@@ -229,6 +269,7 @@ impl Mono<'_> {
         });
         self.out.bodies.push(BodyData {
             params: Vec::new(),
+            param_names: Vec::new(),
             ret: TypeId::UNIT,
             root: None,
             parent: None,
@@ -361,6 +402,7 @@ impl Mono<'_> {
                 let out_b = BodyId(self.out.bodies.len() as u32);
                 self.out.bodies.push(BodyData {
                     params: Vec::new(),
+                    param_names: Vec::new(),
                     ret: TypeId::UNIT,
                     root: None,
                     parent: Some(body),

@@ -84,6 +84,10 @@ impl HirModule {
         if a == b {
             return true;
         }
+        if a == TypeId::ERROR || b == TypeId::ERROR {
+            self.absorb_error(a, b);
+            return true;
+        }
         let (ka, kb) = (self.types[a.index()].clone(), self.types[b.index()].clone());
         match (ka, kb) {
             (TypeKind::Var(v), _) => self.bind(v, b),
@@ -130,6 +134,10 @@ impl HirModule {
         if f == TypeId::NEVER || e == TypeId::NEVER || f == e {
             return true;
         }
+        if f == TypeId::ERROR || e == TypeId::ERROR {
+            self.absorb_error(f, e);
+            return true;
+        }
         if let TypeKind::Nullable(inner) = self.types[e.index()]
             && !matches!(
                 self.types[f.index()],
@@ -141,12 +149,14 @@ impl HirModule {
         self.unify(f, e)
     }
 
-    /// Whether a value of type `found` fits `expected` now, without binding anything.
-    pub(crate) fn fits(&self, found: TypeId, expected: TypeId) -> bool {
-        let (f, e) = (self.shallow(found), self.shallow(expected));
-        f == TypeId::NEVER
-            || self.same(f, e)
-            || matches!(self.types[e.index()], TypeKind::Nullable(inner) if self.same(f, inner))
+    /// One side is the error type: an inference variable on the other side becomes it too, so the
+    /// error does not cause more errors further on.
+    fn absorb_error(&mut self, a: TypeId, b: TypeId) {
+        for t in [a, b] {
+            if let TypeKind::Var(v) = self.types[t.index()] {
+                self.vars[v as usize] = Some(TypeId::ERROR);
+            }
+        }
     }
 
     /// Whether `a` and `b` are the same type now, without binding anything.
@@ -208,6 +218,9 @@ impl HirModule {
     /// open; `None` if there is none (the branches of a statement-like `if`).
     pub(crate) fn join(&mut self, a: TypeId, b: TypeId) -> Option<TypeId> {
         let (a, b) = (self.shallow(a), self.shallow(b));
+        if a == TypeId::ERROR || b == TypeId::ERROR {
+            return Some(TypeId::ERROR);
+        }
         if a == TypeId::NEVER {
             return Some(b);
         }

@@ -92,12 +92,13 @@ minnow run examples/minnow/tests/programs/closures.mn
 
 1. Write a grammar (`docs/grammar.md`): tokens, rules, `@prec` operator tables, `~ "message"` error
    messages, `@recover` for panic-mode recovery. Try it with `a0 parse`.
-2. Walk the `SyntaxTree` and emit HIR with `a0_hir::HirBuilder` (`docs/hir.md`): typed expressions,
-   with strings, collections, closures, `any` and garbage collection built in. For static types,
-   check with `a0_sema::Types` (interning, structs, inference by unification). Runtime support can be
-   written in HIR text and parsed with `a0_hir::parse`. Use `a0_sema::Scopes` for name resolution.
-   For full control, emit the core IR with `a0_ir::Builder` instead (variables instead of SSA,
-   `if_`/`loop_` for control flow).
+2. Walk the `SyntaxTree` once and build HIR with `a0_hir::HirBuilder` (`docs/hir.md`): strings,
+   collections, structs, enums, generics, closures, nullable references, `any` and garbage
+   collection are built in. Build by name (`let_named`, `name`, `call_named`, `named_type`, ...)
+   and the builder resolves names, infers and checks types and reports errors in your language's
+   terms, so there is no checker to write. Runtime support can be written in HIR text and parsed
+   with `a0_hir::parse`. For full control, emit the core IR with `a0_ir::Builder` instead
+   (variables instead of SSA, `if_`/`loop_` for control flow).
 3. Give `a0_driver::Language` your compile function: it provides `run` (interpreter), `build`
    (native executable), `ir` and `hir`, renders diagnostics and maps errors to your exit codes. Or
    call `a0_hir::lower`, `a0_interp` and `a0_native::build_executable` yourself. A language that

@@ -179,7 +179,7 @@ fn compile_errors_are_reported_with_locations() {
         ),
         (
             "fn f() -> int { if true { return 1; } }",
-            "1:4: this function can end without returning a value of type `int`",
+            "1:15: this function can end without returning a value of type `int`",
         ),
         (
             "fn main() { break; }",
@@ -191,7 +191,7 @@ fn compile_errors_are_reported_with_locations() {
         ),
         (
             "fn main() { main = main; }",
-            "1:13: cannot assign to this expression",
+            "1:13: cannot assign to the function `main`",
         ),
         (
             "struct P { x: int } fn main() { let p = new P { x: 1 }; print(p.z); }",
@@ -199,7 +199,7 @@ fn compile_errors_are_reported_with_locations() {
         ),
         (
             "struct P { x: int, y: int } fn main() { let p = new P { x: 1 }; }",
-            "1:53: missing fields in `P`: `y`",
+            "1:49: missing fields in `P`: `y`",
         ),
         (
             "fn main() { print(\"a\" - \"b\"); }",
@@ -207,24 +207,21 @@ fn compile_errors_are_reported_with_locations() {
         ),
         (
             "fn main() { let xs = []; }",
-            "1:22: cannot infer the element type of this array",
+            "1:22: cannot infer the type `[_]`; add a type annotation",
         ),
         ("fn not_main() {}", "the program has no `main` function"),
         (
             "fn main(x: int) {}",
-            "1:4: `main` must take no parameters and return nothing or `int`",
+            "1:1: `main` must take no parameters and return nothing or an `int`",
         ),
-        (
-            "fn f() {} fn f() {}",
-            "1:14: the function `f` is defined twice",
-        ),
+        ("fn f() {} fn f() {}", "1:11: `f` is declared twice"),
         (
             "fn main() { let a = 1; let a = 2; }",
             "1:28: `a` is already defined in this scope",
         ),
         (
             "fn main() { let n = \"a\" as int; }",
-            "1:21: cannot cast `string` to `int`",
+            "1:21: cannot convert `string` to `int`",
         ),
         (
             "fn main() { return 1; }",
@@ -236,7 +233,7 @@ fn compile_errors_are_reported_with_locations() {
         ),
         (
             "fn main() { print([1]); }",
-            "1:19: `print` does not accept `[int]`",
+            "1:19: `print` formats an int, float, bool or string, not `[int]`",
         ),
         (
             "fn main() { print(\"\\q\"); }",
@@ -255,6 +252,50 @@ fn compile_errors_are_reported_with_locations() {
             "1:56: mismatched types: expected `int`, found `bool`",
         ),
         ("fn main() { let x = 1 }", "1:23: expected ';'"),
+        (
+            "struct N { next: N? } fn main() { let n = new N { next: null }; print(n.next.next); }",
+            "1:73: `N?` may be null; unwrap it (`!`) or check it for null before using its fields",
+        ),
+        (
+            "fn main() { let s: string = null; }",
+            "1:29: mismatched types: expected `string`, found `_?`",
+        ),
+        (
+            "fn main() { let n = 1; print(n!); }",
+            "1:30: `int` is not nullable, so there is nothing to unwrap",
+        ),
+        (
+            "enum E { A, B } fn main() { let e = E::A; match e { A => print(1), C => print(2) } }",
+            "1:68: `E` has no variant `C`",
+        ),
+        (
+            "enum E { A, B(int) } fn main() { match E::A { A => print(1) } }",
+            "1:34: match does not cover B",
+        ),
+        (
+            "fn main() { match 1 { _ => print(1) } }",
+            "1:13: cannot match on `int`",
+        ),
+        (
+            "fn twice<T>(x: T) -> T { return x + x; } fn main() {}",
+            "1:33: operator `+` cannot be applied to `T`",
+        ),
+        (
+            "struct Box<T> { v: T } fn main() { let b: Box<int> = new Box { v: \"s\" }; }",
+            "1:54: mismatched types: expected `Box<int>`, found `Box<string>`",
+        ),
+        (
+            "fn first<T>(xs: [T]) -> T? { return null; } fn main() { let n = first([1]); }",
+            "1:65: only reference types can be nullable, not `int`",
+        ),
+        (
+            "fn main() { let x = null; x = 5; }",
+            "1:21: only reference types can be nullable, not `int`",
+        ),
+        (
+            "enum E { A } fn main() { let e = E::Z; }",
+            "1:34: `E` has no variant `Z`",
+        ),
     ];
     let mut failures = Vec::new();
     for (src, expected) in cases {
@@ -278,8 +319,12 @@ fn errors_do_not_cascade() {
     assert_eq!(got, vec!["1:21: unknown name `y`".to_string()]);
     let got = errors("struct P { x: int } fn main() { let p = new P { x: 1 }; print(p.z); }");
     assert_eq!(got, vec!["1:65: `P` has no field `z`".to_string()]);
-    // Without an earlier error, an unknown type is the program's problem.
-    let got = errors("fn main() { let xs = []; print(xs[0]); push(xs, 1); }");
+    // A later use fixes an earlier unknown type; with no use at all, the program must say it.
+    assert_eq!(
+        errors("fn main() { let xs = []; print(xs[0]); push(xs, 1); }"),
+        Vec::<String>::new()
+    );
+    let got = errors("fn main() { let xs = []; print(xs[0]); }");
     assert_eq!(
         got,
         vec!["1:32: the type of this value must be known here; add a type annotation".to_string()]

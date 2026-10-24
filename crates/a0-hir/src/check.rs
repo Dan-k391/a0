@@ -56,7 +56,7 @@ fn retype(m: &mut HirModule) -> Diagnostics {
     let mut diags = Diagnostics::new();
     for e in nodes {
         let (kind, ty) = (m.exprs[e.index()].kind.clone(), m.exprs[e.index()].ty);
-        if ty == TypeId::NEVER || !m.is_resolved(ty) {
+        if ty == TypeId::NEVER || ty == TypeId::ERROR || !m.is_resolved(ty) {
             continue;
         }
         let (at, message) = match infer(m, &kind, ty) {
@@ -65,8 +65,8 @@ fn retype(m: &mut HirModule) -> Diagnostics {
                 e,
                 format!(
                     "expression typed {} should be {}",
-                    m.type_name(ty),
-                    m.type_name(t)
+                    m.display_type(ty),
+                    m.display_type(t)
                 ),
             ),
             Err(TypeErr::At(at, msg)) => (at.unwrap_or(e), msg),
@@ -100,12 +100,15 @@ pub fn check_entry(m: &HirModule) -> Diagnostics {
             let ret = m.body_ret(body);
             if !m.body_params(body).is_empty() || !matches!(ret, TypeId::INT | TypeId::UNIT) {
                 diags.push(
-                    Diagnostic::error("hir.entry", "main must be fn main() -> int or fn main()")
-                        .with_span_opt(m.funcs[f.index()].span),
+                    Diagnostic::error(
+                        "hir.entry",
+                        "`main` must take no parameters and return nothing or an `int`",
+                    )
+                    .with_span_opt(m.funcs[f.index()].span),
                 );
             }
         }
-        _ => diags.error("hir.entry", "the module has no fn main", None),
+        _ => diags.error("hir.entry", "the program has no `main` function", None),
     }
     diags
 }
@@ -133,16 +136,7 @@ impl Checker<'_> {
             );
             return;
         };
-        let ret = m.body_ret(body);
-        let rt = m.expr_type(root);
-        if ret != TypeId::UNIT && m.is_resolved(rt) && !m.fits(rt, ret) {
-            let msg = format!(
-                "the body evaluates to {} but must return {}",
-                m.type_name(rt),
-                m.type_name(ret)
-            );
-            self.error(root, &msg);
-        }
+        // `HirBuilder::set_root` has checked the body's value against its result type.
         self.expr(root, body, 0, false);
     }
 
@@ -190,12 +184,12 @@ impl Checker<'_> {
             ExprKind::Return(None) if m.body_ret(body) != TypeId::UNIT => {
                 let msg = format!(
                     "this function must return a value of type `{}`",
-                    m.type_name(m.body_ret(body))
+                    m.display_type(m.body_ret(body))
                 );
                 self.error(e, &msg);
             }
             ExprKind::Break | ExprKind::Continue if loops == 0 => {
-                self.error(e, "break or continue outside a loop");
+                self.error(e, "`break` and `continue` can only be used inside a loop");
             }
             ExprKind::Lambda(b) => {
                 self.body_uses[b.index()] += 1;

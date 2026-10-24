@@ -1,0 +1,84 @@
+// Generic functions, structs and enums; nullable references; match.
+struct Pair<A, B> { first: A, second: B }
+struct Node<T> { value: T, next: Node<T>? }
+enum Option<T> { Some(T), None }
+enum Shape { Circle(float), Rect(float, float), Dot }
+
+fn map<T, U>(xs: [T], f: fn(T) -> U) -> [U] {
+  let out: [U] = [];
+  for x in xs { push(out, f(x)); }
+  return out;
+}
+
+fn find<T>(xs: [T], pred: fn(T) -> bool) -> Option<T> {
+  for x in xs {
+    if pred(x) { return Option::Some(x); }
+  }
+  return Option::None;
+}
+
+fn largest<T>(xs: [T], size: fn(T) -> float) -> T? {
+  let best: T? = null;
+  for x in xs {
+    if best == null || size(x) > size(best!) { best = x; }
+  }
+  return best;
+}
+
+fn push_front<T>(list: Node<T>?, value: T) -> Node<T> {
+  return new Node { value: value, next: list };
+}
+
+fn area(s: Shape) -> float {
+  return match s {
+    Circle(r) => 3.0 * r * r,
+    Rect(w, h) => w * h,
+    Dot => 0.0,
+  };
+}
+
+fn describe(o: Option<int>) -> string {
+  return match o { Some(v) => "found " + str(v), None => "nothing" };
+}
+
+fn main() {
+  let words = map([1, 2, 3], fn(n: int) -> string { return str(n * 10) + "!"; });
+  print(words[0] + " " + words[2]);
+  print(describe(find([3, 8, 12], fn(n: int) -> bool { return n > 5; })));
+  print(describe(find([1, 2], fn(n: int) -> bool { return n > 5; })));
+
+  let p = new Pair { second: "two", first: 2 };
+  print(str(p.first) + " " + p.second);
+
+  let shapes = [Shape::Circle(1.0), Shape::Rect(2.0, 3.0), Shape::Dot];
+  let total = 0.0;
+  for s in shapes { total = total + area(s); }
+  print(total);
+  let big = largest(shapes, area);
+  if big != null { print(area(big!)); }
+  let none: [string] = [];
+  print(largest(none, fn(s: string) -> float { return len(s) as float; }) == null);
+
+  let list: Node<string>? = null;
+  for w in ["c", "b", "a"] { list = push_front(list, w); }
+  let text = "";
+  while list != null {
+    text = text + list!.value;
+    list = list!.next;
+  }
+  print(text);
+
+  match find(["x", "yy"], fn(s: string) -> bool { return len(s) == 2; }) {
+    Some(s) => { print("match " + s); }
+    None => { print("no match"); }
+  }
+}
+// expect: 10! 30!
+// expect: found 8
+// expect: nothing
+// expect: 2 two
+// expect: 9
+// expect: 6
+// expect: true
+// expect: abc
+// expect: match yy

@@ -38,7 +38,7 @@ pub fn lower(m: &HirModule) -> Result<a0_ir::Module, Diagnostics> {
         return Err(entry);
     }
     // Generic items become one copy per use; lowering itself never sees a type parameter.
-    let mono = crate::mono::monomorphize(m);
+    let mono = crate::mono::monomorphize(m)?;
     let m = mono.as_ref().unwrap_or(m);
     let mut l = Lowerer::new(m);
     l.run();
@@ -869,9 +869,7 @@ impl<'a> Lowerer<'a> {
             | ExprKind::NewArray
             | ExprKind::NewMap => true,
             ExprKind::Binary(BinOp::Add, a, _) => m.expr_type(*a) == TypeId::STRING,
-            ExprKind::Builtin(op, _) => {
-                matches!(op, Builtin::Keys | Builtin::Substr | Builtin::Str)
-            }
+            ExprKind::Builtin(op, args) => builtin_allocates(m, *op, args),
             ExprKind::Cast(a) => m.expr_type(*a) == TypeId::INT && m.expr_type(e) == TypeId::ANY,
             ExprKind::Match(_, arms) => arms.iter().any(|a| {
                 m.arms[a.index()]
@@ -1428,9 +1426,22 @@ impl<'a> Lowerer<'a> {
         })
     }
 
+    /// A value of a printable type as a string.
+    fn format(&mut self, v: Value, t: TypeId) -> Value {
+        match t {
+            TypeId::INT => self.b.call(self.rt.string_from_int, &[v]).unwrap(),
+            TypeId::FLOAT => self.b.call(self.rt.string_from_float, &[v]).unwrap(),
+            TypeId::STRING => v,
+            _ => {
+                let w = self.b.cast(Opcode::Zext, v, Type::I64);
+                self.b.call(self.rt.string_from_bool, &[w]).unwrap()
+            }
+        }
+    }
+
     fn builtin(&mut self, op: Builtin, args: &[ExprId], ty: TypeId) -> V {
         let m = self.m;
-        let allocates = matches!(op, Builtin::Keys | Builtin::Substr | Builtin::Str);
+        let allocates = builtin_allocates(m, op, args);
         let Some(vs) = self.operands(args, allocates) else {
             return V::Never;
         };
@@ -1484,23 +1495,15 @@ impl<'a> Lowerer<'a> {
                     .call(self.rt.string_byte_at, &[vs[0].val(), vs[1].val()])
                     .unwrap(),
             ),
-            Builtin::Str => {
-                let v = vs[0].val();
-                V::Val(match arg_ty(0) {
-                    TypeId::INT => self.b.call(self.rt.string_from_int, &[v]).unwrap(),
-                    TypeId::FLOAT => self.b.call(self.rt.string_from_float, &[v]).unwrap(),
-                    _ => {
-                        let w = self.b.cast(Opcode::Zext, v, Type::I64);
-                        self.b.call(self.rt.string_from_bool, &[w]).unwrap()
-                    }
-                })
-            }
+            Builtin::Str => V::Val(self.format(vs[0].val(), arg_ty(0))),
             Builtin::Print => {
-                self.b.call(self.rt.string_print, &[vs[0].val()]);
+                let s = self.format(vs[0].val(), arg_ty(0));
+                self.b.call(self.rt.string_print, &[s]);
                 V::Unit
             }
             Builtin::Eprint => {
-                self.b.call(self.rt.string_eprint, &[vs[0].val()]);
+                let s = self.format(vs[0].val(), arg_ty(0));
+                self.b.call(self.rt.string_eprint, &[s]);
                 V::Unit
             }
             Builtin::Exit => {
@@ -1751,5 +1754,15 @@ impl<'a> Lowerer<'a> {
             Some(r) => V::Val(self.b.get(r)),
             None => V::Unit,
         }
+    }
+}
+
+/// Whether a builtin allocates a GC object: one that makes a string or an array, or prints a value
+/// that is not a string yet.
+fn builtin_allocates(m: &HirModule, op: Builtin, args: &[ExprId]) -> bool {
+    match op {
+        Builtin::Keys | Builtin::Substr | Builtin::Str => true,
+        Builtin::Print | Builtin::Eprint => m.expr_type(args[0]) != TypeId::STRING,
+        _ => false,
     }
 }
