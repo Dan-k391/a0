@@ -1,0 +1,59 @@
+// Kaleidoscope, the language of LLVM's tutorial (chapters 1-7): doubles only, functions, externs,
+// if/then/else, for/in loops, mutable variables (var/in and '='), and user-defined operators.
+grammar kaleidoscope;
+
+skip /[ \t\r\n]+/;
+skip /#[^\n]*/;
+token NUMBER /[0-9]+\.?[0-9]*|\.[0-9]+/;
+token IDENT /[A-Za-z][A-Za-z0-9]*/;
+// Every other single character is an operator character, as in the tutorial's lexer.
+token OPCHAR /[^ \t\r\n0-9A-Za-z#(),;.]/;
+unknown "unexpected character";
+
+program = (!EOF item)* EOF;
+
+item @inline @recover(after ";" before "def" "extern")
+    = definition | external | toplevel | ";";
+
+definition = "def" proto:prototype body:expr;
+external = "extern" proto:prototype;
+toplevel = expr:expr;
+
+prototype = "binary" op:opchar ~ "expected an operator character after 'binary'"
+            precedence:NUMBER?
+            "(" ~ "expected '(' in prototype" params:params ")" ~ "expected ')' in prototype"
+          | "unary" op:opchar ~ "expected an operator character after 'unary'"
+            "(" ~ "expected '(' in prototype" params:params ")" ~ "expected ')' in prototype"
+          | name:IDENT ~ "expected a function name in prototype"
+            "(" ~ "expected '(' in prototype" params:params ")" ~ "expected ')' in prototype";
+
+params = param:IDENT*;
+
+opchar @inline = OPCHAR | "=";
+
+// Binary operators are user-definable, so expressions are parsed as a flat chain
+// `operand (op operand)*` and the compiler resolves precedence with the operator table in effect.
+expr = operand:operand (op:opchar operand:operand)*;
+
+operand @inline = unary | primary;
+
+unary = op:OPCHAR operand:operand;
+
+primary @inline = number | call | variable | paren | if_expr | for_expr | var_expr ;
+
+number = NUMBER;
+call = callee:IDENT "(" args:args? ")" ~ "expected ')' or ',' in argument list";
+variable = IDENT;
+args = arg:expr ("," arg:expr)*;
+paren = "(" inner:expr ")" ~ "expected ')'";
+
+if_expr = "if" cond:expr "then" ~ "expected 'then'" then:expr "else" ~ "expected 'else'" else:expr;
+
+for_expr = "for" var:IDENT ~ "expected an identifier after 'for'"
+           "=" ~ "expected '=' after the loop variable" start:expr
+           "," ~ "expected ',' after the start value" end:expr
+           ("," step:expr)?
+           "in" ~ "expected 'in' after the loop header" body:expr;
+
+var_expr = "var" binding:var_binding ("," binding:var_binding)* "in" ~ "expected 'in' after 'var'" body:expr;
+var_binding = name:IDENT ~ "expected an identifier after 'var'" ("=" init:expr)?;

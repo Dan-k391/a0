@@ -1,0 +1,19 @@
+[package]
+name = "kaleidoscope"
+description = "Kaleidoscope (LLVM's tutorial language) built on A0"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+build = "build.rs"
+
+[dependencies]
+a0-diag.workspace = true
+a0-ir.workspace = true
+a0-syntax.workspace = true
+a0-sema.workspace = true
+a0-interp.workspace = true
+a0-native.workspace = true
+a0-runtime.workspace = true
+
+[build-dependencies]
+a0-build.workspace = true

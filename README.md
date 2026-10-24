@@ -18,6 +18,8 @@ The core is written in Rust; the runtime is written in C.
 | `crates/a0-native` | Native code through Cranelift, linked by the system linker |
 | `crates/a0-syntax` | Grammar layer: grammar DSL, lexer, parser, syntax trees and syntax errors |
 | `crates/a0-sema` | Semantic toolkit: scopes and name resolution |
+| `crates/a0-build` | Build-script helper for languages that ship a C runtime library |
+| `examples/kaleidoscope` | Kaleidoscope (LLVM's tutorial language) end to end |
 | `crates/a0` | The `a0` command-line driver |
 | `tests/programs` | IR programs with expected output, run by every backend |
 | `docs/ir.md` | IR design |
