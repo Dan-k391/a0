@@ -139,7 +139,9 @@ A0Type *a0_type_new(const uint8_t *name, int64_t name_len, int64_t word_count, c
 void *a0_gc_new(A0Type *type);
 const A0Type *a0_gc_type_of(const void *object);
 
-/* Pushes a frame of `slots` zeroed words onto the shadow stack and returns it. */
+/* Pushes a frame of `slots` zeroed words onto the shadow stack and returns it. Before popping it, the
+ * caller sets every word back to zero; that keeps the stack above its top zero, so pushing is cheap.
+ * Under A0_GC_STRESS, popping a frame that was not cleared panics. */
 uint64_t *a0_gc_frame_push(int64_t slots);
 void a0_gc_frame_pop(int64_t slots);
 /* Registers the word at `address` as a root holding a pointer (A0_WORD_REF) or an `any`

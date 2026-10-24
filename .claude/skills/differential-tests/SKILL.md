@@ -57,6 +57,9 @@ Shrink the program until the two backends disagree on a single instruction.
   without `a0_rt_exit`.
 - **Crash or wrong value only under GC stress**: a GC reference was held outside a root (a frame slot,
   a registered root or a C temp root) across an allocation.
+- **`a shadow stack frame was popped uncleared`** (GC stress only): some path left a scope without
+  clearing its frame slots; lowering clears them in `release`, `pop_frame` and `leave_loop_scopes`
+  (`crates/a0-hir/src/lower.rs`, decision D30).
 - **Interpreter-only failure** about FFI: the C function's signature is outside the interpreter's FFI
   shape (more than 8 arguments, or `f32`).
 - **Native-only crash in deep recursion**: the native stack is smaller than the interpreter's depth

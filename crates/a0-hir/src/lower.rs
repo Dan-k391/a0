@@ -1,11 +1,16 @@
 //! Lowering HIR to the core IR plus calls into the default runtime (`a0rt`).
 //!
-//! Storage: scalar locals become IR variables; locals holding references or `any` live in slots of the
-//! function's frame on the runtime's shadow stack (stored in the `any` encoding, so the collector
-//! scans every slot the same way); locals captured by closures live in heap boxes whose pointers sit
-//! in frame slots. Temporaries are spilled to frame slots only when something evaluated after them,
-//! or the operation itself, may allocate. The collector never moves objects, so a spill only keeps a
-//! value alive; the code keeps using the SSA value.
+//! Storage: every local is an IR variable. Locals holding references or `any` are also rooted in a
+//! slot of the function's frame on the runtime's shadow stack (stored in the `any` encoding, so the
+//! collector scans every slot the same way), written on every assignment; locals captured by
+//! closures live in heap boxes, rooted the same way. A local declared in a block has its slot only
+//! while the block runs, so later blocks reuse the slot. A slot is cleared (set to zero) when its
+//! scope ends or is left by `return`, `break` or `continue`, which keeps the shadow stack above its
+//! top all zero and lets frames be pushed without clearing them. Temporaries are spilled to frame slots
+//! only when something evaluated after them, or the operation itself, may allocate, and reads of
+//! locals that are never assigned again are not spilled at all (their slot keeps them alive). The
+//! collector never moves objects, so a slot only keeps a value alive; the code keeps using the
+//! variable or SSA value.
 
 use std::collections::{BTreeSet, HashMap};
 
@@ -185,8 +190,10 @@ impl Runtime {
 enum Storage {
     None,
     Var(Var),
-    Slot(u32),
-    Boxed(u32),
+    /// A reference or `any`, rooted by a frame slot.
+    Rooted(Var, u32),
+    /// A captured local: the pointer to its heap box, rooted by a frame slot.
+    Boxed(Var, u32),
 }
 
 /// The result of lowering an expression.
@@ -222,6 +229,8 @@ struct FnState {
     max: u32,
     storage: HashMap<LocalId, Storage>,
     gc_memo: HashMap<ExprId, bool>,
+    /// The first slot of each enclosing loop's body, for `break` and `continue`.
+    loops: Vec<u32>,
 }
 
 struct Lowerer<'a> {
@@ -243,6 +252,10 @@ struct Lowerer<'a> {
     type_names: HashMap<String, IrGlobal>,
     captured: Vec<bool>,
     captures: HashMap<BodyId, Vec<LocalId>>,
+    /// Locals declared directly in a block, which get their storage when the block starts.
+    scoped: Vec<bool>,
+    /// Locals assigned after their declaration.
+    reassigned: Vec<bool>,
     f: Option<FnState>,
 }
 
@@ -282,6 +295,8 @@ impl<'a> Lowerer<'a> {
             type_names: HashMap::new(),
             captured: Vec::new(),
             captures: HashMap::new(),
+            scoped: Vec::new(),
+            reassigned: Vec::new(),
             f: None,
         }
     }
@@ -338,6 +353,7 @@ impl<'a> Lowerer<'a> {
 
     fn run(&mut self) {
         self.analyze_captures();
+        self.analyze_locals();
         let m = self.m;
         for (i, s) in m.structs.iter().enumerate() {
             let g = self
@@ -496,6 +512,28 @@ impl<'a> Lowerer<'a> {
                 self.captured[l.index()] = true;
             }
             self.captures.insert(id, list);
+        }
+    }
+
+    /// Finds the locals declared directly in a block and those assigned after their declaration.
+    fn analyze_locals(&mut self) {
+        let m = self.m;
+        self.scoped = vec![false; m.locals.len()];
+        self.reassigned = vec![false; m.locals.len()];
+        let mut stack: Vec<ExprId> = m.bodies.iter().filter_map(|b| b.root).collect();
+        while let Some(e) = stack.pop() {
+            match &m.expr(e).kind {
+                ExprKind::Block(items, _) => {
+                    for &item in items {
+                        if let ExprKind::Let(l, _) = m.expr(item).kind {
+                            self.scoped[l.index()] = true;
+                        }
+                    }
+                }
+                ExprKind::SetLocal(l, _) => self.reassigned[l.index()] = true,
+                _ => {}
+            }
+            visit_children(m, e, &mut |c| stack.push(c));
         }
     }
 
@@ -659,8 +697,24 @@ impl<'a> Lowerer<'a> {
         self.st().next
     }
 
+    /// Frees the slots allocated since `mark`, clearing them unless control never gets here.
     fn release(&mut self, mark: u32) {
+        let next = self.st().next;
+        if !self.b.is_terminated() {
+            self.clear_slots(mark, next);
+        }
         self.st().next = mark;
+    }
+
+    fn clear_slots(&mut self, from: u32, to: u32) {
+        if from >= to {
+            return;
+        }
+        let zero = self.b.iconst(Type::I64, 0);
+        for s in from..to {
+            let a = self.slot_addr(s);
+            self.b.store(zero, a);
+        }
     }
 
     fn slot_addr(&mut self, s: u32) -> Value {
@@ -693,16 +747,27 @@ impl<'a> Lowerer<'a> {
         self.b.store(w, a);
     }
 
-    fn load_slot(&mut self, s: u32, t: TypeId) -> Value {
-        let a = self.slot_addr(s);
-        let w = self.b.load(Type::I64, a);
-        self.decode(w, t)
-    }
-
     /// Keeps a GC value alive in a fresh temporary slot until the caller releases it.
     fn spill(&mut self, v: Value, t: TypeId) {
         let s = self.alloc_slot();
         self.store_slot(s, v, t);
+    }
+
+    /// Spills the value of `e` if it is a GC value that nothing else keeps alive: a local that is
+    /// never assigned again stays in its own slot.
+    fn spill_operand(&mut self, e: ExprId, v: V) {
+        let t = self.m.expr_type(e);
+        let V::Val(val) = v else { return };
+        if !self.is_gc(t) {
+            return;
+        }
+        if let ExprKind::Local(l) = self.m.expr(e).kind
+            && !self.reassigned[l.index()]
+            && matches!(self.st().storage[&l], Storage::Rooted(..))
+        {
+            return;
+        }
+        self.spill(val, t);
     }
 
     // ---------------------------------------------------------------- words
@@ -784,25 +849,14 @@ impl<'a> Lowerer<'a> {
             max: 0,
             storage: HashMap::new(),
             gc_memo: HashMap::new(),
+            loops: Vec::new(),
         });
 
-        // Storage for this body's own locals.
+        // Storage for this body's own locals, except those of blocks, which get theirs later.
         for (i, l) in m.locals.iter().enumerate() {
-            if l.body != body {
-                continue;
+            if l.body == body && !self.scoped[i] {
+                self.declare_local(LocalId(i as u32));
             }
-            let id = LocalId(i as u32);
-            let storage = if matches!(l.ty, TypeId::UNIT | TypeId::NEVER) {
-                Storage::None
-            } else if self.captured[i] {
-                Storage::Boxed(self.alloc_slot())
-            } else if self.is_gc(l.ty) {
-                Storage::Slot(self.alloc_slot())
-            } else {
-                let t = self.ir_type(l.ty).unwrap();
-                Storage::Var(self.b.declare_var(&l.name, t))
-            };
-            self.st().storage.insert(id, storage);
         }
         // A closure copies its captured boxes out of its environment.
         let mut param_index = 0u32;
@@ -816,7 +870,10 @@ impl<'a> Lowerer<'a> {
                 let tag = self.b.iconst(Type::I64, REF_TAG);
                 let tagged = self.b.or(w, tag);
                 self.b.store(tagged, addr);
-                self.st().storage.insert(l, Storage::Boxed(s));
+                let var = self.b.declare_var(&m.locals[l.index()].name, Type::Ptr);
+                let bx = self.b.cast(Opcode::Inttoptr, w, Type::Ptr);
+                self.b.set(var, bx);
+                self.st().storage.insert(l, Storage::Boxed(var, s));
             }
         }
         // Parameters: root the GC ones first, then create boxes for captured ones (which allocates).
@@ -834,19 +891,23 @@ impl<'a> Lowerer<'a> {
             values.push(v);
             match (self.st().storage[&p], v) {
                 (Storage::Var(var), Some(v)) => self.b.set(var, v),
-                (Storage::Slot(s), Some(v)) => self.store_slot(s, v, t),
-                (Storage::Boxed(_), Some(v)) if self.is_gc(t) => self.spill(v, t),
+                (Storage::Rooted(var, s), Some(v)) => {
+                    self.b.set(var, v);
+                    self.store_slot(s, v, t);
+                }
+                (Storage::Boxed(..), Some(v)) if self.is_gc(t) => self.spill(v, t),
                 _ => {}
             }
         }
         for (&p, v) in params.iter().zip(values) {
-            if let Storage::Boxed(s) = self.st().storage[&p] {
+            if let Storage::Boxed(var, s) = self.st().storage[&p] {
                 let t = m.local_type(p);
                 let bx = self.new_object(self.box_desc(t));
                 if let Some(v) = v {
                     let w = self.word_encode(v, t);
                     self.store_word(bx, 0, w);
                 }
+                self.b.set(var, bx);
                 self.store_slot(s, bx, TypeId::STRING);
             }
         }
@@ -871,7 +932,36 @@ impl<'a> Lowerer<'a> {
         self.b.end_function();
     }
 
+    /// Creates the storage of a local: a variable, and a frame slot if it needs rooting.
+    fn declare_local(&mut self, l: LocalId) {
+        let data = &self.m.locals[l.index()];
+        let storage = match self.ir_type(data.ty) {
+            None => Storage::None,
+            Some(_) if self.captured[l.index()] => {
+                let var = self.b.declare_var(&data.name, Type::Ptr);
+                let null = self.b.null();
+                self.b.set(var, null);
+                Storage::Boxed(var, self.alloc_slot())
+            }
+            Some(t) if self.is_gc(data.ty) => {
+                let var = self.b.declare_var(&data.name, t);
+                let zero = if t == Type::Ptr {
+                    self.b.null()
+                } else {
+                    self.b.iconst(t, 0)
+                };
+                self.b.set(var, zero);
+                Storage::Rooted(var, self.alloc_slot())
+            }
+            Some(t) => Storage::Var(self.b.declare_var(&data.name, t)),
+        };
+        self.st().storage.insert(l, storage);
+    }
+
+    /// Clears the slots in use and pops the frame, before a return.
     fn pop_frame(&mut self) {
+        let next = self.st().next;
+        self.clear_slots(0, next);
         let n = self.st().slot_count;
         self.b.call(self.rt.frame_pop, &[n]);
     }
@@ -926,12 +1016,8 @@ impl<'a> Lowerer<'a> {
             if matches!(v, V::Never) {
                 return None;
             }
-            let t = self.m.expr_type(e);
-            if let V::Val(val) = v
-                && self.is_gc(t)
-                && (op_allocates || later[i])
-            {
-                self.spill(val, t);
+            if op_allocates || later[i] {
+                self.spill_operand(e, v);
             }
             out.push(v);
         }
@@ -1104,10 +1190,10 @@ impl<'a> Lowerer<'a> {
                 let word = self.b.cast(Opcode::Ptrtoint, code, Type::I64);
                 self.store_word(obj, 0, word);
                 for (k, l) in self.captures[&body].clone().into_iter().enumerate() {
-                    let Storage::Boxed(s) = self.st().storage[&l] else {
+                    let Storage::Boxed(var, _) = self.st().storage[&l] else {
                         unreachable!("captured locals are boxed")
                     };
-                    let bx = self.load_slot(s, TypeId::STRING);
+                    let bx = self.b.get(var);
                     let bw = self.b.cast(Opcode::Ptrtoint, bx, Type::I64);
                     self.store_word(obj, k as u32 + 1, bw);
                 }
@@ -1223,6 +1309,8 @@ impl<'a> Lowerer<'a> {
             ExprKind::If(c, t, els) => self.if_(c, t, els, ty),
             ExprKind::While(c, body) => {
                 self.b.loop_();
+                let mark = self.mark();
+                self.st().loops.push(mark);
                 let cv = self.expr(c);
                 if let V::Val(cv) = cv {
                     let stop = self.b.not(cv);
@@ -1231,12 +1319,16 @@ impl<'a> Lowerer<'a> {
                     self.b.end_if();
                     self.expr(body);
                 }
+                self.st().loops.pop();
                 self.b.end_loop();
                 V::Unit
             }
             ExprKind::Loop(body) => {
                 self.b.loop_();
+                let mark = self.mark();
+                self.st().loops.push(mark);
                 self.expr(body);
+                self.st().loops.pop();
                 self.b.end_loop();
                 if ty == TypeId::NEVER {
                     V::Never
@@ -1245,10 +1337,12 @@ impl<'a> Lowerer<'a> {
                 }
             }
             ExprKind::Break => {
+                self.leave_loop_scopes();
                 self.b.break_();
                 V::Never
             }
             ExprKind::Continue => {
+                self.leave_loop_scopes();
                 self.b.continue_();
                 V::Never
             }
@@ -1269,6 +1363,12 @@ impl<'a> Lowerer<'a> {
                 V::Never
             }
             ExprKind::Block(items, tail) => {
+                // The block's locals get their slots now; `expr` releases them when it ends.
+                for &item in &items {
+                    if let ExprKind::Let(l, _) = m.expr(item).kind {
+                        self.declare_local(l);
+                    }
+                }
                 for item in items {
                     if matches!(self.expr(item), V::Never) {
                         return V::Never;
@@ -1280,6 +1380,13 @@ impl<'a> Lowerer<'a> {
                 }
             }
         }
+    }
+
+    /// Clears the slots of the scopes that `break` or `continue` leaves.
+    fn leave_loop_scopes(&mut self) {
+        let st = self.st();
+        let (from, to) = (*st.loops.last().unwrap(), st.next);
+        self.clear_slots(from, to);
     }
 
     fn call_result(&mut self, r: Option<Value>, ty: TypeId) -> V {
@@ -1297,10 +1404,9 @@ impl<'a> Lowerer<'a> {
         let t = self.m.local_type(l);
         match self.st().storage[&l] {
             Storage::None => V::Unit,
-            Storage::Var(v) => V::Val(self.b.get(v)),
-            Storage::Slot(s) => V::Val(self.load_slot(s, t)),
-            Storage::Boxed(s) => {
-                let bx = self.load_slot(s, TypeId::STRING);
+            Storage::Var(v) | Storage::Rooted(v, _) => V::Val(self.b.get(v)),
+            Storage::Boxed(var, _) => {
+                let bx = self.b.get(var);
                 let w = self.load_word(bx, 0);
                 self.word_decode(w, t)
             }
@@ -1313,9 +1419,12 @@ impl<'a> Lowerer<'a> {
         match self.st().storage[&l] {
             Storage::None => {}
             Storage::Var(var) => self.b.set(var, v),
-            Storage::Slot(s) => self.store_slot(s, v, t),
-            Storage::Boxed(s) => {
-                let bx = self.load_slot(s, TypeId::STRING);
+            Storage::Rooted(var, s) => {
+                self.b.set(var, v);
+                self.store_slot(s, v, t);
+            }
+            Storage::Boxed(var, _) => {
+                let bx = self.b.get(var);
                 let w = self.word_encode(v, t);
                 self.store_word(bx, 0, w);
             }
@@ -1326,7 +1435,7 @@ impl<'a> Lowerer<'a> {
     fn bind_local(&mut self, l: LocalId, v: V) {
         let t = self.m.local_type(l);
         match self.st().storage[&l] {
-            Storage::Boxed(s) => {
+            Storage::Boxed(var, s) => {
                 let mark = self.mark();
                 if let V::Val(val) = v
                     && self.is_gc(t)
@@ -1338,6 +1447,7 @@ impl<'a> Lowerer<'a> {
                     let w = self.word_encode(val, t);
                     self.store_word(bx, 0, w);
                 }
+                self.b.set(var, bx);
                 self.store_slot(s, bx, TypeId::STRING);
                 self.release(mark);
             }
@@ -1793,7 +1903,7 @@ impl<'a> Lowerer<'a> {
         let sv = self.expr(s);
         let V::Val(obj) = sv else { return sv };
         // Keep the scrutinee alive while payloads are bound (binding a captured local allocates).
-        self.spill(obj, m.expr_type(s));
+        self.spill_operand(s, sv);
         let tag = self.load_word(obj, 0);
         let result = self.ir_type(ty).map(|t| self.b.declare_var("match", t));
         let mut open = 0;

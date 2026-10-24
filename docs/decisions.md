@@ -274,3 +274,18 @@ send everything else (classes, natives, arity errors) through the general `call`
 without early returns so the optimizer inlines them at every call site. This is what any frontend
 for a language with dynamic arity does on a typed IR; it costs the prelude about 100 lines and
 halves the time of call-heavy programs (`invocation`, `fib`).
+
+## D30. Frames are cleared by the code that used them, not when pushed
+
+The collector scans every word of every frame on the shadow stack, so a frame must not hold stale
+words from earlier frames: those may point at freed objects. `a0_gc_frame_push` used to clear the
+new frame with `memset`. HIR functions have large frames (inlining gives each inlined call its own
+locals), and clearing 20 to 30 words on every call cost more than the rest of a small function's
+call overhead: with MSVC's `memset`, `fib` spent about 40% of its time there. Now generated code
+clears each slot when its scope ends or is left (`return`, `break`, `continue`), so the words above
+the stack's top are always zero and pushing clears nothing. A call that returns early touches only
+the slots it used, and blocks reuse the slots of blocks before them. Under `A0_GC_STRESS`,
+`a0_gc_frame_pop` checks that the frame was cleared, so a lowering bug fails the stress tests. At
+the same time, reference locals became IR variables written through to their slots instead of
+being reloaded from them, which the non-moving collector (D16, D18) allows. Hand-written users of
+the frame API clear their frames before popping (`a0rt.h`).

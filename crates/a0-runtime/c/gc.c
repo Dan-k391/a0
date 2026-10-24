@@ -182,14 +182,21 @@ uint64_t *a0_gc_frame_push(int64_t slots) {
         if (shadow == NULL) a0_panic("out of memory");
     }
     if (shadow_top + slots > SHADOW_CAPACITY) a0_rt_trap(A0_TRAP_STACK_OVERFLOW);
+    /* Every word above the top is zero (the float 0.0 in the `any` encoding, not a reference), since
+     * frames are cleared before they are popped: the new frame needs no clearing. */
     uint64_t *frame = &shadow[shadow_top];
-    /* Zero is the float 0.0 in the `any` encoding: not a reference, so no stale pointers survive. */
-    memset(frame, 0, sizeof(uint64_t) * (size_t)slots);
     shadow_top += slots;
     return frame;
 }
 
-void a0_gc_frame_pop(int64_t slots) { shadow_top -= slots; }
+void a0_gc_frame_pop(int64_t slots) {
+    shadow_top -= slots;
+    if (stress == 1) {
+        for (int64_t i = 0; i < slots; i++) {
+            if (shadow[shadow_top + i] != 0) a0_panic("a shadow stack frame was popped uncleared");
+        }
+    }
+}
 
 void a0_gc_add_root(void *address, int64_t word_kind) {
     if (root_count == root_capacity) {

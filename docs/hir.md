@@ -205,9 +205,14 @@ replaced generic items with one copy per combination of type arguments:
 - Value types map to `i1`, `i64`, `f64`; `any` to `i64`; references to `ptr`; `unit` disappears.
 - **Precise GC without stack maps.** Every reference or `any` that lives across something that can
   allocate is kept in a slot of the function's frame on the runtime's shadow stack
-  (`a0_gc_frame_push`/`pop`), stored in the `any` encoding. Locals of these types always live in
-  frame slots; temporaries are spilled only when a later operand or the operation itself may
-  allocate. Globals of these types are registered as roots. Heap objects are traced by layout.
+  (`a0_gc_frame_push`/`pop`), stored in the `any` encoding. Locals of these types are IR variables
+  whose every assignment is also written to their slot (the collector never moves objects, so the
+  variable stays valid); a local declared in a block has its slot only while the block runs.
+  Temporaries are spilled only when a later operand or the operation itself may allocate, and reads
+  of locals that are never reassigned are not spilled. A slot is cleared when its scope ends or is
+  left by `return`, `break` or `continue`, so the stack above its top is always zero and pushing a
+  frame clears nothing (D30). Globals of these types are registered as roots. Heap objects are
+  traced by layout.
 - **Objects.** Every struct, enum variant and closure environment gets a type descriptor registered
   at startup with a layout (one byte per word: raw, reference or `any`). Field access is an inline
   load or store; references are non-null by type, so only `!` checks for null.

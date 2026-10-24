@@ -1,11 +1,13 @@
 // Runtime and lowering fast paths that must not change behavior: the map's last-lookup cache,
-// casts the optimizer proves safe, inline `any` equality and small buffers from free lists.
+// casts the optimizer proves safe, inline `any` equality, small buffers from free lists, and frames
+// that are cleared when scopes end rather than when pushed.
 // expect-stdout: cache 1 2 false 3 true 4
 // expect-stdout: rebuilt 199 0 true
 // expect-stdout: guarded 7 cat 2.5 none
 // expect-stdout: shadowed 1 dog
 // expect-stdout: eq true false false true true false
 // expect-stdout: grown 300 299 small 3
+// expect-stdout: loop item 2 bb!
 module "fast_paths";
 
 struct Cat { name: string }
@@ -29,6 +31,38 @@ fn show(v: any) -> string {
   } else {
     "none"
   }
+}
+
+// Returns from inside a loop and a block that hold references.
+fn first_long(words: array<string>) -> string {
+  let i = 0;
+  while i < len(words) {
+    let w = words[i] + "!";
+    if len(w) > 2 {
+      return w;
+    }
+    i = i + 1;
+  }
+  "none"
+}
+
+// `break` and `continue` leave a scope whose slot holds a reference; the frame is cleared anyway.
+fn last_item(limit: int) -> string {
+  let found = "none";
+  let tries = 0;
+  loop {
+    let item = "item " + str(tries);
+    tries = tries + 1;
+    if tries > limit {
+      return found;
+    }
+    if tries < 3 {
+      continue;
+    }
+    found = item;
+    break;
+  }
+  found
 }
 
 fn main() -> int {
@@ -93,5 +127,7 @@ fn main() -> int {
   }
   let small = [1, 2, 3];
   print("grown " + str(len(a)) + " " + str(a[299]) + " small " + str(len(small)) + "\n");
+
+  print("loop " + last_item(10) + " " + first_long(["a", "bb", "ccc"]) + "\n");
   0
 }

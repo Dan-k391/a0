@@ -280,7 +280,9 @@ unsafe fn collection() {
         a0_map_remove(map, s("key") as u64);
         assert_eq!(live(), 6 + 1, "removed entries are no longer traced");
 
-        // Popping the frame drops everything; a registered root keeps its object.
+        // Clearing and popping the frame drops everything; a registered root keeps its object.
+        *frame = 0;
+        *frame.add(1) = 0;
         a0_gc_frame_pop(2);
         assert_eq!(live(), 0);
         static mut GLOBAL: u64 = 0;
@@ -301,6 +303,7 @@ unsafe fn collection() {
         }
         assert_eq!(live(), 1 + 1 + 200);
         assert_eq!(text(a0_array_get(keep, 199) as Ptr), "199000");
+        *frame = 0;
         a0_gc_frame_pop(1);
     }
 }
