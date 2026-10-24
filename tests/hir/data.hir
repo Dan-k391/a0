@@ -1,0 +1,102 @@
+// Structs, enums and match, arrays and maps.
+// expect-stdout: area 3.14159 + 6
+// expect-stdout: shapes: circle rect empty
+// expect-stdout: point 1 2
+// expect-stdout: list 3 -> 2 -> 1
+// expect-stdout: popped 30 left 2
+// expect-stdout: squares 0 1 4 9 16
+// expect-stdout: counts apple=3 pear=1 fig=2
+// expect-stdout: has pear true, removed pear, has pear false, size 2
+// expect-stdout: keys apple fig
+// expect-stdout: by id: 7 -> seven
+module "data";
+
+struct Point { x: int, y: int }
+struct Node { value: int, next: Node }
+enum Shape { Circle(float), Rect(float, float), Empty }
+
+fn area(s: Shape) -> float {
+  match s {
+    Circle(r) => 3.14159 * r * r,
+    Rect(w, h) => w * h,
+    Empty => 0.0,
+  }
+}
+
+fn describe(s: Shape) -> string {
+  match s {
+    Circle(r) => "circle",
+    Rect(w, h) => "rect",
+    _ => "empty",
+  }
+}
+
+fn main() -> int {
+  let shapes = [Shape::Circle(1.0), Shape::Rect(2.0, 3.0), Shape::Empty];
+  print("area " + str(area(shapes[0])) + " + " + str(area(shapes[1]) + area(shapes[2])) + "\n");
+  let names = "shapes:";
+  let i = 0;
+  while i < len(shapes) {
+    names = names + " " + describe(shapes[i]);
+    i = i + 1;
+  }
+  print(names + "\n");
+
+  let p = new Point { x: 1, y: 0 };
+  p.y = p.x + 1;
+  print("point " + str(p.x) + " " + str(p.y) + "\n");
+
+  let list = null<Node>;
+  let n = 1;
+  while n <= 3 {
+    list = new Node { value: n, next: list };
+    n = n + 1;
+  }
+  let text = "list";
+  let sep = " ";
+  while list != null<Node> {
+    text = text + sep + str(list.value);
+    sep = " -> ";
+    list = list.next;
+  }
+  print(text + "\n");
+
+  let stack = [10, 20, 30];
+  let top = pop(stack);
+  print("popped " + str(top) + " left " + str(len(stack)) + "\n");
+
+  let squares = new array<int>;
+  let k = 0;
+  loop {
+    if k == 5 { break; }
+    push(squares, k * k);
+    k = k + 1;
+  }
+  let line = "squares";
+  k = 0;
+  while k < len(squares) {
+    line = line + " " + str(squares[k]);
+    k = k + 1;
+  }
+  print(line + "\n");
+
+  let counts = new map<string, int>;
+  let fruit = ["apple", "pear", "apple", "fig", "apple", "fig"];
+  k = 0;
+  while k < len(fruit) {
+    let f = fruit[k];
+    if has(counts, f) { counts[f] = counts[f] + 1; } else { counts[f] = 1; }
+    k = k + 1;
+  }
+  print("counts apple=" + str(counts["apple"]) + " pear=" + str(counts["pear"]) + " fig=" + str(counts["fig"]) + "\n");
+  let had = has(counts, "pear");
+  remove(counts, "pear");
+  print("has pear " + str(had) + ", removed pear, has pear " + str(has(counts, "pear")) + ", size " + str(len(counts)) + "\n");
+  let ks = keys(counts);
+  print("keys " + ks[0] + " " + ks[1] + "\n");
+
+  let by_id = new map<int, string>;
+  by_id[7] = "seven";
+  print("by id: 7 -> " + by_id[7] + "\n");
+  0
+}

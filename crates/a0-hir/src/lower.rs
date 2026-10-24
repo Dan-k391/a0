@@ -1,0 +1,1712 @@
+//! Lowering HIR to the core IR plus calls into the default runtime (`a0rt`).
+//!
+//! Storage: scalar locals become IR variables; locals holding references or `any` live in slots of the
+//! function's frame on the runtime's shadow stack (stored in the `any` encoding, so the collector
+//! scans every slot the same way); locals captured by closures live in heap boxes whose pointers sit
+//! in frame slots. Temporaries are spilled to frame slots only when something evaluated after them,
+//! or the operation itself, may allocate. The collector never moves objects, so a spill only keeps a
+//! value alive; the code keeps using the SSA value.
+
+use std::collections::{BTreeSet, HashMap};
+
+use a0_diag::{Diagnostic, Diagnostics};
+use a0_ir::{
+    Builder, FloatCC, FuncId as IrFunc, GlobalId as IrGlobal, IntCC, Opcode, Type, Value, Var,
+};
+
+use crate::builder::visit_children;
+use crate::model::*;
+
+const QNAN: i64 = 0x7ffc_0000_0000_0000;
+const REF_TAG: i64 = 0xfffc_0000_0000_0000_u64 as i64;
+const PTR_MASK: i64 = 0x0000_ffff_ffff_ffff;
+const ANY_UNIT: i64 = QNAN | 1;
+const ANY_FALSE: i64 = QNAN | 2;
+const ANY_TRUE: i64 = QNAN | 3;
+const CANONICAL_NAN: i64 = 0x7ff8_0000_0000_0000;
+
+const WORD_RAW: u8 = 0;
+const WORD_REF: u8 = 1;
+const WORD_ANY: u8 = 2;
+const KEY_RAW: i64 = 0;
+const KEY_STRING: i64 = 1;
+
+/// Lowers a checked module to a core IR module with a `@main` entry point.
+pub fn lower(m: &HirModule) -> Result<a0_ir::Module, Diagnostics> {
+    let entry = crate::check::check_entry(m);
+    if entry.has_errors() {
+        return Err(entry);
+    }
+    let mut l = Lowerer::new(m);
+    l.run();
+    match l.b.finish() {
+        Ok(module) => Ok(module),
+        Err(d) => {
+            let mut diags: Diagnostics = Diagnostic::error(
+                "hir.lower",
+                "lowering produced invalid IR (a bug in a0-hir)",
+            )
+            .into();
+            diags.extend(d);
+            Err(diags)
+        }
+    }
+}
+
+/// Runtime functions used by generated code.
+struct Runtime {
+    type_new: IrFunc,
+    gc_new: IrFunc,
+    frame_push: IrFunc,
+    frame_pop: IrFunc,
+    add_root: IrFunc,
+    panic_null: IrFunc,
+    any_from_int: IrFunc,
+    any_is_int: IrFunc,
+    any_is_string: IrFunc,
+    any_is_type: IrFunc,
+    any_to_int: IrFunc,
+    any_eq: IrFunc,
+    any_cast_failed: IrFunc,
+    string_new: IrFunc,
+    string_concat: IrFunc,
+    string_len: IrFunc,
+    string_eq: IrFunc,
+    string_compare: IrFunc,
+    string_substr: IrFunc,
+    string_byte_at: IrFunc,
+    string_from_int: IrFunc,
+    string_from_float: IrFunc,
+    string_from_bool: IrFunc,
+    string_print: IrFunc,
+    string_eprint: IrFunc,
+    string_panic: IrFunc,
+    array_new: IrFunc,
+    array_len: IrFunc,
+    array_get: IrFunc,
+    array_set: IrFunc,
+    array_push: IrFunc,
+    array_pop: IrFunc,
+    map_new: IrFunc,
+    map_len: IrFunc,
+    map_has: IrFunc,
+    map_get: IrFunc,
+    map_set: IrFunc,
+    map_remove: IrFunc,
+    map_keys: IrFunc,
+    exit: IrFunc,
+    clock: IrFunc,
+}
+
+impl Runtime {
+    fn declare(b: &mut Builder) -> Runtime {
+        use Type::{F64, I32, I64, Ptr};
+        let mut f =
+            |name: &str, params: &[Type], ret: Option<Type>| b.declare_extern(name, params, ret);
+        Runtime {
+            type_new: f("a0_type_new", &[Ptr, I64, I64, Ptr, Ptr], Some(Ptr)),
+            gc_new: f("a0_gc_new", &[Ptr], Some(Ptr)),
+            frame_push: f("a0_gc_frame_push", &[I64], Some(Ptr)),
+            frame_pop: f("a0_gc_frame_pop", &[I64], None),
+            add_root: f("a0_gc_add_root", &[Ptr, I64], None),
+            panic_null: f("a0_panic_null", &[], None),
+            any_from_int: f("a0_any_from_int", &[I64], Some(I64)),
+            any_is_int: f("a0_any_is_int", &[I64], Some(I64)),
+            any_is_string: f("a0_any_is_string", &[I64], Some(I64)),
+            any_is_type: f("a0_any_is_type", &[I64, Ptr], Some(I64)),
+            any_to_int: f("a0_any_to_int", &[I64], Some(I64)),
+            any_eq: f("a0_any_eq", &[I64, I64], Some(I64)),
+            any_cast_failed: f("a0_any_cast_failed", &[I64, Ptr, I64], None),
+            string_new: f("a0_string_new", &[Ptr, I64], Some(Ptr)),
+            string_concat: f("a0_string_concat", &[Ptr, Ptr], Some(Ptr)),
+            string_len: f("a0_string_len", &[Ptr], Some(I64)),
+            string_eq: f("a0_string_eq", &[Ptr, Ptr], Some(I64)),
+            string_compare: f("a0_string_compare", &[Ptr, Ptr], Some(I64)),
+            string_substr: f("a0_string_substr", &[Ptr, I64, I64], Some(Ptr)),
+            string_byte_at: f("a0_string_byte_at", &[Ptr, I64], Some(I64)),
+            string_from_int: f("a0_string_from_int", &[I64], Some(Ptr)),
+            string_from_float: f("a0_string_from_float", &[F64], Some(Ptr)),
+            string_from_bool: f("a0_string_from_bool", &[I64], Some(Ptr)),
+            string_print: f("a0_string_print", &[Ptr], None),
+            string_eprint: f("a0_string_eprint", &[Ptr], None),
+            string_panic: f("a0_string_panic", &[Ptr], None),
+            array_new: f("a0_array_new", &[I64, I64], Some(Ptr)),
+            array_len: f("a0_array_len", &[Ptr], Some(I64)),
+            array_get: f("a0_array_get", &[Ptr, I64], Some(I64)),
+            array_set: f("a0_array_set", &[Ptr, I64, I64], None),
+            array_push: f("a0_array_push", &[Ptr, I64], None),
+            array_pop: f("a0_array_pop", &[Ptr], Some(I64)),
+            map_new: f("a0_map_new", &[I64, I64], Some(Ptr)),
+            map_len: f("a0_map_len", &[Ptr], Some(I64)),
+            map_has: f("a0_map_has", &[Ptr, I64], Some(I64)),
+            map_get: f("a0_map_get", &[Ptr, I64], Some(I64)),
+            map_set: f("a0_map_set", &[Ptr, I64, I64], None),
+            map_remove: f("a0_map_remove", &[Ptr, I64], Some(I64)),
+            map_keys: f("a0_map_keys", &[Ptr], Some(Ptr)),
+            exit: f("a0_rt_exit", &[I32], None),
+            clock: f("a0_clock", &[], Some(F64)),
+        }
+    }
+}
+
+/// Where a local lives.
+#[derive(Clone, Copy)]
+enum Storage {
+    None,
+    Var(Var),
+    Slot(u32),
+    Boxed(u32),
+}
+
+/// The result of lowering an expression.
+#[derive(Clone, Copy)]
+enum V {
+    Val(Value),
+    Unit,
+    Never,
+}
+
+impl V {
+    fn val(self) -> Value {
+        match self {
+            V::Val(v) => v,
+            _ => panic!("expected a value"),
+        }
+    }
+}
+
+/// A runtime type descriptor to register at startup.
+struct TypeDesc {
+    global: IrGlobal,
+    name: String,
+    layout: Vec<u8>,
+    family: Option<IrGlobal>,
+}
+
+struct FnState {
+    body: BodyId,
+    frame: Value,
+    slot_count: Value,
+    next: u32,
+    max: u32,
+    storage: HashMap<LocalId, Storage>,
+    gc_memo: HashMap<ExprId, bool>,
+}
+
+struct Lowerer<'a> {
+    m: &'a HirModule,
+    b: Builder,
+    rt: Runtime,
+    funcs: Vec<IrFunc>,
+    externs: Vec<IrFunc>,
+    globals: Vec<Option<IrGlobal>>,
+    struct_desc: Vec<IrGlobal>,
+    enum_desc: Vec<(IrGlobal, Vec<IrGlobal>)>,
+    lambda_funcs: HashMap<BodyId, IrFunc>,
+    lambda_desc: HashMap<BodyId, IrGlobal>,
+    wrappers: HashMap<FuncId, (IrFunc, IrGlobal)>,
+    box_desc: [IrGlobal; 3],
+    descs: Vec<TypeDesc>,
+    strings: HashMap<String, IrGlobal>,
+    string_list: Vec<(String, IrGlobal)>,
+    type_names: HashMap<String, IrGlobal>,
+    captured: Vec<bool>,
+    captures: HashMap<BodyId, Vec<LocalId>>,
+    f: Option<FnState>,
+}
+
+impl<'a> Lowerer<'a> {
+    fn new(m: &'a HirModule) -> Lowerer<'a> {
+        let mut b = Builder::new(m.name());
+        let rt = Runtime::declare(&mut b);
+        let box_desc = [
+            b.add_global_int("hir.type.box.raw", Type::Ptr, 0),
+            b.add_global_int("hir.type.box.ref", Type::Ptr, 0),
+            b.add_global_int("hir.type.box.any", Type::Ptr, 0),
+        ];
+        let descs = (0..3)
+            .map(|k| TypeDesc {
+                global: box_desc[k],
+                name: "box".to_string(),
+                layout: vec![k as u8],
+                family: None,
+            })
+            .collect();
+        Lowerer {
+            m,
+            b,
+            rt,
+            funcs: Vec::new(),
+            externs: Vec::new(),
+            globals: Vec::new(),
+            struct_desc: Vec::new(),
+            enum_desc: Vec::new(),
+            lambda_funcs: HashMap::new(),
+            lambda_desc: HashMap::new(),
+            wrappers: HashMap::new(),
+            box_desc,
+            descs,
+            strings: HashMap::new(),
+            string_list: Vec::new(),
+            type_names: HashMap::new(),
+            captured: Vec::new(),
+            captures: HashMap::new(),
+            f: None,
+        }
+    }
+
+    // ---------------------------------------------------------------- types
+
+    fn ir_type(&self, t: TypeId) -> Option<Type> {
+        match self.m.kind(t) {
+            TypeKind::Unit | TypeKind::Never => None,
+            TypeKind::Bool => Some(Type::I1),
+            TypeKind::Int | TypeKind::Any => Some(Type::I64),
+            TypeKind::Float => Some(Type::F64),
+            _ => Some(Type::Ptr),
+        }
+    }
+
+    fn word_kind(&self, t: TypeId) -> u8 {
+        if self.m.is_reference(t) {
+            WORD_REF
+        } else if t == TypeId::ANY {
+            WORD_ANY
+        } else {
+            WORD_RAW
+        }
+    }
+
+    fn is_gc(&self, t: TypeId) -> bool {
+        self.m.is_reference(t) || t == TypeId::ANY
+    }
+
+    fn signature(&self, body: BodyId, env: bool) -> (Vec<Type>, Option<Type>) {
+        let mut params = Vec::new();
+        if env {
+            params.push(Type::Ptr);
+        }
+        for &p in self.m.body_params(body) {
+            params.extend(self.ir_type(self.m.local_type(p)));
+        }
+        (params, self.ir_type(self.m.body_ret(body)))
+    }
+
+    fn fn_signature(&self, t: TypeId) -> (Vec<Type>, Option<Type>) {
+        match self.m.kind(t) {
+            TypeKind::Fn(ps, r) => {
+                let mut params = vec![Type::Ptr];
+                params.extend(ps.iter().filter_map(|&p| self.ir_type(p)));
+                (params, self.ir_type(*r))
+            }
+            _ => (vec![Type::Ptr], None),
+        }
+    }
+
+    // ---------------------------------------------------------------- setup
+
+    fn run(&mut self) {
+        self.analyze_captures();
+        let m = self.m;
+        for (i, s) in m.structs.iter().enumerate() {
+            let g = self
+                .b
+                .add_global_int(&format!("hir.type.{}", s.name), Type::Ptr, 0);
+            let layout = s.fields.iter().map(|&(_, t)| self.word_kind(t)).collect();
+            self.descs.push(TypeDesc {
+                global: g,
+                name: s.name.clone(),
+                layout,
+                family: None,
+            });
+            self.struct_desc.push(g);
+            let _ = i;
+        }
+        for e in &m.enums {
+            let family = self
+                .b
+                .add_global_int(&format!("hir.type.{}", e.name), Type::Ptr, 0);
+            self.descs.push(TypeDesc {
+                global: family,
+                name: e.name.clone(),
+                layout: Vec::new(),
+                family: None,
+            });
+            let mut variants = Vec::new();
+            for v in &e.variants {
+                let g =
+                    self.b
+                        .add_global_int(&format!("hir.type.{}.{}", e.name, v.name), Type::Ptr, 0);
+                let mut layout = vec![WORD_RAW];
+                layout.extend(v.fields.iter().map(|&t| self.word_kind(t)));
+                self.descs.push(TypeDesc {
+                    global: g,
+                    name: format!("{}::{}", e.name, v.name),
+                    layout,
+                    family: Some(family),
+                });
+                variants.push(g);
+            }
+            self.enum_desc.push((family, variants));
+        }
+        for g in &m.globals {
+            let ir = match self.m.kind(g.ty) {
+                TypeKind::Unit | TypeKind::Never => None,
+                TypeKind::Float => Some(self.b.add_global_float(
+                    &format!("hir.global.{}", g.name),
+                    Type::F64,
+                    0.0,
+                )),
+                TypeKind::Any => Some(self.b.add_global_int(
+                    &format!("hir.global.{}", g.name),
+                    Type::I64,
+                    ANY_UNIT,
+                )),
+                _ => {
+                    let t = self.ir_type(g.ty).unwrap();
+                    Some(
+                        self.b
+                            .add_global_int(&format!("hir.global.{}", g.name), t, 0),
+                    )
+                }
+            };
+            self.globals.push(ir);
+        }
+        for x in &m.externs {
+            let params: Vec<Type> = x.params.iter().filter_map(|&t| self.ir_type(t)).collect();
+            let ret = self.ir_type(x.ret);
+            let f = self.b.declare_extern(&x.name, &params, ret);
+            self.externs.push(f);
+        }
+        for f in &m.funcs {
+            let (params, ret) = self.signature(f.body, false);
+            let ir = self
+                .b
+                .declare_function(&format!("hir.{}", f.name), &params, ret);
+            self.funcs.push(ir);
+        }
+        // Closures: one IR function and one descriptor per closure body.
+        let mut lambda_count: HashMap<FuncId, u32> = HashMap::new();
+        for (i, body) in m.bodies.iter().enumerate() {
+            if body.parent.is_none() {
+                continue;
+            }
+            let id = BodyId(i as u32);
+            let n = lambda_count.entry(body.func).or_insert(0);
+            let name = format!("hir.{}.closure{}", m.funcs[body.func.index()].name, *n);
+            *n += 1;
+            let (params, ret) = self.signature(id, true);
+            let f = self.b.declare_function(&name, &params, ret);
+            self.lambda_funcs.insert(id, f);
+            let g = self.b.add_global_int(&format!("{name}.type"), Type::Ptr, 0);
+            let mut layout = vec![WORD_RAW];
+            layout.extend(std::iter::repeat_n(WORD_REF, self.captures[&id].len()));
+            self.descs.push(TypeDesc {
+                global: g,
+                name: "closure".to_string(),
+                layout,
+                family: None,
+            });
+            self.lambda_desc.insert(id, g);
+        }
+        // Functions used as values get a wrapper with the closure calling convention.
+        for e in &m.exprs {
+            if let ExprKind::Func(f) = e.kind {
+                if self.wrappers.contains_key(&f) {
+                    continue;
+                }
+                let body = m.func_body(f);
+                let (params, ret) = self.signature(body, true);
+                let name = format!("hir.{}.as_closure", m.funcs[f.index()].name);
+                let w = self.b.declare_function(&name, &params, ret);
+                let g = self.b.add_global_int(&format!("{name}.type"), Type::Ptr, 0);
+                self.descs.push(TypeDesc {
+                    global: g,
+                    name: "closure".to_string(),
+                    layout: vec![WORD_RAW],
+                    family: None,
+                });
+                self.wrappers.insert(f, (w, g));
+            }
+        }
+
+        for i in 0..m.funcs.len() {
+            let body = m.funcs[i].body;
+            self.function(body, self.funcs[i], false);
+        }
+        let lambdas: Vec<(BodyId, IrFunc)> =
+            self.lambda_funcs.iter().map(|(&b, &f)| (b, f)).collect();
+        let mut lambdas = lambdas;
+        lambdas.sort_by_key(|(b, _)| *b);
+        for (body, f) in lambdas {
+            self.function(body, f, true);
+        }
+        let wrappers: Vec<(FuncId, IrFunc)> =
+            self.wrappers.iter().map(|(&f, &(w, _))| (f, w)).collect();
+        for (f, w) in wrappers {
+            self.wrapper(f, w);
+        }
+        self.entry();
+    }
+
+    /// Finds the locals each closure captures and marks them captured.
+    fn analyze_captures(&mut self) {
+        let m = self.m;
+        self.captured = vec![false; m.locals.len()];
+        // Free locals of each body, innermost bodies first (children are created after parents).
+        for i in (0..m.bodies.len()).rev() {
+            let id = BodyId(i as u32);
+            let mut free = BTreeSet::new();
+            if let Some(root) = m.body_root(id) {
+                self.collect_free(root, id, &mut free);
+            }
+            let list: Vec<LocalId> = free.into_iter().collect();
+            for &l in &list {
+                self.captured[l.index()] = true;
+            }
+            self.captures.insert(id, list);
+        }
+    }
+
+    fn collect_free(&self, e: ExprId, body: BodyId, free: &mut BTreeSet<LocalId>) {
+        let m = self.m;
+        match &m.expr(e).kind {
+            ExprKind::Local(l) | ExprKind::SetLocal(l, _) if m.locals[l.index()].body != body => {
+                free.insert(*l);
+            }
+            ExprKind::Lambda(inner) => {
+                for &l in &self.captures[inner] {
+                    if m.locals[l.index()].body != body {
+                        free.insert(l);
+                    }
+                }
+            }
+            _ => {}
+        }
+        visit_children(m, e, &mut |c| self.collect_free(c, body, free));
+    }
+
+    fn string_global(&mut self, s: &str) -> IrGlobal {
+        if let Some(&g) = self.strings.get(s) {
+            return g;
+        }
+        let g = self
+            .b
+            .add_global_int(&format!("hir.str.{}", self.string_list.len()), Type::Ptr, 0);
+        self.strings.insert(s.to_string(), g);
+        self.string_list.push((s.to_string(), g));
+        g
+    }
+
+    fn type_name_data(&mut self, t: TypeId) -> (IrGlobal, usize) {
+        let name = self.m.type_name(t);
+        if let Some(&g) = self.type_names.get(&name) {
+            return (g, name.len());
+        }
+        let g = self.b.add_data(
+            &format!("hir.typename.{}", self.type_names.len()),
+            name.as_bytes(),
+        );
+        self.type_names.insert(name.clone(), g);
+        (g, name.len())
+    }
+
+    /// `main`: registers descriptors, roots and string constants, then runs the HIR `main`.
+    fn entry(&mut self) {
+        let main = self.b.declare_function("main", &[], Some(Type::I32));
+        let descs: Vec<(IrGlobal, IrGlobal, IrGlobal, usize, usize, Option<IrGlobal>)> = self
+            .descs
+            .iter()
+            .enumerate()
+            .map(|(i, d)| {
+                let name = self
+                    .b
+                    .add_data(&format!("hir.typedesc.{i}.name"), d.name.as_bytes());
+                let layout = self
+                    .b
+                    .add_data(&format!("hir.typedesc.{i}.layout"), &d.layout);
+                (
+                    d.global,
+                    name,
+                    layout,
+                    d.name.len(),
+                    d.layout.len(),
+                    d.family,
+                )
+            })
+            .collect();
+        let strings: Vec<(IrGlobal, IrGlobal, usize)> = self
+            .string_list
+            .clone()
+            .into_iter()
+            .enumerate()
+            .map(|(i, (s, g))| {
+                (
+                    g,
+                    self.b.add_data(&format!("hir.str.{i}.bytes"), s.as_bytes()),
+                    s.len(),
+                )
+            })
+            .collect();
+        self.b.begin_function(main);
+        for (global, name, layout, name_len, words, family) in descs {
+            let np = self.b.global_addr(name);
+            let nl = self.b.iconst(Type::I64, name_len as i64);
+            let wc = self.b.iconst(Type::I64, words as i64);
+            let lp = self.b.global_addr(layout);
+            let fam = match family {
+                Some(f) => {
+                    let a = self.b.global_addr(f);
+                    self.b.load(Type::Ptr, a)
+                }
+                None => self.b.null(),
+            };
+            let d = self
+                .b
+                .call(self.rt.type_new, &[np, nl, wc, lp, fam])
+                .unwrap();
+            let a = self.b.global_addr(global);
+            self.b.store(d, a);
+        }
+        for (i, g) in self.globals.clone().into_iter().enumerate() {
+            let Some(g) = g else { continue };
+            let t = self.m.globals[i].ty;
+            if self.is_gc(t) {
+                let a = self.b.global_addr(g);
+                let k = self.b.iconst(Type::I64, self.word_kind(t) as i64);
+                self.b.call(self.rt.add_root, &[a, k]);
+            }
+        }
+        for (g, bytes, len) in strings {
+            let a = self.b.global_addr(g);
+            let k = self.b.iconst(Type::I64, WORD_REF as i64);
+            self.b.call(self.rt.add_root, &[a, k]);
+            let p = self.b.global_addr(bytes);
+            let n = self.b.iconst(Type::I64, len as i64);
+            let s = self.b.call(self.rt.string_new, &[p, n]).unwrap();
+            self.b.store(s, a);
+        }
+        let hir_main = match self.m.lookup_value("main") {
+            Some(Item::Func(f)) => f,
+            _ => unreachable!("check_entry guarantees main"),
+        };
+        let r = self.b.call(self.funcs[hir_main.index()], &[]);
+        let code = match r {
+            Some(v) => self.b.cast(Opcode::Trunc, v, Type::I32),
+            None => self.b.iconst(Type::I32, 0),
+        };
+        self.b.ret(Some(code));
+        self.b.end_function();
+    }
+
+    /// `f` called through the closure convention (the environment is ignored).
+    fn wrapper(&mut self, f: FuncId, w: IrFunc) {
+        let body = self.m.func_body(f);
+        let n = self.signature(body, false).0.len();
+        self.b.begin_function(w);
+        let args: Vec<Value> = (0..n).map(|i| self.b.param(i as u32 + 1)).collect();
+        let r = self.b.call(self.funcs[f.index()], &args);
+        self.b.ret(r);
+        self.b.end_function();
+    }
+
+    // ---------------------------------------------------------------- frames and slots
+
+    fn st(&mut self) -> &mut FnState {
+        self.f.as_mut().unwrap()
+    }
+
+    fn alloc_slot(&mut self) -> u32 {
+        let st = self.st();
+        let s = st.next;
+        st.next += 1;
+        st.max = st.max.max(st.next);
+        s
+    }
+
+    fn mark(&mut self) -> u32 {
+        self.st().next
+    }
+
+    fn release(&mut self, mark: u32) {
+        self.st().next = mark;
+    }
+
+    fn slot_addr(&mut self, s: u32) -> Value {
+        let frame = self.st().frame;
+        let off = self.b.iconst(Type::I64, 8 * s as i64);
+        self.b.ptradd(frame, off)
+    }
+
+    fn encode(&mut self, v: Value, t: TypeId) -> Value {
+        if t == TypeId::ANY {
+            return v;
+        }
+        let w = self.b.cast(Opcode::Ptrtoint, v, Type::I64);
+        let tag = self.b.iconst(Type::I64, REF_TAG);
+        self.b.or(w, tag)
+    }
+
+    fn decode(&mut self, w: Value, t: TypeId) -> Value {
+        if t == TypeId::ANY {
+            return w;
+        }
+        let mask = self.b.iconst(Type::I64, PTR_MASK);
+        let p = self.b.and(w, mask);
+        self.b.cast(Opcode::Inttoptr, p, Type::Ptr)
+    }
+
+    fn store_slot(&mut self, s: u32, v: Value, t: TypeId) {
+        let w = self.encode(v, t);
+        let a = self.slot_addr(s);
+        self.b.store(w, a);
+    }
+
+    fn load_slot(&mut self, s: u32, t: TypeId) -> Value {
+        let a = self.slot_addr(s);
+        let w = self.b.load(Type::I64, a);
+        self.decode(w, t)
+    }
+
+    /// Keeps a GC value alive in a fresh temporary slot until the caller releases it.
+    fn spill(&mut self, v: Value, t: TypeId) {
+        let s = self.alloc_slot();
+        self.store_slot(s, v, t);
+    }
+
+    // ---------------------------------------------------------------- words
+
+    /// A value as a 64-bit word for object fields, array elements and map entries.
+    fn word_encode(&mut self, v: Value, t: TypeId) -> Value {
+        match self.m.kind(t) {
+            TypeKind::Float => self.b.cast(Opcode::Bitcast, v, Type::I64),
+            TypeKind::Bool => self.b.cast(Opcode::Zext, v, Type::I64),
+            TypeKind::Int | TypeKind::Any => v,
+            _ => self.b.cast(Opcode::Ptrtoint, v, Type::I64),
+        }
+    }
+
+    fn word_decode(&mut self, w: Value, t: TypeId) -> V {
+        V::Val(match self.m.kind(t) {
+            TypeKind::Unit => return V::Unit,
+            TypeKind::Never => return V::Never,
+            TypeKind::Float => self.b.cast(Opcode::Bitcast, w, Type::F64),
+            TypeKind::Bool => {
+                let zero = self.b.iconst(Type::I64, 0);
+                self.b.icmp(IntCC::Ne, w, zero)
+            }
+            TypeKind::Int | TypeKind::Any => w,
+            _ => self.b.cast(Opcode::Inttoptr, w, Type::Ptr),
+        })
+    }
+
+    fn word_of(&mut self, v: V, t: TypeId) -> Value {
+        match v {
+            V::Val(v) => self.word_encode(v, t),
+            _ => self.b.iconst(Type::I64, 0),
+        }
+    }
+
+    fn null_check(&mut self, p: Value) {
+        let null = self.b.null();
+        let is_null = self.b.icmp(IntCC::Eq, p, null);
+        self.b.if_(is_null);
+        self.b.call(self.rt.panic_null, &[]);
+        self.b.unreachable();
+        self.b.end_if();
+    }
+
+    fn load_word(&mut self, base: Value, index: u32) -> Value {
+        let off = self.b.iconst(Type::I64, 8 * index as i64);
+        let a = self.b.ptradd(base, off);
+        self.b.load(Type::I64, a)
+    }
+
+    fn store_word(&mut self, base: Value, index: u32, w: Value) {
+        let off = self.b.iconst(Type::I64, 8 * index as i64);
+        let a = self.b.ptradd(base, off);
+        self.b.store(w, a);
+    }
+
+    fn new_object(&mut self, desc: IrGlobal) -> Value {
+        let a = self.b.global_addr(desc);
+        let d = self.b.load(Type::Ptr, a);
+        self.b.call(self.rt.gc_new, &[d]).unwrap()
+    }
+
+    fn box_desc(&self, t: TypeId) -> IrGlobal {
+        self.box_desc[self.word_kind(t) as usize]
+    }
+
+    // ---------------------------------------------------------------- functions
+
+    fn function(&mut self, body: BodyId, ir: IrFunc, closure: bool) {
+        let m = self.m;
+        self.b.begin_function(ir);
+        let slot_count = self.b.iconst(Type::I64, 0);
+        let frame = self.b.call(self.rt.frame_push, &[slot_count]).unwrap();
+        self.f = Some(FnState {
+            body,
+            frame,
+            slot_count,
+            next: 0,
+            max: 0,
+            storage: HashMap::new(),
+            gc_memo: HashMap::new(),
+        });
+
+        // Storage for this body's own locals.
+        for (i, l) in m.locals.iter().enumerate() {
+            if l.body != body {
+                continue;
+            }
+            let id = LocalId(i as u32);
+            let storage = if matches!(l.ty, TypeId::UNIT | TypeId::NEVER) {
+                Storage::None
+            } else if self.captured[i] {
+                Storage::Boxed(self.alloc_slot())
+            } else if self.is_gc(l.ty) {
+                Storage::Slot(self.alloc_slot())
+            } else {
+                let t = self.ir_type(l.ty).unwrap();
+                Storage::Var(self.b.declare_var(&l.name, t))
+            };
+            self.st().storage.insert(id, storage);
+        }
+        // A closure copies its captured boxes out of its environment.
+        let mut param_index = 0u32;
+        if closure {
+            let env = self.b.param(0);
+            param_index = 1;
+            for (k, &l) in self.captures[&body].clone().iter().enumerate() {
+                let s = self.alloc_slot();
+                let w = self.load_word(env, k as u32 + 1);
+                let addr = self.slot_addr(s);
+                let tag = self.b.iconst(Type::I64, REF_TAG);
+                let tagged = self.b.or(w, tag);
+                self.b.store(tagged, addr);
+                self.st().storage.insert(l, Storage::Boxed(s));
+            }
+        }
+        // Parameters: root the GC ones first, then create boxes for captured ones (which allocates).
+        let params = m.body_params(body).to_vec();
+        let mut values = Vec::new();
+        for &p in &params {
+            let t = m.local_type(p);
+            let v = if self.ir_type(t).is_some() {
+                let v = self.b.param(param_index);
+                param_index += 1;
+                Some(v)
+            } else {
+                None
+            };
+            values.push(v);
+            match (self.st().storage[&p], v) {
+                (Storage::Var(var), Some(v)) => self.b.set(var, v),
+                (Storage::Slot(s), Some(v)) => self.store_slot(s, v, t),
+                (Storage::Boxed(_), Some(v)) if self.is_gc(t) => self.spill(v, t),
+                _ => {}
+            }
+        }
+        for (&p, v) in params.iter().zip(values) {
+            if let Storage::Boxed(s) = self.st().storage[&p] {
+                let t = m.local_type(p);
+                let bx = self.new_object(self.box_desc(t));
+                if let Some(v) = v {
+                    let w = self.word_encode(v, t);
+                    self.store_word(bx, 0, w);
+                }
+                self.store_slot(s, bx, TypeId::STRING);
+            }
+        }
+
+        let ret = m.body_ret(body);
+        let result = match m.body_root(body) {
+            Some(root) => self.expr(root),
+            None => V::Never,
+        };
+        if !matches!(result, V::Never) && !self.b.is_terminated() {
+            self.pop_frame();
+            match (self.ir_type(ret), result) {
+                (Some(_), V::Val(v)) => self.b.ret(Some(v)),
+                (None, _) => self.b.ret(None),
+                (Some(_), _) => self.b.unreachable(),
+            }
+        } else if !self.b.is_terminated() {
+            self.b.unreachable();
+        }
+        let st = self.f.take().unwrap();
+        self.b.patch_iconst(st.slot_count, st.max as i64);
+        self.b.end_function();
+    }
+
+    fn pop_frame(&mut self) {
+        let n = self.st().slot_count;
+        self.b.call(self.rt.frame_pop, &[n]);
+    }
+
+    // ---------------------------------------------------------------- may allocate?
+
+    /// Whether evaluating `e` may allocate (and so collect).
+    fn may_gc(&mut self, e: ExprId) -> bool {
+        if let Some(&r) = self.st().gc_memo.get(&e) {
+            return r;
+        }
+        let m = self.m;
+        let own = match &m.expr(e).kind {
+            ExprKind::Let(l, _) => self.captured[l.index()],
+            ExprKind::Func(_)
+            | ExprKind::Lambda(_)
+            | ExprKind::Call(..)
+            | ExprKind::CallExtern(..)
+            | ExprKind::CallValue(..)
+            | ExprKind::New(..)
+            | ExprKind::Variant(..)
+            | ExprKind::Array(_)
+            | ExprKind::NewArray
+            | ExprKind::NewMap => true,
+            ExprKind::Binary(BinOp::Add, a, _) => m.expr_type(*a) == TypeId::STRING,
+            ExprKind::Builtin(op, _) => {
+                matches!(op, Builtin::Keys | Builtin::Substr | Builtin::Str)
+            }
+            ExprKind::Cast(a) => m.expr_type(*a) == TypeId::INT && m.expr_type(e) == TypeId::ANY,
+            ExprKind::Match(_, arms) => arms.iter().any(|a| {
+                m.arms[a.index()]
+                    .binds
+                    .iter()
+                    .any(|b| self.captured[b.index()])
+            }),
+            _ => false,
+        };
+        let mut children = Vec::new();
+        visit_children(m, e, &mut |c| children.push(c));
+        let r = own || children.into_iter().any(|c| self.may_gc(c));
+        self.st().gc_memo.insert(e, r);
+        r
+    }
+
+    /// Evaluates operands left to right. A GC value is spilled when an operand after it, or the
+    /// operation itself (`op_allocates`), may allocate. Returns `None` if an operand diverges.
+    fn operands(&mut self, es: &[ExprId], op_allocates: bool) -> Option<Vec<V>> {
+        let later: Vec<bool> = (0..es.len())
+            .map(|i| es[i + 1..].iter().any(|&e| self.may_gc(e)))
+            .collect();
+        let mut out = Vec::new();
+        for (i, &e) in es.iter().enumerate() {
+            let v = self.expr(e);
+            if matches!(v, V::Never) {
+                return None;
+            }
+            let t = self.m.expr_type(e);
+            if let V::Val(val) = v
+                && self.is_gc(t)
+                && (op_allocates || later[i])
+            {
+                self.spill(val, t);
+            }
+            out.push(v);
+        }
+        Some(out)
+    }
+
+    // ---------------------------------------------------------------- expressions
+
+    fn expr(&mut self, e: ExprId) -> V {
+        let mark = self.mark();
+        let r = self.expr_inner(e);
+        self.release(mark);
+        r
+    }
+
+    fn expr_inner(&mut self, e: ExprId) -> V {
+        let m = self.m;
+        let ty = m.expr_type(e);
+        let kind = m.expr(e).kind.clone();
+        match kind {
+            ExprKind::Unit => V::Unit,
+            ExprKind::Bool(b) => V::Val(self.b.iconst(Type::I1, b as i64)),
+            ExprKind::Int(v) => V::Val(self.b.iconst(Type::I64, v)),
+            ExprKind::Float(bits) => V::Val(self.b.fconst_bits(Type::F64, bits)),
+            ExprKind::Str(s) => {
+                let g = self.string_global(&s);
+                let a = self.b.global_addr(g);
+                V::Val(self.b.load(Type::Ptr, a))
+            }
+            ExprKind::Null => V::Val(self.b.null()),
+            ExprKind::Local(l) => self.read_local(l),
+            ExprKind::Global(g) => match self.globals[g.index()] {
+                Some(ir) => {
+                    let a = self.b.global_addr(ir);
+                    V::Val(self.b.load(self.ir_type(ty).unwrap(), a))
+                }
+                None => V::Unit,
+            },
+            ExprKind::Func(f) => {
+                let (w, desc) = self.wrappers[&f];
+                let obj = self.new_object(desc);
+                let code = self.b.func_addr(w);
+                let word = self.b.cast(Opcode::Ptrtoint, code, Type::I64);
+                self.store_word(obj, 0, word);
+                V::Val(obj)
+            }
+            ExprKind::Let(l, init) => {
+                let v = self.expr(init);
+                if matches!(v, V::Never) {
+                    return V::Never;
+                }
+                self.bind_local(l, v);
+                V::Unit
+            }
+            ExprKind::SetLocal(l, value) => {
+                let v = self.expr(value);
+                if matches!(v, V::Never) {
+                    return V::Never;
+                }
+                self.write_local(l, v);
+                V::Unit
+            }
+            ExprKind::SetGlobal(g, value) => {
+                let v = self.expr(value);
+                if matches!(v, V::Never) {
+                    return V::Never;
+                }
+                if let (Some(ir), V::Val(v)) = (self.globals[g.index()], v) {
+                    let a = self.b.global_addr(ir);
+                    self.b.store(v, a);
+                }
+                V::Unit
+            }
+            ExprKind::SetField(o, f, value) => {
+                let Some(vs) = self.operands(&[o, value], false) else {
+                    return V::Never;
+                };
+                let obj = vs[0].val();
+                self.null_check(obj);
+                let w = self.word_of(vs[1], m.expr_type(value));
+                self.store_word(obj, f, w);
+                V::Unit
+            }
+            ExprKind::SetIndex(t, i, value) => {
+                let Some(vs) = self.operands(&[t, i, value], false) else {
+                    return V::Never;
+                };
+                let target = vs[0].val();
+                let vw = self.word_of(vs[2], m.expr_type(value));
+                match m.kind(m.expr_type(t)) {
+                    TypeKind::Array(_) => {
+                        self.b.call(self.rt.array_set, &[target, vs[1].val(), vw]);
+                    }
+                    _ => {
+                        let kw = self.word_of(vs[1], m.expr_type(i));
+                        self.b.call(self.rt.map_set, &[target, kw, vw]);
+                    }
+                }
+                V::Unit
+            }
+            ExprKind::Unary(op, a) => {
+                let v = self.expr(a);
+                let V::Val(v) = v else { return v };
+                V::Val(match op {
+                    UnOp::Not => self.b.not(v),
+                    UnOp::Neg if ty == TypeId::FLOAT => self.b.fneg(v),
+                    UnOp::Neg => self.b.ineg(v),
+                })
+            }
+            ExprKind::Binary(op, a, b) => self.binary(op, a, b),
+            ExprKind::And(a, b) | ExprKind::Or(a, b) => {
+                let is_and = matches!(m.expr(e).kind, ExprKind::And(..));
+                let av = self.expr(a);
+                let V::Val(av) = av else { return av };
+                let result = self.b.declare_var("cond", Type::I1);
+                self.b.set(result, av);
+                let go = if is_and { av } else { self.b.not(av) };
+                self.b.if_(go);
+                let bv = self.expr(b);
+                if let V::Val(bv) = bv {
+                    self.b.set(result, bv);
+                }
+                self.b.end_if();
+                V::Val(self.b.get(result))
+            }
+            ExprKind::Call(f, args) => {
+                let Some(vs) = self.operands(&args, false) else {
+                    return V::Never;
+                };
+                let ir_args: Vec<Value> = vs
+                    .iter()
+                    .filter_map(|v| if let V::Val(v) = v { Some(*v) } else { None })
+                    .collect();
+                let r = self.b.call(self.funcs[f.index()], &ir_args);
+                self.call_result(r, ty)
+            }
+            ExprKind::CallExtern(x, args) => {
+                let Some(vs) = self.operands(&args, false) else {
+                    return V::Never;
+                };
+                let ir_args: Vec<Value> = vs
+                    .iter()
+                    .filter_map(|v| if let V::Val(v) = v { Some(*v) } else { None })
+                    .collect();
+                let r = self.b.call(self.externs[x.index()], &ir_args);
+                self.call_result(r, ty)
+            }
+            ExprKind::CallValue(callee, args) => {
+                let mut all = vec![callee];
+                all.extend(args.iter().copied());
+                let Some(vs) = self.operands(&all, false) else {
+                    return V::Never;
+                };
+                let c = vs[0].val();
+                self.null_check(c);
+                let w = self.load_word(c, 0);
+                let code = self.b.cast(Opcode::Inttoptr, w, Type::Ptr);
+                let mut ir_args = vec![c];
+                ir_args.extend(
+                    vs[1..]
+                        .iter()
+                        .filter_map(|v| if let V::Val(v) = v { Some(*v) } else { None }),
+                );
+                let (params, ret) = self.fn_signature(m.expr_type(callee));
+                let r = self.b.call_indirect(code, &params, ret, &ir_args);
+                self.call_result(r, ty)
+            }
+            ExprKind::Lambda(body) => {
+                let desc = self.lambda_desc[&body];
+                let obj = self.new_object(desc);
+                let code = self.b.func_addr(self.lambda_funcs[&body]);
+                let word = self.b.cast(Opcode::Ptrtoint, code, Type::I64);
+                self.store_word(obj, 0, word);
+                for (k, l) in self.captures[&body].clone().into_iter().enumerate() {
+                    let Storage::Boxed(s) = self.st().storage[&l] else {
+                        unreachable!("captured locals are boxed")
+                    };
+                    let bx = self.load_slot(s, TypeId::STRING);
+                    let bw = self.b.cast(Opcode::Ptrtoint, bx, Type::I64);
+                    self.store_word(obj, k as u32 + 1, bw);
+                }
+                V::Val(obj)
+            }
+            ExprKind::New(s, fields) => {
+                let desc = self.struct_desc[s.index()];
+                self.construct(
+                    desc,
+                    None,
+                    &fields,
+                    &m.structs[s.index()]
+                        .fields
+                        .iter()
+                        .map(|f| f.1)
+                        .collect::<Vec<_>>(),
+                )
+            }
+            ExprKind::Variant(en, v, args) => {
+                let desc = self.enum_desc[en.index()].1[v as usize];
+                let field_types = m.variant_fields(en, v).to_vec();
+                self.construct(desc, Some(v), &args, &field_types)
+            }
+            ExprKind::Field(o, f) => {
+                let v = self.expr(o);
+                let V::Val(obj) = v else { return v };
+                self.null_check(obj);
+                let w = self.load_word(obj, f);
+                self.word_decode(w, ty)
+            }
+            ExprKind::Match(s, arms) => self.match_(s, &arms, ty),
+            ExprKind::Array(elems) => {
+                let elem_ty = match m.kind(ty) {
+                    TypeKind::Array(t) => *t,
+                    _ => TypeId::NEVER,
+                };
+                let kind = self.b.iconst(Type::I64, self.word_kind(elem_ty) as i64);
+                let cap = self.b.iconst(Type::I64, elems.len() as i64);
+                let arr = self.b.call(self.rt.array_new, &[kind, cap]).unwrap();
+                self.spill(arr, ty);
+                for el in elems {
+                    let v = self.expr(el);
+                    if matches!(v, V::Never) {
+                        return V::Never;
+                    }
+                    let w = self.word_of(v, elem_ty);
+                    self.b.call(self.rt.array_push, &[arr, w]);
+                }
+                V::Val(arr)
+            }
+            ExprKind::NewArray => {
+                let TypeKind::Array(elem) = *m.kind(ty) else {
+                    unreachable!()
+                };
+                let kind = self.b.iconst(Type::I64, self.word_kind(elem) as i64);
+                let cap = self.b.iconst(Type::I64, 0);
+                V::Val(self.b.call(self.rt.array_new, &[kind, cap]).unwrap())
+            }
+            ExprKind::NewMap => {
+                let TypeKind::Map(k, v) = *m.kind(ty) else {
+                    unreachable!()
+                };
+                let kk = self.b.iconst(
+                    Type::I64,
+                    if k == TypeId::STRING {
+                        KEY_STRING
+                    } else {
+                        KEY_RAW
+                    },
+                );
+                let vk = self.b.iconst(Type::I64, self.word_kind(v) as i64);
+                V::Val(self.b.call(self.rt.map_new, &[kk, vk]).unwrap())
+            }
+            ExprKind::Index(t, i) => {
+                let Some(vs) = self.operands(&[t, i], false) else {
+                    return V::Never;
+                };
+                let target = vs[0].val();
+                let w = match m.kind(m.expr_type(t)) {
+                    TypeKind::Array(_) => self
+                        .b
+                        .call(self.rt.array_get, &[target, vs[1].val()])
+                        .unwrap(),
+                    _ => {
+                        let kw = self.word_of(vs[1], m.expr_type(i));
+                        self.b.call(self.rt.map_get, &[target, kw]).unwrap()
+                    }
+                };
+                self.word_decode(w, ty)
+            }
+            ExprKind::Builtin(op, args) => self.builtin(op, &args, ty),
+            ExprKind::Cast(a) => self.cast(a, ty),
+            ExprKind::Is(a, t) => {
+                let v = self.expr(a);
+                let V::Val(w) = v else { return v };
+                V::Val(self.is_type(w, t))
+            }
+            ExprKind::If(c, t, els) => self.if_(c, t, els, ty),
+            ExprKind::While(c, body) => {
+                self.b.loop_();
+                let cv = self.expr(c);
+                if let V::Val(cv) = cv {
+                    let stop = self.b.not(cv);
+                    self.b.if_(stop);
+                    self.b.break_();
+                    self.b.end_if();
+                    self.expr(body);
+                }
+                self.b.end_loop();
+                V::Unit
+            }
+            ExprKind::Loop(body) => {
+                self.b.loop_();
+                self.expr(body);
+                self.b.end_loop();
+                if ty == TypeId::NEVER {
+                    V::Never
+                } else {
+                    V::Unit
+                }
+            }
+            ExprKind::Break => {
+                self.b.break_();
+                V::Never
+            }
+            ExprKind::Continue => {
+                self.b.continue_();
+                V::Never
+            }
+            ExprKind::Return(v) => {
+                let r = match v {
+                    Some(v) => self.expr(v),
+                    None => V::Unit,
+                };
+                if matches!(r, V::Never) {
+                    return V::Never;
+                }
+                self.pop_frame();
+                let body = self.st().body;
+                match (self.ir_type(m.body_ret(body)), r) {
+                    (Some(_), V::Val(v)) => self.b.ret(Some(v)),
+                    _ => self.b.ret(None),
+                }
+                V::Never
+            }
+            ExprKind::Block(items, tail) => {
+                for item in items {
+                    if matches!(self.expr(item), V::Never) {
+                        return V::Never;
+                    }
+                }
+                match tail {
+                    Some(t) => self.expr(t),
+                    None => V::Unit,
+                }
+            }
+        }
+    }
+
+    fn call_result(&mut self, r: Option<Value>, ty: TypeId) -> V {
+        if ty == TypeId::NEVER {
+            self.b.unreachable();
+            return V::Never;
+        }
+        match r {
+            Some(v) => V::Val(v),
+            None => V::Unit,
+        }
+    }
+
+    fn read_local(&mut self, l: LocalId) -> V {
+        let t = self.m.local_type(l);
+        match self.st().storage[&l] {
+            Storage::None => V::Unit,
+            Storage::Var(v) => V::Val(self.b.get(v)),
+            Storage::Slot(s) => V::Val(self.load_slot(s, t)),
+            Storage::Boxed(s) => {
+                let bx = self.load_slot(s, TypeId::STRING);
+                let w = self.load_word(bx, 0);
+                self.word_decode(w, t)
+            }
+        }
+    }
+
+    fn write_local(&mut self, l: LocalId, v: V) {
+        let t = self.m.local_type(l);
+        let V::Val(v) = v else { return };
+        match self.st().storage[&l] {
+            Storage::None => {}
+            Storage::Var(var) => self.b.set(var, v),
+            Storage::Slot(s) => self.store_slot(s, v, t),
+            Storage::Boxed(s) => {
+                let bx = self.load_slot(s, TypeId::STRING);
+                let w = self.word_encode(v, t);
+                self.store_word(bx, 0, w);
+            }
+        }
+    }
+
+    /// `let`: like a write, except that a captured local gets a fresh box every time.
+    fn bind_local(&mut self, l: LocalId, v: V) {
+        let t = self.m.local_type(l);
+        match self.st().storage[&l] {
+            Storage::Boxed(s) => {
+                let mark = self.mark();
+                if let V::Val(val) = v
+                    && self.is_gc(t)
+                {
+                    self.spill(val, t);
+                }
+                let bx = self.new_object(self.box_desc(t));
+                if let V::Val(val) = v {
+                    let w = self.word_encode(val, t);
+                    self.store_word(bx, 0, w);
+                }
+                self.store_slot(s, bx, TypeId::STRING);
+                self.release(mark);
+            }
+            _ => self.write_local(l, v),
+        }
+    }
+
+    /// Allocates an object, keeps it rooted, then evaluates and stores its fields (after the tag).
+    fn construct(
+        &mut self,
+        desc: IrGlobal,
+        tag: Option<u32>,
+        fields: &[ExprId],
+        types: &[TypeId],
+    ) -> V {
+        let obj = self.new_object(desc);
+        self.spill(obj, TypeId::STRING);
+        let first = match tag {
+            Some(t) => {
+                let w = self.b.iconst(Type::I64, t as i64);
+                self.store_word(obj, 0, w);
+                1
+            }
+            None => 0,
+        };
+        for (i, (&f, &t)) in fields.iter().zip(types).enumerate() {
+            let v = self.expr(f);
+            if matches!(v, V::Never) {
+                return V::Never;
+            }
+            let w = self.word_of(v, t);
+            self.store_word(obj, first + i as u32, w);
+        }
+        V::Val(obj)
+    }
+
+    fn binary(&mut self, op: BinOp, a: ExprId, b: ExprId) -> V {
+        let m = self.m;
+        let t = if m.expr_type(a) == TypeId::NEVER {
+            m.expr_type(b)
+        } else {
+            m.expr_type(a)
+        };
+        let allocates = op == BinOp::Add && t == TypeId::STRING;
+        let Some(vs) = self.operands(&[a, b], allocates) else {
+            return V::Never;
+        };
+        let cmp_int = |op: BinOp| match op {
+            BinOp::Lt => IntCC::Slt,
+            BinOp::Le => IntCC::Sle,
+            BinOp::Gt => IntCC::Sgt,
+            BinOp::Ge => IntCC::Sge,
+            BinOp::Eq => IntCC::Eq,
+            _ => IntCC::Ne,
+        };
+        if t == TypeId::UNIT {
+            return V::Val(self.b.iconst(Type::I1, (op == BinOp::Eq) as i64));
+        }
+        let (x, y) = (vs[0].val(), vs[1].val());
+        V::Val(match m.kind(t) {
+            TypeKind::Int => match op {
+                BinOp::Add => self.b.iadd(x, y),
+                BinOp::Sub => self.b.isub(x, y),
+                BinOp::Mul => self.b.imul(x, y),
+                BinOp::Div => self.b.sdiv(x, y),
+                BinOp::Rem => self.b.srem(x, y),
+                _ => self.b.icmp(cmp_int(op), x, y),
+            },
+            TypeKind::Float => match op {
+                BinOp::Add => self.b.fadd(x, y),
+                BinOp::Sub => self.b.fsub(x, y),
+                BinOp::Mul => self.b.fmul(x, y),
+                BinOp::Div => self.b.fdiv(x, y),
+                BinOp::Lt => self.b.fcmp(FloatCC::Lt, x, y),
+                BinOp::Le => self.b.fcmp(FloatCC::Le, x, y),
+                BinOp::Gt => self.b.fcmp(FloatCC::Gt, x, y),
+                BinOp::Ge => self.b.fcmp(FloatCC::Ge, x, y),
+                BinOp::Eq => self.b.fcmp(FloatCC::Eq, x, y),
+                _ => self.b.fcmp(FloatCC::Ne, x, y),
+            },
+            TypeKind::Bool => self.b.icmp(cmp_int(op), x, y),
+            TypeKind::String => match op {
+                BinOp::Add => self.b.call(self.rt.string_concat, &[x, y]).unwrap(),
+                BinOp::Eq | BinOp::Ne => {
+                    let r = self.b.call(self.rt.string_eq, &[x, y]).unwrap();
+                    let zero = self.b.iconst(Type::I64, 0);
+                    self.b.icmp(
+                        if op == BinOp::Eq {
+                            IntCC::Ne
+                        } else {
+                            IntCC::Eq
+                        },
+                        r,
+                        zero,
+                    )
+                }
+                _ => {
+                    let c = self.b.call(self.rt.string_compare, &[x, y]).unwrap();
+                    let zero = self.b.iconst(Type::I64, 0);
+                    self.b.icmp(cmp_int(op), c, zero)
+                }
+            },
+            TypeKind::Any => {
+                let r = self.b.call(self.rt.any_eq, &[x, y]).unwrap();
+                let zero = self.b.iconst(Type::I64, 0);
+                self.b.icmp(
+                    if op == BinOp::Eq {
+                        IntCC::Ne
+                    } else {
+                        IntCC::Eq
+                    },
+                    r,
+                    zero,
+                )
+            }
+            // Other references compare by identity.
+            _ => self.b.icmp(cmp_int(op), x, y),
+        })
+    }
+
+    fn builtin(&mut self, op: Builtin, args: &[ExprId], ty: TypeId) -> V {
+        let m = self.m;
+        let allocates = matches!(op, Builtin::Keys | Builtin::Substr | Builtin::Str);
+        let Some(vs) = self.operands(args, allocates) else {
+            return V::Never;
+        };
+        let arg_ty = |i: usize| m.expr_type(args[i]);
+        match op {
+            Builtin::Len => {
+                let f = match m.kind(arg_ty(0)) {
+                    TypeKind::String => self.rt.string_len,
+                    TypeKind::Array(_) => self.rt.array_len,
+                    _ => self.rt.map_len,
+                };
+                V::Val(self.b.call(f, &[vs[0].val()]).unwrap())
+            }
+            Builtin::Push => {
+                let TypeKind::Array(elem) = *m.kind(arg_ty(0)) else {
+                    return V::Never;
+                };
+                let w = self.word_of(vs[1], elem);
+                self.b.call(self.rt.array_push, &[vs[0].val(), w]);
+                V::Unit
+            }
+            Builtin::Pop => {
+                let w = self.b.call(self.rt.array_pop, &[vs[0].val()]).unwrap();
+                self.word_decode(w, ty)
+            }
+            Builtin::Has | Builtin::Remove => {
+                let TypeKind::Map(k, _) = *m.kind(arg_ty(0)) else {
+                    return V::Never;
+                };
+                let kw = self.word_of(vs[1], k);
+                let f = if op == Builtin::Has {
+                    self.rt.map_has
+                } else {
+                    self.rt.map_remove
+                };
+                let r = self.b.call(f, &[vs[0].val(), kw]).unwrap();
+                let zero = self.b.iconst(Type::I64, 0);
+                V::Val(self.b.icmp(IntCC::Ne, r, zero))
+            }
+            Builtin::Keys => V::Val(self.b.call(self.rt.map_keys, &[vs[0].val()]).unwrap()),
+            Builtin::Substr => V::Val(
+                self.b
+                    .call(
+                        self.rt.string_substr,
+                        &[vs[0].val(), vs[1].val(), vs[2].val()],
+                    )
+                    .unwrap(),
+            ),
+            Builtin::ByteAt => V::Val(
+                self.b
+                    .call(self.rt.string_byte_at, &[vs[0].val(), vs[1].val()])
+                    .unwrap(),
+            ),
+            Builtin::Str => {
+                let v = vs[0].val();
+                V::Val(match arg_ty(0) {
+                    TypeId::INT => self.b.call(self.rt.string_from_int, &[v]).unwrap(),
+                    TypeId::FLOAT => self.b.call(self.rt.string_from_float, &[v]).unwrap(),
+                    _ => {
+                        let w = self.b.cast(Opcode::Zext, v, Type::I64);
+                        self.b.call(self.rt.string_from_bool, &[w]).unwrap()
+                    }
+                })
+            }
+            Builtin::Print => {
+                self.b.call(self.rt.string_print, &[vs[0].val()]);
+                V::Unit
+            }
+            Builtin::Eprint => {
+                self.b.call(self.rt.string_eprint, &[vs[0].val()]);
+                V::Unit
+            }
+            Builtin::Exit => {
+                let code = self.b.cast(Opcode::Trunc, vs[0].val(), Type::I32);
+                self.b.call(self.rt.exit, &[code]);
+                self.b.unreachable();
+                V::Never
+            }
+            Builtin::Panic => {
+                self.b.call(self.rt.string_panic, &[vs[0].val()]);
+                self.b.unreachable();
+                V::Never
+            }
+            Builtin::Clock => V::Val(self.b.call(self.rt.clock, &[]).unwrap()),
+        }
+    }
+
+    fn cast(&mut self, a: ExprId, to: TypeId) -> V {
+        let m = self.m;
+        let from = m.expr_type(a);
+        let v = self.expr(a);
+        if matches!(v, V::Never) || from == to {
+            return v;
+        }
+        if to == TypeId::ANY {
+            return V::Val(self.box_any(v, from));
+        }
+        let V::Val(v) = v else { return V::Unit };
+        if from == TypeId::INT && to == TypeId::FLOAT {
+            return V::Val(self.b.cast(Opcode::Sitofp, v, Type::F64));
+        }
+        if from == TypeId::FLOAT && to == TypeId::INT {
+            return V::Val(self.b.cast(Opcode::Fptosi, v, Type::I64));
+        }
+        // From `any`: check, then unpack.
+        let ok = self.is_type(v, to);
+        let bad = self.b.not(ok);
+        self.b.if_(bad);
+        let (name, len) = self.type_name_data(to);
+        let np = self.b.global_addr(name);
+        let nl = self.b.iconst(Type::I64, len as i64);
+        self.b.call(self.rt.any_cast_failed, &[v, np, nl]);
+        self.b.unreachable();
+        self.b.end_if();
+        match m.kind(to) {
+            TypeKind::Unit => V::Unit,
+            TypeKind::Float => V::Val(self.b.cast(Opcode::Bitcast, v, Type::F64)),
+            TypeKind::Bool => {
+                let t = self.b.iconst(Type::I64, ANY_TRUE);
+                V::Val(self.b.icmp(IntCC::Eq, v, t))
+            }
+            TypeKind::Int => V::Val(self.b.call(self.rt.any_to_int, &[v]).unwrap()),
+            _ => V::Val(self.decode(v, to)),
+        }
+    }
+
+    /// Boxes a value of type `from` into an `any`.
+    fn box_any(&mut self, v: V, from: TypeId) -> Value {
+        let m = self.m;
+        let V::Val(v) = v else {
+            return self.b.iconst(Type::I64, ANY_UNIT);
+        };
+        match m.kind(from) {
+            TypeKind::Float => {
+                let is_nan = self.b.fcmp(FloatCC::Ne, v, v);
+                let bits = self.b.cast(Opcode::Bitcast, v, Type::I64);
+                let nan = self.b.iconst(Type::I64, CANONICAL_NAN);
+                self.b.select(is_nan, nan, bits)
+            }
+            TypeKind::Bool => {
+                let t = self.b.iconst(Type::I64, ANY_TRUE);
+                let f = self.b.iconst(Type::I64, ANY_FALSE);
+                self.b.select(v, t, f)
+            }
+            TypeKind::Int => self.b.call(self.rt.any_from_int, &[v]).unwrap(),
+            TypeKind::Any => v,
+            _ => {
+                let null = self.b.null();
+                let is_null = self.b.icmp(IntCC::Eq, v, null);
+                let tagged = self.encode(v, from);
+                let unit = self.b.iconst(Type::I64, ANY_UNIT);
+                self.b.select(is_null, unit, tagged)
+            }
+        }
+    }
+
+    /// Whether the `any` word `w` holds a value of type `t`.
+    fn is_type(&mut self, w: Value, t: TypeId) -> Value {
+        let m = self.m;
+        let zero = self.b.iconst(Type::I64, 0);
+        match m.kind(t) {
+            TypeKind::Float => {
+                let q = self.b.iconst(Type::I64, QNAN);
+                let bits = self.b.and(w, q);
+                self.b.icmp(IntCC::Ne, bits, q)
+            }
+            TypeKind::Unit => {
+                let u = self.b.iconst(Type::I64, ANY_UNIT);
+                self.b.icmp(IntCC::Eq, w, u)
+            }
+            TypeKind::Bool => {
+                let tr = self.b.iconst(Type::I64, ANY_TRUE);
+                let fa = self.b.iconst(Type::I64, ANY_FALSE);
+                let a = self.b.icmp(IntCC::Eq, w, tr);
+                let b = self.b.icmp(IntCC::Eq, w, fa);
+                self.b.or(a, b)
+            }
+            TypeKind::Int => {
+                let r = self.b.call(self.rt.any_is_int, &[w]).unwrap();
+                self.b.icmp(IntCC::Ne, r, zero)
+            }
+            TypeKind::String => {
+                let r = self.b.call(self.rt.any_is_string, &[w]).unwrap();
+                self.b.icmp(IntCC::Ne, r, zero)
+            }
+            TypeKind::Struct(s) => {
+                let desc = self.struct_desc[s.index()];
+                self.is_desc(w, desc)
+            }
+            TypeKind::Enum(e) => {
+                let desc = self.enum_desc[e.index()].0;
+                self.is_desc(w, desc)
+            }
+            TypeKind::Any => self.b.iconst(Type::I1, 1),
+            _ => self.b.iconst(Type::I1, 0),
+        }
+    }
+
+    fn is_desc(&mut self, w: Value, desc: IrGlobal) -> Value {
+        let a = self.b.global_addr(desc);
+        let d = self.b.load(Type::Ptr, a);
+        let r = self.b.call(self.rt.any_is_type, &[w, d]).unwrap();
+        let zero = self.b.iconst(Type::I64, 0);
+        self.b.icmp(IntCC::Ne, r, zero)
+    }
+
+    fn if_(&mut self, c: ExprId, t: ExprId, els: Option<ExprId>, ty: TypeId) -> V {
+        let cv = self.expr(c);
+        let V::Val(cv) = cv else { return cv };
+        let result = match (els, self.ir_type(ty)) {
+            (Some(_), Some(irt)) => Some(self.b.declare_var("if", irt)),
+            _ => None,
+        };
+        self.b.if_(cv);
+        let tv = self.expr(t);
+        if let (Some(r), V::Val(v)) = (result, tv) {
+            self.b.set(r, v);
+        }
+        if let Some(e) = els {
+            self.b.else_();
+            let ev = self.expr(e);
+            if let (Some(r), V::Val(v)) = (result, ev) {
+                self.b.set(r, v);
+            }
+        }
+        self.b.end_if();
+        if ty == TypeId::NEVER {
+            if !self.b.is_terminated() {
+                self.b.unreachable();
+            }
+            return V::Never;
+        }
+        match result {
+            Some(r) => V::Val(self.b.get(r)),
+            None => V::Unit,
+        }
+    }
+
+    fn match_(&mut self, s: ExprId, arms: &[ArmId], ty: TypeId) -> V {
+        let m = self.m;
+        let sv = self.expr(s);
+        let V::Val(obj) = sv else { return sv };
+        // Keep the scrutinee alive while payloads are bound (binding a captured local allocates).
+        self.spill(obj, m.expr_type(s));
+        self.null_check(obj);
+        let tag = self.load_word(obj, 0);
+        let result = self.ir_type(ty).map(|t| self.b.declare_var("match", t));
+        let mut open = 0;
+        for (i, &a) in arms.iter().enumerate() {
+            let arm = &m.arms[a.index()];
+            let last = i + 1 == arms.len();
+            if let Some(v) = arm.variant {
+                if !last {
+                    let want = self.b.iconst(Type::I64, v as i64);
+                    let hit = self.b.icmp(IntCC::Eq, tag, want);
+                    self.b.if_(hit);
+                    open += 1;
+                }
+                for (k, &bind) in arm.binds.iter().enumerate() {
+                    let w = self.load_word(obj, k as u32 + 1);
+                    let bt = m.local_type(bind);
+                    let bv = self.word_decode(w, bt);
+                    self.bind_local(bind, bv);
+                }
+            }
+            let bv = self.expr(arm.body);
+            if let (Some(r), V::Val(v)) = (result, bv) {
+                self.b.set(r, v);
+            }
+            if !last && arm.variant.is_some() {
+                self.b.else_();
+            }
+            if arm.variant.is_none() {
+                break;
+            }
+        }
+        for _ in 0..open {
+            self.b.end_if();
+        }
+        if ty == TypeId::NEVER {
+            if !self.b.is_terminated() {
+                self.b.unreachable();
+            }
+            return V::Never;
+        }
+        match result {
+            Some(r) => V::Val(self.b.get(r)),
+            None => V::Unit,
+        }
+    }
+}

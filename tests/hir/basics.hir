@@ -1,0 +1,16 @@
+// expect-stdout: hello, world
+// expect-stdout: 42 3.5 true
+// expect-stdout: 55
+module "basics";
+
+fn fib(n: int) -> int {
+  if n < 2 { n } else { fib(n - 1) + fib(n - 2) }
+}
+
+fn main() -> int {
+  print("hello, " + "world" + "\n");
+  let x = 40 + 2;
+  print(str(x) + " " + str(7.0 / 2.0) + " " + str(x == 42) + "\n");
+  print(str(fib(10)) + "\n");
+  0
+}

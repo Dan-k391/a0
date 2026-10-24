@@ -1,0 +1,555 @@
+//! The HIR data model: interned types, declarations, bodies, locals and a typed expression arena.
+
+use std::collections::{HashMap, HashSet};
+
+use a0_diag::Span;
+
+macro_rules! handle {
+    ($(#[$doc:meta])* $name:ident) => {
+        $(#[$doc])*
+        #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+        #[repr(transparent)]
+        pub struct $name(pub u32);
+
+        impl $name {
+            pub fn index(self) -> usize {
+                self.0 as usize
+            }
+        }
+    };
+}
+
+handle!(
+    /// An interned type.
+    TypeId
+);
+handle!(StructId);
+handle!(EnumId);
+handle!(GlobalId);
+handle!(ExternId);
+handle!(FuncId);
+handle!(
+    /// A function body or a closure body.
+    BodyId
+);
+handle!(LocalId);
+handle!(ExprId);
+handle!(
+    /// One arm of a `match`.
+    ArmId
+);
+
+impl TypeId {
+    pub const UNIT: TypeId = TypeId(0);
+    pub const BOOL: TypeId = TypeId(1);
+    pub const INT: TypeId = TypeId(2);
+    pub const FLOAT: TypeId = TypeId(3);
+    pub const STRING: TypeId = TypeId(4);
+    pub const ANY: TypeId = TypeId(5);
+    /// The type of expressions that never produce a value (`return`, `break`, `panic`, ...).
+    pub const NEVER: TypeId = TypeId(6);
+}
+
+/// The shape of a type (see `docs/hir.md`).
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub(crate) enum TypeKind {
+    Unit,
+    Bool,
+    Int,
+    Float,
+    String,
+    Any,
+    Never,
+    Array(TypeId),
+    Map(TypeId, TypeId),
+    Struct(StructId),
+    Enum(EnumId),
+    Fn(Vec<TypeId>, TypeId),
+}
+
+/// The kind of a type, for the public, handle-based API.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[repr(u8)]
+pub enum TypeTag {
+    Unit,
+    Bool,
+    Int,
+    Float,
+    String,
+    Any,
+    Never,
+    Array,
+    Map,
+    Struct,
+    Enum,
+    Fn,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[repr(u8)]
+pub enum BinOp {
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Rem,
+    Lt,
+    Le,
+    Gt,
+    Ge,
+    Eq,
+    Ne,
+}
+
+impl BinOp {
+    pub fn symbol(self) -> &'static str {
+        match self {
+            BinOp::Add => "+",
+            BinOp::Sub => "-",
+            BinOp::Mul => "*",
+            BinOp::Div => "/",
+            BinOp::Rem => "%",
+            BinOp::Lt => "<",
+            BinOp::Le => "<=",
+            BinOp::Gt => ">",
+            BinOp::Ge => ">=",
+            BinOp::Eq => "==",
+            BinOp::Ne => "!=",
+        }
+    }
+
+    pub fn from_symbol(s: &str) -> Option<BinOp> {
+        use BinOp::*;
+        [Add, Sub, Mul, Div, Rem, Lt, Le, Gt, Ge, Eq, Ne]
+            .into_iter()
+            .find(|op| op.symbol() == s)
+    }
+
+    pub fn is_comparison(self) -> bool {
+        matches!(self, BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[repr(u8)]
+pub enum UnOp {
+    Neg,
+    Not,
+}
+
+macro_rules! builtins {
+    ($($variant:ident = $name:literal,)*) => {
+        /// Built-in operations, called like functions (see `docs/hir.md`).
+        #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+        #[repr(u8)]
+        pub enum Builtin {
+            $($variant,)*
+        }
+
+        impl Builtin {
+            pub fn name(self) -> &'static str {
+                match self {
+                    $(Builtin::$variant => $name,)*
+                }
+            }
+
+            pub fn from_name(s: &str) -> Option<Builtin> {
+                match s {
+                    $($name => Some(Builtin::$variant),)*
+                    _ => None,
+                }
+            }
+        }
+    };
+}
+
+builtins! {
+    Len = "len",
+    Push = "push",
+    Pop = "pop",
+    Has = "has",
+    Remove = "remove",
+    Keys = "keys",
+    Substr = "substr",
+    ByteAt = "byte_at",
+    Str = "str",
+    Print = "print",
+    Eprint = "eprint",
+    Exit = "exit",
+    Panic = "panic",
+    Clock = "clock",
+}
+
+#[derive(Clone, Debug)]
+pub(crate) enum ExprKind {
+    Unit,
+    Bool(bool),
+    Int(i64),
+    Float(u64),
+    Str(String),
+    Null,
+    Local(LocalId),
+    Global(GlobalId),
+    Func(FuncId),
+    Let(LocalId, ExprId),
+    SetLocal(LocalId, ExprId),
+    SetGlobal(GlobalId, ExprId),
+    SetField(ExprId, u32, ExprId),
+    SetIndex(ExprId, ExprId, ExprId),
+    Unary(UnOp, ExprId),
+    Binary(BinOp, ExprId, ExprId),
+    And(ExprId, ExprId),
+    Or(ExprId, ExprId),
+    Call(FuncId, Vec<ExprId>),
+    CallExtern(ExternId, Vec<ExprId>),
+    CallValue(ExprId, Vec<ExprId>),
+    Lambda(BodyId),
+    New(StructId, Vec<ExprId>),
+    Field(ExprId, u32),
+    Variant(EnumId, u32, Vec<ExprId>),
+    Match(ExprId, Vec<ArmId>),
+    Array(Vec<ExprId>),
+    NewArray,
+    NewMap,
+    Index(ExprId, ExprId),
+    Builtin(Builtin, Vec<ExprId>),
+    Cast(ExprId),
+    Is(ExprId, TypeId),
+    If(ExprId, ExprId, Option<ExprId>),
+    While(ExprId, ExprId),
+    Loop(ExprId),
+    Break,
+    Continue,
+    Return(Option<ExprId>),
+    Block(Vec<ExprId>, Option<ExprId>),
+}
+
+pub(crate) struct ExprData {
+    pub kind: ExprKind,
+    pub ty: TypeId,
+    pub span: Option<Span>,
+}
+
+pub(crate) struct ArmData {
+    /// The variant matched, or `None` for `_`.
+    pub variant: Option<u32>,
+    pub binds: Vec<LocalId>,
+    pub body: ExprId,
+}
+
+pub(crate) struct StructDef {
+    pub name: String,
+    pub fields: Vec<(String, TypeId)>,
+    pub span: Option<Span>,
+}
+
+pub(crate) struct VariantDef {
+    pub name: String,
+    pub fields: Vec<TypeId>,
+}
+
+pub(crate) struct EnumDef {
+    pub name: String,
+    pub variants: Vec<VariantDef>,
+    pub span: Option<Span>,
+}
+
+pub(crate) struct GlobalDef {
+    pub name: String,
+    pub ty: TypeId,
+    pub span: Option<Span>,
+}
+
+pub(crate) struct ExternDef {
+    pub name: String,
+    pub params: Vec<TypeId>,
+    pub ret: TypeId,
+    pub span: Option<Span>,
+}
+
+pub(crate) struct FuncDef {
+    pub name: String,
+    pub body: BodyId,
+    pub span: Option<Span>,
+    /// Names used by locals anywhere in this function or its closures (kept unique).
+    pub local_names: HashSet<String>,
+}
+
+pub(crate) struct BodyData {
+    pub params: Vec<LocalId>,
+    pub ret: TypeId,
+    pub root: Option<ExprId>,
+    /// The enclosing body, for closures.
+    pub parent: Option<BodyId>,
+    pub func: FuncId,
+}
+
+pub(crate) struct LocalData {
+    pub name: String,
+    pub ty: TypeId,
+    pub body: BodyId,
+}
+
+/// Something a module-level name refers to.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Item {
+    Struct(StructId),
+    Enum(EnumId),
+    Global(GlobalId),
+    Extern(ExternId),
+    Func(FuncId),
+}
+
+/// A HIR module. Build it with [`crate::HirBuilder`] or [`crate::parse`].
+pub struct HirModule {
+    pub(crate) name: String,
+    pub(crate) types: Vec<TypeKind>,
+    pub(crate) type_map: HashMap<TypeKind, TypeId>,
+    pub(crate) structs: Vec<StructDef>,
+    pub(crate) enums: Vec<EnumDef>,
+    pub(crate) globals: Vec<GlobalDef>,
+    pub(crate) externs: Vec<ExternDef>,
+    pub(crate) funcs: Vec<FuncDef>,
+    pub(crate) bodies: Vec<BodyData>,
+    pub(crate) locals: Vec<LocalData>,
+    pub(crate) exprs: Vec<ExprData>,
+    pub(crate) arms: Vec<ArmData>,
+    /// Declarations in order, for printing.
+    pub(crate) items: Vec<Item>,
+    pub(crate) type_names: HashMap<String, Item>,
+    pub(crate) value_names: HashMap<String, Item>,
+}
+
+impl HirModule {
+    pub(crate) fn new(name: &str) -> HirModule {
+        let mut m = HirModule {
+            name: name.to_string(),
+            types: Vec::new(),
+            type_map: HashMap::new(),
+            structs: Vec::new(),
+            enums: Vec::new(),
+            globals: Vec::new(),
+            externs: Vec::new(),
+            funcs: Vec::new(),
+            bodies: Vec::new(),
+            locals: Vec::new(),
+            exprs: Vec::new(),
+            arms: Vec::new(),
+            items: Vec::new(),
+            type_names: HashMap::new(),
+            value_names: HashMap::new(),
+        };
+        for k in [
+            TypeKind::Unit,
+            TypeKind::Bool,
+            TypeKind::Int,
+            TypeKind::Float,
+            TypeKind::String,
+            TypeKind::Any,
+            TypeKind::Never,
+        ] {
+            m.intern(k);
+        }
+        m
+    }
+
+    pub(crate) fn intern(&mut self, k: TypeKind) -> TypeId {
+        if let Some(&t) = self.type_map.get(&k) {
+            return t;
+        }
+        let t = TypeId(self.types.len() as u32);
+        self.types.push(k.clone());
+        self.type_map.insert(k, t);
+        t
+    }
+
+    pub(crate) fn kind(&self, t: TypeId) -> &TypeKind {
+        &self.types[t.index()]
+    }
+
+    pub(crate) fn expr(&self, e: ExprId) -> &ExprData {
+        &self.exprs[e.index()]
+    }
+
+    // ---------------------------------------------------------------- public read API
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn items(&self) -> &[Item] {
+        &self.items
+    }
+
+    pub fn lookup_type(&self, name: &str) -> Option<Item> {
+        self.type_names.get(name).copied()
+    }
+
+    pub fn lookup_value(&self, name: &str) -> Option<Item> {
+        self.value_names.get(name).copied()
+    }
+
+    pub fn func_count(&self) -> u32 {
+        self.funcs.len() as u32
+    }
+
+    pub fn func_name(&self, f: FuncId) -> &str {
+        &self.funcs[f.index()].name
+    }
+
+    pub fn func_body(&self, f: FuncId) -> BodyId {
+        self.funcs[f.index()].body
+    }
+
+    pub fn body_params(&self, b: BodyId) -> &[LocalId] {
+        &self.bodies[b.index()].params
+    }
+
+    pub fn body_ret(&self, b: BodyId) -> TypeId {
+        self.bodies[b.index()].ret
+    }
+
+    pub fn body_root(&self, b: BodyId) -> Option<ExprId> {
+        self.bodies[b.index()].root
+    }
+
+    pub fn local_name(&self, l: LocalId) -> &str {
+        &self.locals[l.index()].name
+    }
+
+    pub fn local_type(&self, l: LocalId) -> TypeId {
+        self.locals[l.index()].ty
+    }
+
+    pub fn expr_type(&self, e: ExprId) -> TypeId {
+        self.exprs[e.index()].ty
+    }
+
+    pub fn expr_span(&self, e: ExprId) -> Option<Span> {
+        self.exprs[e.index()].span
+    }
+
+    pub fn struct_name(&self, s: StructId) -> &str {
+        &self.structs[s.index()].name
+    }
+
+    pub fn struct_field_count(&self, s: StructId) -> u32 {
+        self.structs[s.index()].fields.len() as u32
+    }
+
+    pub fn struct_field(&self, s: StructId, i: u32) -> (&str, TypeId) {
+        let (n, t) = &self.structs[s.index()].fields[i as usize];
+        (n, *t)
+    }
+
+    /// The index of a field by name.
+    pub fn struct_field_index(&self, s: StructId, name: &str) -> Option<u32> {
+        self.structs[s.index()]
+            .fields
+            .iter()
+            .position(|(n, _)| n == name)
+            .map(|i| i as u32)
+    }
+
+    pub fn enum_name(&self, e: EnumId) -> &str {
+        &self.enums[e.index()].name
+    }
+
+    pub fn variant_count(&self, e: EnumId) -> u32 {
+        self.enums[e.index()].variants.len() as u32
+    }
+
+    pub fn variant_name(&self, e: EnumId, v: u32) -> &str {
+        &self.enums[e.index()].variants[v as usize].name
+    }
+
+    pub fn variant_fields(&self, e: EnumId, v: u32) -> &[TypeId] {
+        &self.enums[e.index()].variants[v as usize].fields
+    }
+
+    pub fn variant_index(&self, e: EnumId, name: &str) -> Option<u32> {
+        self.enums[e.index()]
+            .variants
+            .iter()
+            .position(|v| v.name == name)
+            .map(|i| i as u32)
+    }
+
+    pub fn global_name(&self, g: GlobalId) -> &str {
+        &self.globals[g.index()].name
+    }
+
+    pub fn global_type(&self, g: GlobalId) -> TypeId {
+        self.globals[g.index()].ty
+    }
+
+    pub fn extern_name(&self, x: ExternId) -> &str {
+        &self.externs[x.index()].name
+    }
+
+    /// Where an item was declared, if it came from text or the builder had a span set.
+    pub fn item_span(&self, item: Item) -> Option<Span> {
+        match item {
+            Item::Struct(s) => self.structs[s.index()].span,
+            Item::Enum(e) => self.enums[e.index()].span,
+            Item::Global(g) => self.globals[g.index()].span,
+            Item::Extern(x) => self.externs[x.index()].span,
+            Item::Func(f) => self.funcs[f.index()].span,
+        }
+    }
+
+    pub fn type_tag(&self, t: TypeId) -> TypeTag {
+        match self.kind(t) {
+            TypeKind::Unit => TypeTag::Unit,
+            TypeKind::Bool => TypeTag::Bool,
+            TypeKind::Int => TypeTag::Int,
+            TypeKind::Float => TypeTag::Float,
+            TypeKind::String => TypeTag::String,
+            TypeKind::Any => TypeTag::Any,
+            TypeKind::Never => TypeTag::Never,
+            TypeKind::Array(_) => TypeTag::Array,
+            TypeKind::Map(..) => TypeTag::Map,
+            TypeKind::Struct(_) => TypeTag::Struct,
+            TypeKind::Enum(_) => TypeTag::Enum,
+            TypeKind::Fn(..) => TypeTag::Fn,
+        }
+    }
+
+    /// Whether values of this type are garbage-collected references.
+    pub fn is_reference(&self, t: TypeId) -> bool {
+        matches!(
+            self.kind(t),
+            TypeKind::String
+                | TypeKind::Array(_)
+                | TypeKind::Map(..)
+                | TypeKind::Struct(_)
+                | TypeKind::Enum(_)
+                | TypeKind::Fn(..)
+        )
+    }
+
+    /// The type's text form, such as `map<string, array<int>>`.
+    pub fn type_name(&self, t: TypeId) -> String {
+        match self.kind(t) {
+            TypeKind::Unit => "unit".to_string(),
+            TypeKind::Bool => "bool".to_string(),
+            TypeKind::Int => "int".to_string(),
+            TypeKind::Float => "float".to_string(),
+            TypeKind::String => "string".to_string(),
+            TypeKind::Any => "any".to_string(),
+            TypeKind::Never => "never".to_string(),
+            TypeKind::Array(e) => format!("array<{}>", self.type_name(*e)),
+            TypeKind::Map(k, v) => format!("map<{}, {}>", self.type_name(*k), self.type_name(*v)),
+            TypeKind::Struct(s) => self.structs[s.index()].name.clone(),
+            TypeKind::Enum(e) => self.enums[e.index()].name.clone(),
+            TypeKind::Fn(params, ret) => {
+                let ps: Vec<String> = params.iter().map(|&p| self.type_name(p)).collect();
+                if *ret == TypeId::UNIT {
+                    format!("fn({})", ps.join(", "))
+                } else {
+                    format!("fn({}) -> {}", ps.join(", "), self.type_name(*ret))
+                }
+            }
+        }
+    }
+}

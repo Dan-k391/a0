@@ -1,0 +1,60 @@
+// Dynamic values: boxing, type tests, unpacking and equality.
+// expect-stdout: 1.5 is float
+// expect-stdout: hi is string
+// expect-stdout: 7 is int
+// expect-stdout: () is unit
+// expect-stdout: true is bool
+// expect-stdout: Box is Box
+// expect-stdout: Some is Opt
+// expect-stdout: eq: true true false true false true
+// expect-stdout: nan: false
+module "dynamic";
+
+struct Box { v: int }
+enum Opt { Some(any), None }
+
+fn describe(v: any) -> string {
+  if v is float {
+    str(v as float) + " is float"
+  } else if v is string {
+    (v as string) + " is string"
+  } else if v is int {
+    str(v as int) + " is int"
+  } else if v is unit {
+    "() is unit"
+  } else if v is bool {
+    str(v as bool) + " is bool"
+  } else if v is Box {
+    "Box is Box"
+  } else if v is Opt {
+    match v as Opt {
+      Some(x) => "Some is Opt",
+      None => "None is Opt",
+    }
+  } else {
+    "unknown"
+  }
+}
+
+global things: array<any>;
+
+fn main() -> int {
+  things = [1.5 as any, "hi" as any, 7 as any, () as any, true as any, new Box { v: 1 } as any, Opt::Some(2.0 as any) as any];
+  let i = 0;
+  while i < len(things) {
+    print(describe(things[i]) + "\n");
+    i = i + 1;
+  }
+  let a = "x" + "y";
+  let b = "xy";
+  let n1 = 3 as any;
+  let n2 = 3 as any;
+  let f1 = 3.0 as any;
+  let bx = new Box { v: 1 };
+  print("eq: " + str(a as any == b as any) + " " + str(n1 == n2) + " " + str(n1 == f1) + " "
+    + str(bx as any == bx as any) + " " + str(bx as any == new Box { v: 1 } as any) + " "
+    + str(() as any == null<Box> as any) + "\n");
+  let nan = (0.0 / 0.0) as any;
+  print("nan: " + str(nan == nan) + "\n");
+  0
+}

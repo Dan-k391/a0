@@ -1,0 +1,15 @@
+// exit() stops the program with a status; eprint writes to stderr.
+// expect-stdout: out
+// expect-stderr: err
+// expect-exit: 7
+module "exit";
+
+fn fail(message: string) -> never {
+  eprint(message + "\n");
+  exit(7)
+}
+
+fn main() -> int {
+  print("out\n");
+  fail("err");
+}

@@ -9,6 +9,7 @@ members = [
     "crates/a0-native",
     "crates/a0-syntax",
     "crates/a0-sema",
+    "crates/a0-hir",
     "crates/a0-build",
     "examples/kaleidoscope",
     "examples/lox",
@@ -30,6 +31,7 @@ a0-target = { path = "crates/a0-target" }
 a0-native = { path = "crates/a0-native" }
 a0-syntax = { path = "crates/a0-syntax" }
 a0-sema = { path = "crates/a0-sema" }
+a0-hir = { path = "crates/a0-hir" }
 a0-build = { path = "crates/a0-build" }
 
 [profile.dev]

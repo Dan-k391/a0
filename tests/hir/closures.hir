@@ -1,0 +1,70 @@
+// Closures capture locals by reference; each `let` makes a fresh variable.
+// expect-stdout: counter 1 2 3
+// expect-stdout: shared 10 then 11
+// expect-stdout: loop 0 1 2
+// expect-stdout: adder 15
+// expect-stdout: fact 120
+// expect-stdout: nested 6
+// expect-stdout: apply 9
+module "closures";
+
+fn make_counter() -> fn() -> int {
+  let n = 0;
+  fn() -> int {
+    n = n + 1;
+    n
+  }
+}
+
+fn apply(f: fn(int) -> int, x: int) -> int {
+  f(x)
+}
+
+fn square(x: int) -> int {
+  x * x
+}
+
+fn main() -> int {
+  let c = make_counter();
+  let a = c();
+  let b = c();
+  print("counter " + str(a) + " " + str(b) + " " + str(c()) + "\n");
+
+  let x = 10;
+  let get = fn() -> int { x };
+  let first = get();
+  x = x + 1;
+  print("shared " + str(first) + " then " + str(get()) + "\n");
+
+  let fs = new array<fn() -> int>;
+  let i = 0;
+  while i < 3 {
+    let j = i;
+    push(fs, fn() -> int { j });
+    i = i + 1;
+  }
+  print("loop " + str(fs[0]()) + " " + str(fs[1]()) + " " + str(fs[2]()) + "\n");
+
+  let make_adder = fn(base: int) -> fn(int) -> int {
+    fn(y: int) -> int { base + y }
+  };
+  let add5 = make_adder(5);
+  print("adder " + str(add5(10)) + "\n");
+
+  let fact = null<fn(int) -> int>;
+  fact = fn(n: int) -> int { if n <= 1 { 1 } else { n * fact(n - 1) } };
+  print("fact " + str(fact(5)) + "\n");
+
+  let total = 0;
+  let outer = fn() {
+    let inner = fn(k: int) { total = total + k; };
+    inner(1);
+    inner(2);
+    inner(3);
+  };
+  outer();
+  print("nested " + str(total) + "\n");
+
+  print("apply " + str(apply(square, 3)) + "\n");
+  0
+}

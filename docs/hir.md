@@ -1,6 +1,6 @@
 # A0 high-level IR (HIR)
 
-Status: design, being implemented in `crates/a0-hir`. Keep this document in sync with the code.
+Status: implemented in `crates/a0-hir`. Keep this document in sync with the code.
 
 The core IR (`docs/ir.md`) is a low-level layer: scalars, pointers, explicit memory. Building a language
 directly on it means writing your own values, strings, collections, closures and garbage collector, as
@@ -163,6 +163,9 @@ HIR is lowered to the core IR plus calls into `a0rt`:
 - **Closures.** Each closure is a core IR function taking its environment first. Captured locals
   live in heap boxes, shared by the defining function and every closure that captures them.
 - Strings, arrays, maps, formatting, boxing and dynamic equality are runtime calls.
+- Integer division by zero, and dividing the minimum `int` by -1, trap like the core IR's `sdiv`
+  (`a0: trap: ...`, exit 101).
+- `a0 lower prog.hir` prints the core IR a module lowers to; `a0 run`/`a0 build` accept `.hir` files.
 
 ## Not yet
 

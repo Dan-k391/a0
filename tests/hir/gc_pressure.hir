@@ -1,0 +1,70 @@
+// Lots of garbage with live data threaded through it: closures, maps, arrays and strings must survive
+// every collection.
+// expect-stdout: tree checksum 2047
+// expect-stdout: strings 5000 last=s4999
+// expect-stdout: map total 499500
+// expect-stdout: closures 4950
+module "gc pressure";
+
+enum Tree { Leaf, Node(Tree, Tree) }
+
+fn build(depth: int) -> Tree {
+  if depth == 0 { Tree::Leaf } else { Tree::Node(build(depth - 1), build(depth - 1)) }
+}
+
+fn count(t: Tree) -> int {
+  match t {
+    Leaf => 0,
+    Node(l, r) => 1 + count(l) + count(r),
+  }
+}
+
+fn main() -> int {
+  let total = 0;
+  let round = 0;
+  while round < 4 {
+    let t = build(11);
+    total = count(t);
+    round = round + 1;
+  }
+  print("tree checksum " + str(total) + "\n");
+
+  let parts = new array<string>;
+  let i = 0;
+  while i < 5000 {
+    push(parts, "s" + str(i));
+    i = i + 1;
+  }
+  print("strings " + str(len(parts)) + " last=" + parts[4999] + "\n");
+
+  let m = new map<string, int>;
+  i = 0;
+  while i < 1000 {
+    m["k" + str(i)] = i;
+    i = i + 1;
+  }
+  let sum = 0;
+  let ks = keys(m);
+  i = 0;
+  while i < len(ks) {
+    sum = sum + m[ks[i]];
+    i = i + 1;
+  }
+  print("map total " + str(sum) + "\n");
+
+  let fs = new array<fn() -> int>;
+  i = 0;
+  while i < 100 {
+    let v = i;
+    push(fs, fn() -> int { v });
+    i = i + 1;
+  }
+  let acc = 0;
+  i = 0;
+  while i < 100 {
+    acc = acc + fs[i]();
+    i = i + 1;
+  }
+  print("closures " + str(acc) + "\n");
+  0
+}

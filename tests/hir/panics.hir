@@ -1,0 +1,13 @@
+// A null dereference panics with the runtime's message, after flushing earlier output.
+// expect-stdout: before
+// expect-stderr: a0: panic: null reference
+// expect-exit: 101
+module "panics";
+
+struct P { x: int }
+
+fn main() -> int {
+  print("before\n");
+  let p = null<P>;
+  p.x
+}
