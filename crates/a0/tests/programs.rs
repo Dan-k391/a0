@@ -1,10 +1,10 @@
-//! Runs every program in `tests/programs` with `a0 run` and checks its output.
+//! Runs every program in `tests/programs` through each backend and checks its output.
 //!
 //! Expectations live in comments at the top of each file:
 //! `; expect-stdout: <line>`, `; expect-stderr: <line>` (one per line) and `; expect-exit: <code>`.
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Output};
 
 struct Expect {
     stdout: String,
@@ -43,19 +43,21 @@ fn programs() -> Vec<PathBuf> {
     files
 }
 
-#[test]
-fn interpreted_programs_match_expectations() {
+fn scratch_dir(name: &str) -> PathBuf {
+    let dir = std::env::temp_dir().join(format!("a0-{name}-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    dir
+}
+
+/// Runs every program with `run` and checks the finished process against the expectations.
+fn check_programs(run: &dyn Fn(&Path) -> Output) {
     let mut failures = Vec::new();
     let files = programs();
     assert!(!files.is_empty());
     for file in &files {
         let text = std::fs::read_to_string(file).unwrap().replace("\r\n", "\n");
         let expect = expectations(&text);
-        let out = Command::new(env!("CARGO_BIN_EXE_a0"))
-            .arg("run")
-            .arg(file)
-            .output()
-            .unwrap();
+        let out = run(file);
         let stdout = String::from_utf8_lossy(&out.stdout);
         let stderr = String::from_utf8_lossy(&out.stderr);
         let code = out.status.code().unwrap_or(-1);
@@ -73,9 +75,46 @@ fn interpreted_programs_match_expectations() {
 }
 
 #[test]
+fn interpreted_programs_match_expectations() {
+    check_programs(&|file| {
+        Command::new(env!("CARGO_BIN_EXE_a0"))
+            .arg("run")
+            .arg(file)
+            .output()
+            .unwrap()
+    });
+}
+
+#[test]
+fn native_programs_match_expectations() {
+    let dir = scratch_dir("native");
+    check_programs(&|file| {
+        let exe = dir.join(format!(
+            "{}{}",
+            file.file_stem().unwrap().to_string_lossy(),
+            std::env::consts::EXE_SUFFIX
+        ));
+        let build = Command::new(env!("CARGO_BIN_EXE_a0"))
+            .arg("build")
+            .arg(file)
+            .arg("-o")
+            .arg(&exe)
+            .output()
+            .unwrap();
+        assert!(
+            build.status.success(),
+            "building {} failed:\n{}",
+            file.display(),
+            String::from_utf8_lossy(&build.stderr)
+        );
+        Command::new(&exe).output().unwrap()
+    });
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
 fn check_and_fmt_report_diagnostics() {
-    let dir = std::env::temp_dir().join(format!("a0-cli-test-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
+    let dir = scratch_dir("cli");
     let bad = dir.join("bad.a0ir");
     std::fs::write(&bad, "module \"m\"\nfunc @f() -> i64 {\n  %x: f64 = fconst 1.0\n  return %x\n}\n").unwrap();
     let out = Command::new(env!("CARGO_BIN_EXE_a0")).arg("check").arg(&bad).output().unwrap();
@@ -91,5 +130,22 @@ fn check_and_fmt_report_diagnostics() {
         String::from_utf8_lossy(&out.stdout),
         "module \"m\"\n\nfunc @f() -> i64 {\n  %x: i64 = iconst 1\n  return %x\n}\n"
     );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn obj_emits_for_other_targets() {
+    let dir = scratch_dir("obj");
+    let file = programs().into_iter().find(|p| p.ends_with("hello.a0ir")).unwrap();
+    let out_path = dir.join("hello.o");
+    let out = Command::new(env!("CARGO_BIN_EXE_a0"))
+        .args(["obj", "--target", "aarch64-linux", "-o"])
+        .arg(&out_path)
+        .arg(&file)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let bytes = std::fs::read(&out_path).unwrap();
+    assert_eq!(&bytes[..4], b"\x7fELF");
     std::fs::remove_dir_all(&dir).ok();
 }

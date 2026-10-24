@@ -1,0 +1,164 @@
+; Edge cases of integer and float semantics that every backend must agree on.
+; expect-stdout: -56
+; expect-stdout: 127
+; expect-stdout: -3
+; expect-stdout: -1
+; expect-stdout: 2
+; expect-stdout: 1
+; expect-stdout: 1
+; expect-stdout: 255
+; expect-stdout: -1
+; expect-stdout: 2147483647
+; expect-stdout: -2147483648
+; expect-stdout: 0
+; expect-stdout: 127
+; expect-stdout: -128
+; expect-stdout: 255
+; expect-stdout: 0
+; expect-stdout: 1
+; expect-stdout: 0
+; expect-stdout: 1
+; expect-stdout: -16
+; expect-stdout: 4611686018427387900
+; expect-stdout: 1
+; expect-stdout: 0.1
+; expect-stdout: 0.10000000149011612
+; expect-stdout: 4607182418800017408
+; expect-stdout: 3
+; expect-stdout: 1
+; expect-stdout: 42
+module "semantics"
+
+extern func @a0_print_i64(i64)
+extern func @a0_print_f64(f64)
+extern func @a0_print_newline()
+
+func @p8(%x: i8) {
+  %w: i64 = sext %x
+  call @a0_print_i64(%w)
+  call @a0_print_newline()
+}
+
+func @p32(%x: i32) {
+  %w: i64 = sext %x
+  call @a0_print_i64(%w)
+  call @a0_print_newline()
+}
+
+func @p64(%x: i64) {
+  call @a0_print_i64(%x)
+  call @a0_print_newline()
+}
+
+func @pbool(%x: i1) {
+  %w: i64 = zext %x
+  call @a0_print_i64(%w)
+  call @a0_print_newline()
+}
+
+func @pf(%x: f64) {
+  call @a0_print_f64(%x)
+  call @a0_print_newline()
+}
+
+func @main() -> i32 {
+  ; i8 wrapping: 100 + 100 = -56
+  %a: i8 = iconst 100
+  %s8: i8 = iadd %a, %a
+  call @p8(%s8)
+  ; unsigned division of -1 (255) by 2
+  %m1: i8 = iconst -1
+  %two8: i8 = iconst 2
+  %ud: i8 = udiv %m1, %two8
+  call @p8(%ud)
+  ; signed division truncates toward zero
+  %m7: i32 = iconst -7
+  %two: i32 = iconst 2
+  %sd: i32 = sdiv %m7, %two
+  call @p32(%sd)
+  %sr: i32 = srem %m7, %two
+  call @p32(%sr)
+  ; shift amounts wrap modulo the width
+  %one: i32 = iconst 1
+  %thirty3: i32 = iconst 33
+  %sh: i32 = shl %one, %thirty3
+  call @p32(%sh)
+  ; logical vs arithmetic shift of a negative i8
+  %min8: i8 = iconst -128
+  %seven: i8 = iconst 7
+  %lsr: i8 = lshr %min8, %seven
+  call @p8(%lsr)
+  %u: i1 = icmp ult %a, %m1
+  call @pbool(%u)
+  ; zero and sign extension
+  %z: i64 = zext %m1
+  call @p64(%z)
+  %t: i1 = iconst 1
+  %st: i64 = sext %t
+  call @p64(%st)
+  ; saturating float to int conversions
+  %huge: f64 = fconst 1e20
+  %sat: i32 = fptosi %huge
+  call @p32(%sat)
+  %nhuge: f64 = fneg %huge
+  %nsat: i32 = fptosi %nhuge
+  call @p32(%nsat)
+  %nan: f64 = fconst nan
+  %nz: i32 = fptosi %nan
+  call @p32(%nz)
+  %k: f64 = fconst 300.0
+  %s8sat: i8 = fptosi %k
+  call @p8(%s8sat)
+  %nk: f64 = fneg %k
+  %s8nsat: i8 = fptosi %nk
+  call @p8(%s8nsat)
+  %u8sat: i8 = fptoui %k
+  %u8w: i64 = zext %u8sat
+  call @p64(%u8w)
+  %u8neg: i8 = fptoui %nk
+  call @p8(%u8neg)
+  ; i1 arithmetic stays 0/1
+  %f: i1 = iconst 0
+  %nt: i1 = not %f
+  call @pbool(%nt)
+  %tt: i1 = iadd %t, %t
+  call @pbool(%tt)
+  %ng: i1 = ineg %t
+  call @pbool(%ng)
+  ; trunc keeps the low bits
+  %big: i64 = iconst 4080
+  %low: i8 = trunc %big
+  call @p8(%low)
+  ; unsigned shift of a negative i64
+  %neg: i64 = iconst -16
+  %two64: i64 = iconst 2
+  %ushr: i64 = lshr %neg, %two64
+  call @p64(%ushr)
+  ; NaN compares unordered: ne is true, eq is false
+  %ne: i1 = fcmp ne %nan, %nan
+  call @pbool(%ne)
+  ; f32 rounding
+  %pt1: f64 = fconst 0.1
+  call @pf(%pt1)
+  %f32: f32 = ftrunc %pt1
+  %back: f64 = fext %f32
+  call @pf(%back)
+  %onef: f64 = fconst 1.0
+  %bits: i64 = bitcast %onef
+  call @p64(%bits)
+  ; select and unsigned compare of pointers
+  %c: i1 = icmp sgt %a, %m1
+  %three: i64 = iconst 3
+  %four: i64 = iconst 4
+  %sel: i64 = select %c, %three, %four
+  call @p64(%sel)
+  %p: ptr = null
+  %q: ptr = inttoptr %three
+  %pl: i1 = icmp ult %p, %q
+  call @pbool(%pl)
+  %r: i32 = iconst 42
+  %r64: i64 = sext %r
+  call @p64(%r64)
+  %ok: i32 = iconst 0
+  return %ok
+}

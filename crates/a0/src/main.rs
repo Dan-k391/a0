@@ -4,6 +4,7 @@ use std::process::ExitCode;
 
 use a0_diag::{Diagnostics, SourceMap};
 use a0_ir::Module;
+use a0_native::Target;
 
 const USAGE: &str = "usage: a0 <command> [options] <file.a0ir>
 
@@ -11,6 +12,13 @@ commands:
   check <file>              parse and verify; print diagnostics
   fmt <file>                print the canonical text form
   run <file> [-- args...]   interpret @main and exit with its status
+  build <file> [-o out] [--target T] [--no-opt]
+                            compile to a native executable (host target only)
+  obj <file> [-o out] [--target T] [--no-opt]
+                            compile to an object file for any supported target
+
+targets: x86_64-linux, aarch64-linux, x86_64-macos, aarch64-macos, x86_64-windows,
+         aarch64-windows (or full triples); the default is the host
 ";
 
 fn main() -> ExitCode {
@@ -24,6 +32,8 @@ fn main() -> ExitCode {
         "check" => check(rest),
         "fmt" => fmt(rest),
         "run" => run(rest),
+        "build" => build(rest, true),
+        "obj" => build(rest, false),
         "help" | "--help" | "-h" => {
             print!("{USAGE}");
             ExitCode::SUCCESS
@@ -118,5 +128,90 @@ fn run(args: &[String]) -> ExitCode {
         Err(diags) => report(&sources, &diags),
         Ok(Err(trap)) => trap.report_and_exit(),
         Ok(Ok(code)) => a0_runtime::exit(code),
+    }
+}
+
+struct BuildArgs {
+    file: String,
+    output: Option<String>,
+    target: Target,
+    optimize: bool,
+}
+
+fn parse_build_args(args: &[String]) -> Result<BuildArgs, String> {
+    let mut file = None;
+    let mut output = None;
+    let mut target = Target::host();
+    let mut optimize = true;
+    let mut it = args.iter();
+    while let Some(arg) = it.next() {
+        match arg.as_str() {
+            "-o" => output = Some(it.next().ok_or("-o needs a path")?.clone()),
+            "--target" => {
+                let name = it.next().ok_or("--target needs a target name")?;
+                target = Some(Target::parse(name)?);
+            }
+            "--no-opt" => optimize = false,
+            other if other.starts_with('-') => return Err(format!("unknown option {other}")),
+            other => {
+                if file.replace(other.to_string()).is_some() {
+                    return Err("only one input file is allowed".to_string());
+                }
+            }
+        }
+    }
+    Ok(BuildArgs {
+        file: file.ok_or("missing input file")?,
+        output,
+        target: target.ok_or("the host is not a supported target; pass --target")?,
+        optimize,
+    })
+}
+
+fn build(args: &[String], executable: bool) -> ExitCode {
+    let args = match parse_build_args(args) {
+        Ok(a) => a,
+        Err(e) => {
+            eprintln!("a0: {e}
+");
+            eprint!("{USAGE}");
+            return ExitCode::from(2);
+        }
+    };
+    let mut sources = SourceMap::new();
+    let module = match load(&args.file, &mut sources) {
+        Ok(m) => m,
+        Err(c) => return c,
+    };
+    let stem = std::path::Path::new(&args.file)
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "a".to_string());
+    let result = if executable {
+        let output = args
+            .output
+            .unwrap_or_else(|| format!("{stem}{}", args.target.exe_suffix()));
+        let opts = a0_native::BuildOptions {
+            no_optimize: !args.optimize,
+            ..Default::default()
+        };
+        a0_native::build_executable(&module, args.target, std::path::Path::new(&output), &opts)
+    } else {
+        let output = args
+            .output
+            .unwrap_or_else(|| format!("{stem}{}", args.target.object_suffix()));
+        let opts = a0_native::CodegenOptions {
+            optimize: args.optimize,
+            entry_point: false,
+        };
+        a0_native::compile_object(&module, args.target, &opts).and_then(|bytes| {
+            std::fs::write(&output, bytes).map_err(|e| {
+                a0_diag::Diagnostic::error("io", &format!("cannot write {output}: {e}")).into()
+            })
+        })
+    };
+    match result {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(d) => report(&sources, &d),
     }
 }
