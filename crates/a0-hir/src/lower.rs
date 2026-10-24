@@ -31,15 +31,41 @@ const WORD_ANY: u8 = 2;
 const KEY_RAW: i64 = 0;
 const KEY_STRING: i64 = 1;
 
-/// Lowers a checked module to a core IR module with a `@main` entry point.
+/// How to lower a module.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct LowerOptions {
+    /// Run the HIR optimizer (`opt.rs`) first.
+    pub optimize: bool,
+}
+
+impl Default for LowerOptions {
+    /// Optimized, unless the environment variable `A0_OPT` is `0`.
+    fn default() -> Self {
+        LowerOptions {
+            optimize: std::env::var("A0_OPT").map_or(true, |v| v != "0"),
+        }
+    }
+}
+
+/// Lowers a checked module to a core IR module with a `@main` entry point, optimized unless
+/// `A0_OPT=0` (see [`LowerOptions`]).
 pub fn lower(m: &HirModule) -> Result<a0_ir::Module, Diagnostics> {
+    lower_with(m, LowerOptions::default())
+}
+
+pub fn lower_with(m: &HirModule, options: LowerOptions) -> Result<a0_ir::Module, Diagnostics> {
     let entry = crate::check::check_entry(m);
     if entry.has_errors() {
         return Err(entry);
     }
     // Generic items become one copy per use; lowering itself never sees a type parameter.
-    let mono = crate::mono::monomorphize(m)?;
-    let m = mono.as_ref().unwrap_or(m);
+    let mut owned = crate::mono::monomorphize(m)?;
+    if options.optimize {
+        let mut o = owned.unwrap_or_else(|| m.clone());
+        crate::opt::optimize(&mut o);
+        owned = Some(o);
+    }
+    let m = owned.as_ref().unwrap_or(m);
     let mut l = Lowerer::new(m);
     l.run();
     match l.b.finish() {

@@ -29,13 +29,14 @@ mod frontend;
 mod lower;
 mod model;
 mod mono;
+mod opt;
 mod print;
 mod text;
 mod types;
 
 pub use builder::{HirBuilder, KEYWORDS};
 pub use check::{check, check_entry};
-pub use lower::lower;
+pub use lower::{LowerOptions, lower, lower_with};
 pub use model::{
     ArmId, BinOp, BodyId, Builtin, EnumId, ExprId, ExternId, FuncId, GlobalId, HirModule, Item,
     LocalId, StructId, TypeId, TypeTag, UnOp,

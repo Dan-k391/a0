@@ -15,6 +15,10 @@ description: Run and debug A0's differential tests, which require the interprete
 | Minnow `examples/minnow/tests/programs/*.mn` | `examples/minnow/tests/minnow.rs` | interpreted, native, interpreted + `A0_GC_STRESS=1` |
 | Lox official suite | `examples/lox/tests/suite.rs` | interpreted, native, interpreted + `A0_GC_STRESS=1` |
 
+Every HIR-based mode runs twice: optimized (the default) and with `A0_OPT=0`. A difference between
+the two is an optimizer bug: compare `a0 lower prog.hir` with and without `A0_OPT=0`, and shrink the
+program until one rewrite in `crates/a0-hir/src/opt.rs` explains it.
+
 ```
 cargo test -p a0 --test programs
 cargo test -p kaleidoscope

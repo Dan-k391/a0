@@ -140,24 +140,30 @@ fn check_programs(run: &dyn Fn(&Path) -> Output) {
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
 
-#[test]
-fn interpreted_programs_match_expectations() {
-    check_programs(&|file| run(Command::new(env!("CARGO_BIN_EXE_a0")).arg("run").arg(file)));
-}
+// Every mode runs with the HIR optimizer on (the default) and off (`A0_OPT=0`); both must give the
+// expected output.
 
-#[test]
-fn interpreted_programs_survive_gc_stress() {
+fn interpreted(opt: &str) {
     check_programs(&|file| {
         run(Command::new(env!("CARGO_BIN_EXE_a0"))
             .arg("run")
             .arg(file)
-            .env("A0_GC_STRESS", "1"))
+            .env("A0_OPT", opt))
     });
 }
 
-#[test]
-fn native_programs_match_expectations() {
-    let dir = scratch_dir("native");
+fn gc_stress(opt: &str) {
+    check_programs(&|file| {
+        run(Command::new(env!("CARGO_BIN_EXE_a0"))
+            .arg("run")
+            .arg(file)
+            .env("A0_GC_STRESS", "1")
+            .env("A0_OPT", opt))
+    });
+}
+
+fn native(opt: &str) {
+    let dir = scratch_dir(&format!("native-{opt}"));
     check_programs(&|file| {
         let exe = dir.join(format!(
             "{}{}",
@@ -171,7 +177,8 @@ fn native_programs_match_expectations() {
             .arg("build")
             .arg(file)
             .arg("-o")
-            .arg(&exe));
+            .arg(&exe)
+            .env("A0_OPT", opt));
         assert!(
             build.status.success(),
             "building {} failed:\n{}",
@@ -181,6 +188,36 @@ fn native_programs_match_expectations() {
         run(&mut Command::new(&exe))
     });
     std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn interpreted_programs_match_expectations() {
+    interpreted("1");
+}
+
+#[test]
+fn interpreted_programs_survive_gc_stress() {
+    gc_stress("1");
+}
+
+#[test]
+fn native_programs_match_expectations() {
+    native("1");
+}
+
+#[test]
+fn unoptimized_interpreted_programs_match_expectations() {
+    interpreted("0");
+}
+
+#[test]
+fn unoptimized_interpreted_programs_survive_gc_stress() {
+    gc_stress("0");
+}
+
+#[test]
+fn unoptimized_native_programs_match_expectations() {
+    native("0");
 }
 
 #[test]

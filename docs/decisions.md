@@ -236,3 +236,15 @@ reported once; earlier, an error typed `never` could not fix an inference variab
 then produced follow-on errors. And diagnostics show types in the language's own syntax
 (`set_type_syntax`), while the text format keeps the HIR's. Item names may be anything; the text
 format quotes those that are keywords (`` `map` ``) instead of making frontends rename them.
+
+## D27. An optimizer of our own, on the HIR, on by default
+
+Cranelift optimizes each function well but does not inline, and it cannot know what an `any` holds.
+Languages on the HIR express their semantics as small HIR functions (Lox's operators are prelude
+functions), so calls and `any` boxing dominate their run time. The optimizer works on the
+monomorphized HIR, where types are concrete: it inlines small functions (turning mid-function
+`return`s into `if` values), decides `is`/`as` on `any` statically where the boxed type is known,
+and cleans up (constants, copies, dead code). It is about 820 lines, runs in linear passes, is on by
+default for every HIR language with no frontend work, and `A0_OPT=0` turns it off. It never removes
+or duplicates an expression with an effect. Languages that emit the core IR directly (Kaleidoscope)
+do not get it; an inliner on the core IR would be the next step if one needs it.

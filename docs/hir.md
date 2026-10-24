@@ -218,6 +218,26 @@ replaced generic items with one copy per combination of type arguments:
   (`a0: trap: ...`, exit 101).
 - `a0 lower prog.hir` prints the core IR a module lowers to; `a0 run`/`a0 build` accept `.hir` files.
 
+## Optimization
+
+Before lowering, the HIR optimizer (`opt.rs`) runs on the monomorphized module. It is on by default,
+needs nothing from frontends, and `A0_OPT=0` (or `LowerOptions { optimize: false }`) turns it off.
+It complements Cranelift, which optimizes within each function:
+
+- **Inlining** of small functions (up to 80 nodes, no closures inside, not calling themselves), three
+  levels deep. A `return` in the middle of an inlined function becomes the value of an `if`
+  (`if c { return a } rest` is `if c { a } else { rest }`); functions with other `return`s stay calls.
+- **`any` folding.** `(x as any) is T` and `(x as any) as T` are decided from `x`'s type, also through
+  a local: `let v = <... x as any>` (never reassigned) becomes `let raw = <... x>; let v = raw as
+  any`, so tests of `v` fold and `v as T` reads `raw`.
+- **Simplification**: constant `if`, `&&`, `||` and `!`; casts to the same type; copies of locals and
+  of constants; unused locals and statements without effects; nested blocks; code after something
+  that never finishes.
+
+Only expressions without effects are removed or duplicated, so traps, panics, output and evaluation
+order stay as written. Every test program runs optimized and unoptimized, interpreted, native and
+under GC stress, and all must agree.
+
 ## Not yet
 
 Bounds on type parameters, methods, interfaces, exceptions, iteration protocols, float map keys, and

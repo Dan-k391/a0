@@ -334,3 +334,25 @@ fn reused_nodes_and_open_types_are_reported() {
         "{err}"
     );
 }
+
+#[test]
+fn the_optimizer_inlines_small_functions_and_folds_any_tests() {
+    let m = parse_ok(
+        "module \"m\";\nfn truthy(v: any) -> bool {\n  if v is unit { false } else if v is bool { v as bool } else { true }\n}\nfn main() -> int {\n  let n = 3;\n  if truthy((n > 2) as any) { 1 } else { 0 }\n}\n",
+    );
+    let main_of = |optimize: bool| {
+        let ir = lower_with(&m, LowerOptions { optimize })
+            .unwrap()
+            .to_string();
+        let start = ir.find("func @hir.main(").unwrap();
+        let end = ir[start..].find("\n}\n").unwrap();
+        ir[start..start + end].to_string()
+    };
+    let plain = main_of(false);
+    assert!(plain.contains("call @hir.truthy"), "{plain}");
+    let optimized = main_of(true);
+    // Inlined, and `((n > 2) as any) is bool` is known, so no `any` is ever built or tested.
+    assert!(!optimized.contains("call @hir.truthy"), "{optimized}");
+    assert!(!optimized.contains("select"), "{optimized}");
+    assert!(!optimized.contains("a0_any"), "{optimized}");
+}

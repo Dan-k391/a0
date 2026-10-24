@@ -1,0 +1,84 @@
+// Small functions are inlined by the optimizer; their early returns, argument order and effects
+// must behave exactly as calls do (the harness also runs with A0_OPT=0).
+// expect-stdout: sign -1 0 1
+// expect-stdout: classify small big huge
+// expect-stdout: args a b c -> abc
+// expect-stdout: unit ok
+// expect-stdout: truthy false true true true
+// expect-stdout: nested 7
+// expect-stdout: shape 3 4 0
+// expect-stdout: unused effect
+// expect-stdout: fold 2
+module "inline";
+
+enum Shape { Square(int), Rect(int, int), Empty }
+
+fn sign(n: int) -> int {
+  if n < 0 { return -1; }
+  if n == 0 { return 0; }
+  1
+}
+
+fn classify(n: int) -> string {
+  if n < 10 {
+    return "small";
+  } else if n < 100 {
+    return "big";
+  }
+  "huge"
+}
+
+fn note(s: string) -> string {
+  print(s + " ");
+  s
+}
+
+fn join3(a: string, b: string, c: string) -> string {
+  a + b + c
+}
+
+fn check(n: int) {
+  if n > 0 { return; }
+  print("never\n");
+}
+
+fn truthy(v: any) -> bool {
+  if v is unit { false } else if v is bool { v as bool } else { true }
+}
+
+fn inc(n: int) -> int { n + 1 }
+fn twice(n: int) -> int { inc(inc(n)) }
+
+fn area(s: Shape) -> int {
+  match s {
+    Square(x) => { return x; },
+    Rect(w, h) => w + h - 3,
+    Empty => 0,
+  }
+}
+
+fn effect() -> int {
+  print("effect\n");
+  1
+}
+
+fn main() -> int {
+  print("sign " + str(sign(-5)) + " " + str(sign(0)) + " " + str(sign(9)) + "\n");
+  print("classify " + classify(3) + " " + classify(30) + " " + classify(300) + "\n");
+  print("args ");
+  let joined = join3(note("a"), note("b"), note("c"));
+  print("-> " + joined + "\n");
+  check(1);
+  print("unit ok\n");
+  print("truthy " + str(truthy(() as any)) + " " + str(truthy(true as any)) + " "
+    + str(truthy(1.5 as any)) + " " + str(truthy("x" as any)) + "\n");
+  print("nested " + str(twice(5)) + "\n");
+  print("shape " + str(area(Shape::Square(3))) + " " + str(area(Shape::Rect(3, 4))) + " "
+    + str(area(Shape::Empty)) + "\n");
+  print("unused ");
+  let unused = effect();
+  let k = 1;
+  let copy = k;
+  print("fold " + str(copy + 1) + "\n");
+  0
+}

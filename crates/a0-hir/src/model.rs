@@ -248,12 +248,14 @@ pub(crate) enum ExprKind {
     Block(Vec<ExprId>, Option<ExprId>),
 }
 
+#[derive(Clone)]
 pub(crate) struct ExprData {
     pub kind: ExprKind,
     pub ty: TypeId,
     pub span: Option<Span>,
 }
 
+#[derive(Clone)]
 pub(crate) struct ArmData {
     /// The variant matched, or `None` for `_`.
     pub variant: Option<u32>,
@@ -261,6 +263,7 @@ pub(crate) struct ArmData {
     pub body: ExprId,
 }
 
+#[derive(Clone)]
 pub(crate) struct StructDef {
     pub name: String,
     pub type_params: Vec<String>,
@@ -268,11 +271,13 @@ pub(crate) struct StructDef {
     pub span: Option<Span>,
 }
 
+#[derive(Clone)]
 pub(crate) struct VariantDef {
     pub name: String,
     pub fields: Vec<TypeId>,
 }
 
+#[derive(Clone)]
 pub(crate) struct EnumDef {
     pub name: String,
     pub type_params: Vec<String>,
@@ -280,12 +285,14 @@ pub(crate) struct EnumDef {
     pub span: Option<Span>,
 }
 
+#[derive(Clone)]
 pub(crate) struct GlobalDef {
     pub name: String,
     pub ty: TypeId,
     pub span: Option<Span>,
 }
 
+#[derive(Clone)]
 pub(crate) struct ExternDef {
     pub name: String,
     pub params: Vec<TypeId>,
@@ -293,6 +300,7 @@ pub(crate) struct ExternDef {
     pub span: Option<Span>,
 }
 
+#[derive(Clone)]
 pub(crate) struct FuncDef {
     pub name: String,
     pub type_params: Vec<String>,
@@ -302,6 +310,7 @@ pub(crate) struct FuncDef {
     pub local_names: HashSet<String>,
 }
 
+#[derive(Clone)]
 pub(crate) struct BodyData {
     pub params: Vec<LocalId>,
     /// The parameters' names as the frontend gave them (locals may be renamed to keep them unique).
@@ -313,6 +322,7 @@ pub(crate) struct BodyData {
     pub func: FuncId,
 }
 
+#[derive(Clone)]
 pub(crate) struct LocalData {
     pub name: String,
     pub ty: TypeId,
@@ -331,6 +341,7 @@ pub enum Item {
 }
 
 /// A HIR module. Build it with [`crate::HirBuilder`] or [`crate::parse`].
+#[derive(Clone)]
 pub struct HirModule {
     pub(crate) name: String,
     pub(crate) types: Vec<TypeKind>,

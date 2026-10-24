@@ -99,28 +99,23 @@ fn check_all(mode: &str, run_one: &dyn Fn(&Path) -> Output) {
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
 
-#[test]
-fn programs_run_in_the_interpreter() {
-    check_all("interpreted", &|f| {
-        run(Command::new(env!("CARGO_BIN_EXE_minnow")).arg("run").arg(f))
+// Every mode runs with the HIR optimizer on (the default) and off (`A0_OPT=0`).
+
+fn interpreted(mode: &str, opt: &str, stress: bool) {
+    check_all(mode, &|f| {
+        let mut cmd = Command::new(env!("CARGO_BIN_EXE_minnow"));
+        cmd.arg("run").arg(f).env("A0_OPT", opt);
+        if stress {
+            cmd.env("A0_GC_STRESS", "1");
+        }
+        run(&mut cmd)
     });
 }
 
-#[test]
-fn programs_survive_gc_stress() {
-    check_all("GC stress", &|f| {
-        run(Command::new(env!("CARGO_BIN_EXE_minnow"))
-            .arg("run")
-            .arg(f)
-            .env("A0_GC_STRESS", "1"))
-    });
-}
-
-#[test]
-fn programs_run_natively() {
-    let dir = std::env::temp_dir().join(format!("minnow-test-{}", std::process::id()));
+fn native(mode: &str, opt: &str) {
+    let dir = std::env::temp_dir().join(format!("minnow-test-{opt}-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
-    check_all("native", &|f| {
+    check_all(mode, &|f| {
         let exe = dir.join(format!(
             "{}{}",
             f.file_stem().unwrap().to_string_lossy(),
@@ -130,13 +125,44 @@ fn programs_run_natively() {
             .arg("build")
             .arg(f)
             .arg("-o")
-            .arg(&exe));
+            .arg(&exe)
+            .env("A0_OPT", opt));
         if !build.status.success() {
             return build;
         }
         run(&mut Command::new(&exe))
     });
     std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn programs_run_in_the_interpreter() {
+    interpreted("interpreted", "1", false);
+}
+
+#[test]
+fn programs_survive_gc_stress() {
+    interpreted("GC stress", "1", true);
+}
+
+#[test]
+fn programs_run_natively() {
+    native("native", "1");
+}
+
+#[test]
+fn unoptimized_programs_run_in_the_interpreter() {
+    interpreted("unoptimized, interpreted", "0", false);
+}
+
+#[test]
+fn unoptimized_programs_survive_gc_stress() {
+    interpreted("unoptimized, GC stress", "0", true);
+}
+
+#[test]
+fn unoptimized_programs_run_natively() {
+    native("unoptimized, native", "0");
 }
 
 /// Compiles `src` and returns each error as `line:col: message`.

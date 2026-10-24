@@ -21,7 +21,7 @@ it green; a test that only passes on one OS is a bug.
 Needs a C compiler: MSVC on Windows (found automatically), `cc` on Linux/macOS. Useful while
 debugging: `a0 run|build|fmt|check file.a0ir|file.hir`, `a0 lower file.hir` (the core IR a HIR
 module becomes), `a0 parse lang.a0g input`, `lox hir|ir file.lox`, `minnow hir|ir file.mn`, `kaleidoscope ir file.k`, and
-`A0_GC_STRESS=1` (the collector runs on every allocation).
+`A0_GC_STRESS=1` (the collector runs on every allocation), `A0_OPT=0` (no HIR optimizer).
 
 ## Layer map and dependency rules
 
@@ -63,12 +63,13 @@ layer, decision D17). A new crate goes into the table above and into `[workspace
 - Every change comes with tests in the crate it touches; bugs get a regression test.
 - **Differential testing**: core IR programs in `tests/programs/*.a0ir` and HIR programs in
   `tests/hir/*.hir` declare `expect-stdout:`, `expect-stderr:` and `expect-exit:` (after `;` or `//`)
-  and run interpreted, natively, and interpreted with `A0_GC_STRESS=1`
-  (`crates/a0/tests/programs.rs`). Add a program there for any new IR, HIR or runtime behavior.
+  and run interpreted, natively, and interpreted with `A0_GC_STRESS=1`, each with the HIR optimizer
+  on and off (`A0_OPT=0`) (`crates/a0/tests/programs.rs`). Add a program there for any new IR, HIR,
+  optimizer or runtime behavior.
 - HIR text must round-trip: `print(parse(print(m))) == print(m)` is tested for every corpus file.
 - Example languages test interpreted and native output (`examples/*/tests`); languages on the HIR
-  (Lox, Minnow) also run under GC stress. The Lox suite must stay
-  at all 241 passing in all three modes (interpreted, native, GC stress).
+  (Lox, Minnow) also run under GC stress, optimized and not. The Lox suite must stay at all 241
+  passing in all six modes.
 - Object emission is checked for every supported target except aarch64-windows (out of scope).
 - Runtime or GC changes: run the Lox suite under GC stress, and prove the stress test still fails
   when roots are broken if you touch rooting.

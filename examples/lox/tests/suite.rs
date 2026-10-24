@@ -327,27 +327,23 @@ fn run_suite(mode: &str, run: &(dyn Fn(&str, &Path) -> Output + Sync)) {
     eprintln!("{mode}: all {passed} tests passed");
 }
 
-#[test]
-fn suite_interpreted() {
-    run_suite("interpreted", &|_, path| {
-        run(Command::new(env!("CARGO_BIN_EXE_lox")).arg(path))
+// Every mode runs with the HIR optimizer on (the default) and off (`A0_OPT=0`).
+
+fn interpreted(mode: &str, opt: &str, stress: bool) {
+    run_suite(mode, &|_, path| {
+        let mut cmd = Command::new(env!("CARGO_BIN_EXE_lox"));
+        cmd.arg(path).env("A0_OPT", opt);
+        if stress {
+            cmd.env("A0_GC_STRESS", "1");
+        }
+        run(&mut cmd)
     });
 }
 
-#[test]
-fn suite_interpreted_with_gc_stress() {
-    run_suite("interpreted, GC stress", &|_, path| {
-        run(Command::new(env!("CARGO_BIN_EXE_lox"))
-            .arg(path)
-            .env("A0_GC_STRESS", "1"))
-    });
-}
-
-#[test]
-fn suite_native() {
-    let dir = std::env::temp_dir().join(format!("lox-suite-{}", std::process::id()));
+fn native(mode: &str, opt: &str) {
+    let dir = std::env::temp_dir().join(format!("lox-suite-{opt}-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
-    run_suite("native", &|rel, path| {
+    run_suite(mode, &|rel, path| {
         let exe = dir.join(format!(
             "{}{}",
             rel.replace('/', "_"),
@@ -357,7 +353,8 @@ fn suite_native() {
             .arg("build")
             .arg(path)
             .arg("-o")
-            .arg(&exe));
+            .arg(&exe)
+            .env("A0_OPT", opt));
         if !build.status.success() {
             // Compile errors are reported by the compiler, as they are when interpreting.
             return build;
@@ -365,6 +362,36 @@ fn suite_native() {
         run(&mut Command::new(&exe))
     });
     std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn suite_interpreted() {
+    interpreted("interpreted", "1", false);
+}
+
+#[test]
+fn suite_interpreted_with_gc_stress() {
+    interpreted("interpreted, GC stress", "1", true);
+}
+
+#[test]
+fn suite_native() {
+    native("native", "1");
+}
+
+#[test]
+fn suite_unoptimized_interpreted() {
+    interpreted("unoptimized, interpreted", "0", false);
+}
+
+#[test]
+fn suite_unoptimized_interpreted_with_gc_stress() {
+    interpreted("unoptimized, interpreted, GC stress", "0", true);
+}
+
+#[test]
+fn suite_unoptimized_native() {
+    native("unoptimized, native", "0");
 }
 
 #[test]
