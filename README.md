@@ -67,8 +67,9 @@ cargo build
 cargo test
 ```
 
-`cargo test` runs everything, including the Lox suite three ways and every IR program and Kaleidoscope
-program through both backends.
+`cargo test` runs everything: every IR, HIR, Kaleidoscope and Minnow program through both backends,
+the HIR and Minnow programs and the Lox suite also under GC stress (`A0_GC_STRESS=1`), and the
+compile-error tests. CI runs the same on Linux, macOS and Windows.
 
 ## Using the tools
 
