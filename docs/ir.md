@@ -17,7 +17,7 @@ A **module** is an ordered list of items. Every item has a symbol name that is u
 | Item | Text | Meaning |
 |---|---|---|
 | data | `data @msg = "hi\0a"` | Read-only bytes. |
-| global | `global @n: i64 = 0` | One mutable scalar, initialized. |
+| global | `global @n: i64 = 0` | One mutable scalar, initialized, exported under its name. |
 | extern function | `extern func @sin(f64) -> f64` | Defined outside the module (C ABI). |
 | function | `func @f(%x: f64) -> f64 { ... }` | Defined here; always exported under its name. |
 

@@ -1,0 +1,20 @@
+[package]
+name = "a0-native"
+description = "Native code for A0 IR through Cranelift, linked by the system linker"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+a0-diag.workspace = true
+a0-ir.workspace = true
+a0-target.workspace = true
+a0-runtime.workspace = true
+cranelift-codegen = { version = "0.137", features = ["x86", "arm64"] }
+cranelift-frontend = "0.137"
+cranelift-module = "0.137"
+cranelift-object = "0.137"
+cc = "1.2"
+
+[dev-dependencies]
+object = "0.40"
