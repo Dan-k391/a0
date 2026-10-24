@@ -84,13 +84,17 @@ Both example languages need precedence parsing. Fixed tables are declared in the
 Pratt parser with prefix, infix and postfix forms). Tables that programs extend (Kaleidoscope's
 `def binary| 5`) are parsed as flat chains and resolved later with `resolve_precedence`.
 
-## D12. The semantic toolkit starts with scopes only
+## D12. The semantic toolkit starts with scopes only (superseded by D21)
+
+*Superseded: `a0-sema` gained static types (D21) once Minnow, a typed language, needed them.*
 
 `a0-sema` provides lexical scopes (declare, define, resolve, capture detection), which both example
 languages need. A type checker is not built yet: Kaleidoscope has a single type and Lox is dynamically
 typed, so there is no second language to generalize from (see the fundamentals).
 
-## D13. Lox's object model and garbage collector live in Lox's runtime
+## D13. Lox's object model and garbage collector live in Lox's runtime (superseded by D16)
+
+*Superseded: the collector, strings and maps moved into `a0rt` (D16), and Lox's C runtime is gone.*
 
 Only Lox needs garbage collection, strings and hash tables so far, so they are in
 `examples/lox/runtime/lox.c` rather than in `a0rt`, following "generalize only when two or more
@@ -114,6 +118,12 @@ floats unboxed, `()`/booleans as NaN patterns, references as tagged pointers, `i
 therefore never allocate, and type tests are a few bit operations in the generated code. Enums alone
 would have forced a heap object per number.
 
+Later (phase 3): integers that fit in 48 bits are stored inline under their own tag
+(`0x7ffe` in the top 16 bits) and only larger ones are boxed, so the common case does not allocate.
+Each integer has exactly one encoding, which keeps equality a word comparison for inline integers.
+References keep the low 48 bits of the pointer; user-space addresses fit on every supported target,
+and the collector panics if an address it hands out does not, instead of corrupting references.
+
 ## D16. One precise collector in `a0rt`, generalized from Lox's (supersedes D13)
 
 The default runtime owns the garbage collector. It is Lox's design made general: objects carry a type
@@ -121,6 +131,8 @@ descriptor with a per-word layout (raw, reference, `any`); roots are the shadow 
 `any` encoding), registered globals and C-side temporaries; collection is mark-sweep with an explicit
 gray stack; `A0_GC_STRESS=1` collects on every allocation. It works the same in the interpreter and in
 native code and needs nothing from Cranelift. Strings are not interned; maps hash them by content.
+Equality compares cached hashes before contents, so comparing the same long strings repeatedly is
+O(1) after the first time.
 References are nullable because languages need cyclic and optional structures; a null dereference
 panics.
 

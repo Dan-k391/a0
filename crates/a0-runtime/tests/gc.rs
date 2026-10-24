@@ -185,6 +185,26 @@ unsafe fn dynamic_values() {
         assert_eq!(a0_any_is_int(i), 1);
         assert_eq!(a0_any_to_int(i), -7);
         assert_eq!(a0_any_eq(i, a0_any_from_int(-7)), 1);
+        // 48-bit integers are inline, the rest boxed; the boundaries round-trip either way.
+        for v in [
+            (1i64 << 47) - 1,
+            -(1 << 47),
+            1 << 47,
+            -(1 << 47) - 1,
+            i64::MAX,
+            i64::MIN,
+            0,
+        ] {
+            let w = a0_any_from_int(v);
+            assert_eq!((a0_any_is_int(w), a0_any_to_int(w)), (1, v));
+            assert_eq!(a0_any_eq(w, a0_any_from_int(v)), 1);
+            assert_eq!(a0_any_eq(w, a0_any_from_int(v.wrapping_add(1))), 0);
+        }
+        assert_eq!(
+            a0_any_from_int(5) >> 48,
+            0x7ffe,
+            "small ints carry the int tag"
+        );
         assert_eq!(
             a0_any_eq(i, a0_any_from_float(-7.0)),
             0,
@@ -248,6 +268,8 @@ unsafe fn collection() {
         *frame.add(1) = any(arr);
         a0_array_push(arr, any(s("in array")));
         a0_array_push(arr, a0_any_from_int(9));
+        assert_eq!(live(), 3 + 2, "small ints are inline, not objects");
+        a0_array_push(arr, a0_any_from_int(1 << 50));
         a0_array_push(arr, a0_any_from_float(2.0));
         assert_eq!(live(), 3 + 3, "array, a string and a boxed int");
 

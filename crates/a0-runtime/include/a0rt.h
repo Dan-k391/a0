@@ -150,16 +150,22 @@ int64_t a0_gc_live_objects(void);
 
 /* ---- Dynamic values (`any`) ----------------------------------------------------------------- *
  * NaN-boxed 64-bit words: doubles as themselves (NaNs canonicalized), unit and booleans as special
- * NaN patterns, references as A0_ANY_REF_TAG | pointer (a null pointer boxes to unit), and 64-bit
- * integers as boxed heap objects. */
+ * NaN patterns, references as A0_ANY_REF_TAG | pointer (a null pointer boxes to unit), integers that
+ * fit in 48 bits as A0_ANY_INT_TAG | their low 48 bits, and other integers as boxed heap objects.
+ * Every integer has exactly one encoding, so equal inline integers are equal words.
+ *
+ * References keep only the low 48 bits of the pointer. The collector checks that every heap address
+ * it hands out fits (a0_gc_alloc panics otherwise), which holds for user space on every supported
+ * target. */
 #define A0_ANY_QNAN 0x7ffc000000000000ull
 #define A0_ANY_REF_TAG 0xfffc000000000000ull
+#define A0_ANY_INT_TAG 0x7ffe000000000000ull
 #define A0_ANY_UNIT (A0_ANY_QNAN | 1)
 #define A0_ANY_FALSE (A0_ANY_QNAN | 2)
 #define A0_ANY_TRUE (A0_ANY_QNAN | 3)
 
 uint64_t a0_any_from_float(double value);
-uint64_t a0_any_from_int(int64_t value); /* allocates */
+uint64_t a0_any_from_int(int64_t value); /* allocates if the value does not fit in 48 bits */
 uint64_t a0_any_from_ref(void *object);
 int64_t a0_any_is_int(uint64_t value);
 int64_t a0_any_is_string(uint64_t value);

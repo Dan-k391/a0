@@ -87,11 +87,18 @@ typedef struct FreeCell {
 
 static FreeCell *free_lists[SMALL_LIMIT / GRANULE + 1];
 
+/* `any` keeps only the low 48 bits of a reference (see a0rt.h). User-space addresses fit on every
+ * supported target; check rather than corrupt references silently where they might not. */
+static void *check_address(void *p, size_t size) {
+    if (p == NULL) a0_panic("out of memory");
+    if (((uintptr_t)p + size) >> 48 != 0) a0_panic("heap address does not fit in 48 bits");
+    return p;
+}
+
 static Header *small_alloc(size_t size) {
     size_t cls = size / GRANULE;
     if (free_lists[cls] == NULL) {
-        char *chunk = (char *)malloc(CHUNK_SIZE);
-        if (chunk == NULL) a0_panic("out of memory");
+        char *chunk = (char *)check_address(malloc(CHUNK_SIZE), CHUNK_SIZE);
         for (size_t off = 0; off + size <= CHUNK_SIZE; off += size) {
             FreeCell *c = (FreeCell *)(chunk + off);
             c->next = free_lists[cls];
@@ -120,8 +127,7 @@ static void object_free(Header *h) {
 void *a0_gc_alloc(const A0Type *type, size_t payload_size) {
     size_t size = (sizeof(Header) + payload_size + GRANULE - 1) / GRANULE * GRANULE;
     maybe_collect(size);
-    Header *h = size <= SMALL_LIMIT ? small_alloc(size) : (Header *)calloc(1, size);
-    if (h == NULL) a0_panic("out of memory");
+    Header *h = size <= SMALL_LIMIT ? small_alloc(size) : (Header *)check_address(calloc(1, size), size);
     h->type = type;
     h->size = size;
     h->next = objects;

@@ -130,7 +130,8 @@ enum (true for every variant).
 `()` by value, other references by identity, different types are unequal.
 
 `any` is NaN-boxed into 64 bits: floats are stored as themselves (NaNs canonicalized), `()` and the
-booleans are special NaN patterns, references are tagged pointers, and `int`s are boxed on the heap.
+booleans are special NaN patterns, references are tagged pointers, `int`s that fit in 48 bits are
+stored inline, and larger `int`s are boxed on the heap.
 Boxing a null reference yields `()`.
 
 ## Closures

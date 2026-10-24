@@ -323,6 +323,28 @@ One entry per milestone: what was done, what changed along the way, and open que
    explicit generic functions; the HIR has no generics, so they would be monomorphized by the
    frontend. Which, if either, is wanted?
 
+## M10. Known issues from phase 2
+
+**Done**
+
+- `any` stores integers that fit in 48 bits inline (D15); only larger ones are boxed. The runtime
+  tests cover the boundaries, and `tests/hir/dynamic.hir` checks inline and boxed integers in all
+  three modes.
+- The 48-bit address assumption of tagged references is documented in `a0rt.h` and D15 and checked:
+  the collector panics if a heap address it hands out does not fit, instead of corrupting references.
+- String equality compares cached hashes before contents (D16), so comparing the same long strings
+  again is O(1).
+- D12 and D13 are marked as superseded.
+
+**Changed**
+
+- Lox's `string_equality` benchmark did not get faster: its time goes into calls, not into comparing
+  strings. The optimizer (M15) is where that is addressed.
+
+**Open questions**
+
+- None.
+
 ## Overall open questions
 
 These need a decision from you:

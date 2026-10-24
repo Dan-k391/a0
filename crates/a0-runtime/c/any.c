@@ -18,7 +18,14 @@ uint64_t a0_any_from_float(double value) {
     return w;
 }
 
+#define INLINE_INT_LIMIT ((int64_t)1 << 47)
+
+static int is_inline_int(uint64_t w) { return (w >> 48) == (A0_ANY_INT_TAG >> 48); }
+
 uint64_t a0_any_from_int(int64_t value) {
+    if (value >= -INLINE_INT_LIMIT && value < INLINE_INT_LIMIT) {
+        return A0_ANY_INT_TAG | ((uint64_t)value & 0x0000ffffffffffffull);
+    }
     A0BoxedInt *b = (A0BoxedInt *)a0_gc_alloc(&a0_builtin_int, sizeof(A0BoxedInt));
     b->value = value;
     return A0_ANY_REF_TAG | (uint64_t)(uintptr_t)b;
@@ -33,7 +40,9 @@ static const A0Type *ref_type(uint64_t w) {
     return a0_gc_type_of(A0_ANY_PTR(w));
 }
 
-int64_t a0_any_is_int(uint64_t value) { return ref_type(value) == &a0_builtin_int; }
+int64_t a0_any_is_int(uint64_t value) {
+    return is_inline_int(value) || ref_type(value) == &a0_builtin_int;
+}
 
 int64_t a0_any_is_string(uint64_t value) { return ref_type(value) == &a0_builtin_string; }
 
@@ -46,6 +55,7 @@ static const char *type_name(uint64_t w) {
     if (A0_ANY_IS_FLOAT(w)) return "float";
     if (w == A0_ANY_UNIT) return "unit";
     if (w == A0_ANY_TRUE || w == A0_ANY_FALSE) return "bool";
+    if (is_inline_int(w)) return "int";
     const A0Type *t = ref_type(w);
     if (t == NULL) return "unknown";
     return t->family->name;
@@ -60,6 +70,8 @@ void a0_any_cast_failed(uint64_t value, const uint8_t *expected, int64_t len) {
 
 int64_t a0_any_to_int(uint64_t value) {
     if (!a0_any_is_int(value)) a0_any_cast_failed(value, (const uint8_t *)"int", 3);
+    /* Shift the 48-bit payload to the top and back to sign-extend it. */
+    if (is_inline_int(value)) return (int64_t)(value << 16) >> 16;
     return ((A0BoxedInt *)A0_ANY_PTR(value))->value;
 }
 

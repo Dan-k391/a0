@@ -8,6 +8,9 @@
 // expect-stdout: Some is Opt
 // expect-stdout: eq: true true false true false true
 // expect-stdout: nan: false
+// expect-stdout: ints: 140737488355327 -140737488355328 140737488355328 -140737488355329 9223372036854775807
+// expect-stdout: ints eq: true true false true
+// expect-stdout: long strings: true false true
 module "dynamic";
 
 struct Box { v: int }
@@ -56,5 +59,22 @@ fn main() -> int {
     + str(() as any == null<Box> as any) + "\n");
   let nan = (0.0 / 0.0) as any;
   print("nan: " + str(nan == nan) + "\n");
+  // Integers that fit in 48 bits are stored inline, others are boxed; both behave the same.
+  let ints = [140737488355327 as any, -140737488355328 as any, 140737488355328 as any,
+    -140737488355329 as any, 9223372036854775807 as any];
+  let line = "ints:";
+  let k = 0;
+  while k < len(ints) {
+    if ints[k] is int { line = line + " " + str(ints[k] as int); }
+    k = k + 1;
+  }
+  print(line + "\n");
+  let big = 140737488355328 as any;
+  print("ints eq: " + str(ints[0] == 140737488355327 as any) + " " + str(ints[2] == big) + " "
+    + str(ints[0] == ints[1]) + " " + str((ints[4] as int) + 1 == -9223372036854775807 - 1) + "\n");
+  let s1 = "a long string with more than sixteen bytes, 1";
+  let s2 = "a long string with more than sixteen" + " bytes, 1";
+  let s3 = "a long string with more than sixteen bytes, 2";
+  print("long strings: " + str(s1 as any == s2 as any) + " " + str(s1 == s3) + " " + str(s2 == s1) + "\n");
   0
 }
