@@ -92,7 +92,9 @@ impl Opt<'_> {
             let Some(root) = self.m.body_root(self.m.func_body(f)) else {
                 continue;
             };
-            if self.m.funcs[f.index()].name == "main" {
+            // `main` runs once, and a function that never returns is an error path: keeping it a
+            // call keeps cold code out of hot functions.
+            if self.m.funcs[f.index()].name == "main" || self.m.expr_type(root) == TypeId::NEVER {
                 continue;
             }
             let mut size = 0;
@@ -334,7 +336,56 @@ impl Opt<'_> {
             if let Some(root) = self.m.bodies[b.index()].root {
                 let root = self.simplify(root, &uses, &replace);
                 self.m.bodies[b.index()].root = Some(root);
+                self.mark_guarded_casts(root, &uses, &HashMap::new());
             }
+        }
+    }
+
+    /// Marks `x as T` as unchecked where an enclosing `if x is T` (with `x` a local never assigned)
+    /// guarantees it succeeds. `known` holds the guarded locals and their types.
+    fn mark_guarded_casts(&mut self, e: ExprId, uses: &Uses, known: &HashMap<LocalId, TypeId>) {
+        match self.kind(e).clone() {
+            ExprKind::Cast(x) => {
+                if let ExprKind::Local(l) = *self.kind(x)
+                    && self.ty(x) == TypeId::ANY
+                    && known.get(&l) == Some(&self.ty(e))
+                {
+                    self.m.unchecked_casts.insert(e);
+                }
+            }
+            ExprKind::If(c, t, f) => {
+                self.mark_guarded_casts(c, uses, known);
+                let mut inner = known.clone();
+                self.guards(c, uses, &mut inner);
+                self.mark_guarded_casts(t, uses, &inner);
+                if let Some(f) = f {
+                    self.mark_guarded_casts(f, uses, known);
+                }
+                return;
+            }
+            _ => {}
+        }
+        for c in self.children(e) {
+            self.mark_guarded_casts(c, uses, known);
+        }
+    }
+
+    /// The `x is T` facts that hold when `c` is true.
+    fn guards(&self, c: ExprId, uses: &Uses, out: &mut HashMap<LocalId, TypeId>) {
+        match self.kind(c) {
+            ExprKind::Is(x, t) => {
+                if let ExprKind::Local(l) = *self.kind(*x)
+                    && !uses.writes.contains_key(&l)
+                    && !uses.captured.contains(&l)
+                {
+                    out.insert(l, *t);
+                }
+            }
+            ExprKind::And(a, b) => {
+                self.guards(*a, uses, out);
+                self.guards(*b, uses, out);
+            }
+            _ => {}
         }
     }
 

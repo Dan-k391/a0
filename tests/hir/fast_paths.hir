@@ -1,0 +1,97 @@
+// Runtime and lowering fast paths that must not change behavior: the map's last-lookup cache,
+// casts the optimizer proves safe, inline `any` equality and small buffers from free lists.
+// expect-stdout: cache 1 2 false 3 true 4
+// expect-stdout: rebuilt 199 0 true
+// expect-stdout: guarded 7 cat 2.5 none
+// expect-stdout: shadowed 1 dog
+// expect-stdout: eq true false false true true false
+// expect-stdout: grown 300 299 small 3
+module "fast_paths";
+
+struct Cat { name: string }
+struct Dog { name: string }
+
+fn get_or(m: map<string, int>, k: string, d: int) -> int {
+  if has(m, k) {
+    m[k]
+  } else {
+    d
+  }
+}
+
+fn show(v: any) -> string {
+  if v is int {
+    str(v as int)
+  } else if v is Cat && v is Cat {
+    (v as Cat).name
+  } else if v is float {
+    str(v as float)
+  } else {
+    "none"
+  }
+}
+
+fn main() -> int {
+  let m = new map<string, int>;
+  m["a"] = 1;
+  m["b"] = 2;
+  let k = "a";
+  let first = get_or(m, k, 0);
+  let second = get_or(m, "b", 0);
+  remove(m, "a");
+  let gone = has(m, k);
+  m["a"] = 3;
+  let back = get_or(m, "a", 0);
+  // A different string object with the same contents finds the same entry.
+  let again = has(m, "b" + "");
+  m["b" + ""] = 4;
+  print("cache " + str(first) + " " + str(second) + " " + str(gone) + " " + str(back) + " "
+    + str(again) + " " + str(m["b"]) + "\n");
+
+  let big = new map<int, int>;
+  let i = 0;
+  while i < 200 {
+    big[i] = i;
+    if has(big, i) { big[i] = big[i] + 0; }
+    i = i + 1;
+  }
+  let j = 0;
+  while j < 199 {
+    remove(big, j);
+    j = j + 1;
+  }
+  big[0] = 0;
+  print("rebuilt " + str(big[199]) + " " + str(big[0]) + " " + str(has(big, 0)) + "\n");
+
+  print("guarded " + show(7 as any) + " " + show(new Cat { name: "cat" } as any) + " "
+    + show(2.5 as any) + " " + show(new Dog { name: "dog" } as any) + "\n");
+
+  // The test guards `v`, but `v` is assigned inside the branch, so the cast must stay checked.
+  let v = new Cat { name: "1" } as any;
+  let out = "";
+  if v is Cat {
+    out = (v as Cat).name;
+    v = new Dog { name: "dog" } as any;
+    if v is Dog { out = out + " " + (v as Dog).name; }
+  }
+  print("shadowed " + out + "\n");
+
+  let x = 1.0 as any;
+  let y = 1 as any;
+  let nan = (0.0 / 0.0) as any;
+  let neg = ((0.0 - 1.0) * 0.0) as any;
+  let zero = 0.0 as any;
+  print("eq " + str(x == 1.0 as any) + " " + str(x == y) + " " + str(nan == nan) + " "
+    + str(neg == zero) + " " + str(true as any == true as any) + " "
+    + str("s" as any == 1 as any) + "\n");
+
+  let a = [0];
+  let n = 1;
+  while n < 300 {
+    push(a, n);
+    n = n + 1;
+  }
+  let small = [1, 2, 3];
+  print("grown " + str(len(a)) + " " + str(a[299]) + " small " + str(len(small)) + "\n");
+  0
+}

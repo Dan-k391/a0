@@ -24,6 +24,10 @@ const ANY_UNIT: i64 = QNAN | 1;
 const ANY_FALSE: i64 = QNAN | 2;
 const ANY_TRUE: i64 = QNAN | 3;
 const CANONICAL_NAN: i64 = 0x7ff8_0000_0000_0000;
+/// Where generated code finds an object's type: in the collector's header, before the payload, and
+/// the type's family within its descriptor (see `a0rt.h`).
+const OBJECT_TYPE_OFFSET: i64 = -24;
+const TYPE_FAMILY_OFFSET: i64 = 24;
 
 const WORD_RAW: u8 = 0;
 const WORD_REF: u8 = 1;
@@ -93,7 +97,6 @@ struct Runtime {
     any_from_int: IrFunc,
     any_is_int: IrFunc,
     any_is_string: IrFunc,
-    any_is_type: IrFunc,
     any_to_int: IrFunc,
     any_eq: IrFunc,
     any_cast_failed: IrFunc,
@@ -142,7 +145,6 @@ impl Runtime {
             any_from_int: f("a0_any_from_int", &[I64], Some(I64)),
             any_is_int: f("a0_any_is_int", &[I64], Some(I64)),
             any_is_string: f("a0_any_is_string", &[I64], Some(I64)),
-            any_is_type: f("a0_any_is_type", &[I64, Ptr], Some(I64)),
             any_to_int: f("a0_any_to_int", &[I64], Some(I64)),
             any_eq: f("a0_any_eq", &[I64, I64], Some(I64)),
             any_cast_failed: f("a0_any_cast_failed", &[I64, Ptr, I64], None),
@@ -1206,6 +1208,12 @@ impl<'a> Lowerer<'a> {
                 self.word_decode(w, ty)
             }
             ExprKind::Builtin(op, args) => self.builtin(op, &args, ty),
+            ExprKind::Cast(a) if m.unchecked_casts.contains(&e) => {
+                // A test of the same `any` guards it: unpack without checking again.
+                let v = self.expr(a);
+                let V::Val(w) = v else { return v };
+                self.unpack_known(w, ty)
+            }
             ExprKind::Cast(a) => self.cast(a, ty),
             ExprKind::Is(a, t) => {
                 let v = self.expr(a);
@@ -1435,17 +1443,8 @@ impl<'a> Lowerer<'a> {
                 }
             },
             TypeKind::Any => {
-                let r = self.b.call(self.rt.any_eq, &[x, y]).unwrap();
-                let zero = self.b.iconst(Type::I64, 0);
-                self.b.icmp(
-                    if op == BinOp::Eq {
-                        IntCC::Ne
-                    } else {
-                        IntCC::Eq
-                    },
-                    r,
-                    zero,
-                )
+                let eq = self.any_eq(x, y);
+                if op == BinOp::Eq { eq } else { self.b.not(eq) }
             }
             // Other references compare by identity.
             _ => self.b.icmp(cmp_int(op), x, y),
@@ -1599,6 +1598,13 @@ impl<'a> Lowerer<'a> {
         self.b.call(self.rt.any_cast_failed, &[v, np, nl]);
         self.b.unreachable();
         self.b.end_if();
+        let _ = m;
+        self.unpack_known(v, to)
+    }
+
+    /// Unpacks an `any` word known to hold a `to`.
+    fn unpack_known(&mut self, v: Value, to: TypeId) -> V {
+        let m = self.m;
         match m.kind(to) {
             TypeKind::Unit => V::Unit,
             TypeKind::Float => V::Val(self.b.cast(Opcode::Bitcast, v, Type::F64)),
@@ -1690,12 +1696,64 @@ impl<'a> Lowerer<'a> {
         }
     }
 
+    /// Whether the `any` word `w` holds an object whose type family is the descriptor in `desc`:
+    /// the object header's type, then the type's family, read inline (layouts in `a0rt.h`).
     fn is_desc(&mut self, w: Value, desc: IrGlobal) -> Value {
+        let result = self.b.declare_var("is", Type::I1);
+        let no = self.b.iconst(Type::I1, 0);
+        self.b.set(result, no);
+        let tag = self.b.iconst(Type::I64, REF_TAG);
+        let bits = self.b.and(w, tag);
+        let is_ref = self.b.icmp(IntCC::Eq, bits, tag);
+        self.b.if_(is_ref);
+        let object = self.decode(w, TypeId::STRING);
+        let header_type = self.b.iconst(Type::I64, OBJECT_TYPE_OFFSET);
+        let at = self.b.ptradd(object, header_type);
+        let ty = self.b.load(Type::Ptr, at);
+        let family = self.b.iconst(Type::I64, TYPE_FAMILY_OFFSET);
+        let at = self.b.ptradd(ty, family);
+        let family = self.b.load(Type::Ptr, at);
+        let family = self.b.cast(Opcode::Ptrtoint, family, Type::I64);
         let a = self.b.global_addr(desc);
         let d = self.b.load(Type::Ptr, a);
-        let r = self.b.call(self.rt.any_is_type, &[w, d]).unwrap();
+        let d = self.b.cast(Opcode::Ptrtoint, d, Type::I64);
+        let same = self.b.icmp(IntCC::Eq, family, d);
+        self.b.set(result, same);
+        self.b.end_if();
+        self.b.get(result)
+    }
+
+    /// `x == y` on two `any` words: identical words and two floats are decided inline; anything
+    /// else (strings, boxed integers) by the runtime.
+    fn any_eq(&mut self, x: Value, y: Value) -> Value {
+        let result = self.b.declare_var("eq", Type::I1);
+        let same = self.b.icmp(IntCC::Eq, x, y);
+        self.b.if_(same);
+        // The same word is the same value, except NaN, which is not equal to itself.
+        let nan = self.b.iconst(Type::I64, CANONICAL_NAN);
+        let not_nan = self.b.icmp(IntCC::Ne, x, nan);
+        self.b.set(result, not_nan);
+        self.b.else_();
+        let q = self.b.iconst(Type::I64, QNAN);
+        let (xq, yq) = (self.b.and(x, q), self.b.and(y, q));
+        let x_float = self.b.icmp(IntCC::Ne, xq, q);
+        let y_float = self.b.icmp(IntCC::Ne, yq, q);
+        let either = self.b.or(x_float, y_float);
+        self.b.if_(either);
+        let both = self.b.and(x_float, y_float);
+        let xf = self.b.cast(Opcode::Bitcast, x, Type::F64);
+        let yf = self.b.cast(Opcode::Bitcast, y, Type::F64);
+        let feq = self.b.fcmp(FloatCC::Eq, xf, yf);
+        let eq = self.b.and(both, feq);
+        self.b.set(result, eq);
+        self.b.else_();
+        let r = self.b.call(self.rt.any_eq, &[x, y]).unwrap();
         let zero = self.b.iconst(Type::I64, 0);
-        self.b.icmp(IntCC::Ne, r, zero)
+        let eq = self.b.icmp(IntCC::Ne, r, zero);
+        self.b.set(result, eq);
+        self.b.end_if();
+        self.b.end_if();
+        self.b.get(result)
     }
 
     fn if_(&mut self, c: ExprId, t: ExprId, els: Option<ExprId>, ty: TypeId) -> V {

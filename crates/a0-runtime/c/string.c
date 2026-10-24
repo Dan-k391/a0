@@ -48,7 +48,11 @@ int64_t a0_string_eq(A0String *a, A0String *b) {
     if (a == NULL || b == NULL || a->len != b->len) return 0;
     /* Hashes are cached in the strings, so comparing the same long strings again is quick; strings
      * are not interned (D16). */
-    if (a->len > 16 && a0_string_hash(a) != a0_string_hash(b)) return 0;
+    if (a->len > 16) {
+        uint64_t ha = a->hash != 0 ? a->hash : a0_string_hash(a);
+        uint64_t hb = b->hash != 0 ? b->hash : a0_string_hash(b);
+        if (ha != hb) return 0;
+    }
     return memcmp(a->bytes, b->bytes, (size_t)a->len) == 0;
 }
 

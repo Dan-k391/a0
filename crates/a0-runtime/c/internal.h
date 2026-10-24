@@ -16,6 +16,18 @@ typedef struct {
     int64_t value;
 } A0BoxedInt;
 
+/* Every object is preceded by a header; object pointers point at the payload. */
+typedef struct Header {
+    struct Header *next;
+    const A0Type *type;
+    uint64_t size; /* header + payload, for accounting */
+    uint32_t marked;
+    uint32_t reserved;
+} Header;
+
+#define HEADER(p) ((Header *)(p) - 1)
+#define PAYLOAD(h) ((void *)((h) + 1))
+
 /* Allocates an object with `payload_size` zeroed bytes. May collect first. */
 void *a0_gc_alloc(const A0Type *type, size_t payload_size);
 

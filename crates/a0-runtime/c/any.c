@@ -37,7 +37,7 @@ uint64_t a0_any_from_ref(void *object) {
 
 static const A0Type *ref_type(uint64_t w) {
     if (!A0_ANY_IS_REF(w) || A0_ANY_PTR(w) == NULL) return NULL;
-    return a0_gc_type_of(A0_ANY_PTR(w));
+    return HEADER(A0_ANY_PTR(w))->type;
 }
 
 int64_t a0_any_is_int(uint64_t value) {
@@ -80,11 +80,18 @@ int64_t a0_any_eq(uint64_t a, uint64_t b) {
         return A0_ANY_IS_FLOAT(a) && A0_ANY_IS_FLOAT(b) && as_double(a) == as_double(b);
     }
     if (a == b) return 1;
+    /* Different words are different values unless both are references (strings, boxed ints). */
+    if (!A0_ANY_IS_REF(a) || !A0_ANY_IS_REF(b)) return 0;
     const A0Type *ta = ref_type(a);
     const A0Type *tb = ref_type(b);
     if (ta == NULL || ta != tb) return 0;
     if (ta == &a0_builtin_string) {
-        return a0_string_eq((A0String *)A0_ANY_PTR(a), (A0String *)A0_ANY_PTR(b));
+        /* As a0_string_eq, without the call: lengths, cached hashes, then bytes. */
+        A0String *x = (A0String *)A0_ANY_PTR(a);
+        A0String *y = (A0String *)A0_ANY_PTR(b);
+        if (x->len != y->len) return 0;
+        if (x->hash != 0 && y->hash != 0 && x->hash != y->hash) return 0;
+        return a0_string_eq(x, y);
     }
     if (ta == &a0_builtin_int) {
         return ((A0BoxedInt *)A0_ANY_PTR(a))->value == ((A0BoxedInt *)A0_ANY_PTR(b))->value;

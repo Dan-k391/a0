@@ -118,6 +118,9 @@ enum { A0_WORD_RAW = 0, A0_WORD_REF = 1, A0_WORD_ANY = 2 };
  * words described by the type's layout; the others have built-in descriptors. */
 enum { A0_KIND_FIXED = 0, A0_KIND_STRING = 1, A0_KIND_ARRAY = 2, A0_KIND_MAP = 3, A0_KIND_INT = 4 };
 
+/* Generated code reads two things directly (crates/a0-hir/src/lower.rs): an object's type is the
+ * pointer 24 bytes before the object (in the collector's header), and a type's family is the field
+ * 24 bytes into its descriptor. Keep both in sync. */
 typedef struct A0Type {
     char *name;
     int32_t kind;

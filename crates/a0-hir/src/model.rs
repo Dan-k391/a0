@@ -359,6 +359,9 @@ pub struct HirModule {
     pub(crate) vars: Vec<Option<TypeId>>,
     /// How diagnostics write some types, in the language's own syntax (`[{}]` for arrays).
     pub(crate) type_syntax: Vec<(TypeTag, String)>,
+    /// Casts out of `any` that the optimizer proved cannot fail (an `is` test of the same value
+    /// guards them); lowering skips their check.
+    pub(crate) unchecked_casts: HashSet<ExprId>,
     /// Declarations in order, for printing.
     pub(crate) items: Vec<Item>,
     pub(crate) type_names: HashMap<String, Item>,
@@ -382,6 +385,7 @@ impl HirModule {
             arms: Vec::new(),
             vars: Vec::new(),
             type_syntax: Vec::new(),
+            unchecked_casts: HashSet::new(),
             items: Vec::new(),
             type_names: HashMap::new(),
             value_names: HashMap::new(),

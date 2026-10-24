@@ -26,6 +26,9 @@ struct A0Map {
     int64_t *index;
     int64_t key_kind;
     int64_t value_kind;
+    /* The entry the last lookup found. `has(m, k)` followed by `m[k]` (the usual way to read a key
+     * that may be missing) then hashes `k` once; the key word must match exactly. */
+    int64_t last;
 };
 
 static A0Map *check(A0Map *m) {
@@ -37,6 +40,7 @@ A0Map *a0_map_new(int64_t key_kind, int64_t value_kind) {
     A0Map *m = (A0Map *)a0_gc_alloc(&a0_builtin_map, sizeof(A0Map));
     m->key_kind = key_kind;
     m->value_kind = value_kind;
+    m->last = -1;
     return m;
 }
 
@@ -85,6 +89,7 @@ static void rebuild(A0Map *m, int64_t need) {
         if (m->entries[i].live) m->entries[live++] = m->entries[i];
     }
     m->used = live;
+    m->last = -1;
     int64_t entry_cap = m->entry_cap < 8 ? 8 : m->entry_cap;
     while (entry_cap < need) entry_cap *= 2;
     if (entry_cap != m->entry_cap) {
@@ -103,14 +108,23 @@ static void rebuild(A0Map *m, int64_t need) {
 
 int64_t a0_map_len(A0Map *m) { return check(m)->count; }
 
+/* The entry holding `key`, trying the last one found first. */
+static int64_t lookup(A0Map *m, uint64_t key) {
+    int64_t e = m->last;
+    if (e >= 0 && e < m->used && m->entries[e].live && m->entries[e].key == key) return e;
+    e = find(m, key, hash_key(m, key));
+    if (e >= 0) m->last = e;
+    return e;
+}
+
 int64_t a0_map_has(A0Map *m, uint64_t key) {
     check(m);
-    return find(m, key, hash_key(m, key)) >= 0;
+    return lookup(m, key) >= 0;
 }
 
 uint64_t a0_map_get(A0Map *m, uint64_t key) {
     check(m);
-    int64_t e = find(m, key, hash_key(m, key));
+    int64_t e = lookup(m, key);
     if (e < 0) a0_panic("key not found");
     return m->entries[e].value;
 }

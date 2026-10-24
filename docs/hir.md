@@ -213,7 +213,10 @@ replaced generic items with one copy per combination of type arguments:
   load or store; references are non-null by type, so only `!` checks for null.
 - **Closures.** Each closure is a core IR function taking its environment first. Captured locals
   live in heap boxes, shared by the defining function and every closure that captures them.
-- Strings, arrays, maps, formatting, boxing and dynamic equality are runtime calls.
+- **`any`.** Type tests of objects are inline: the object's type sits in the collector's header and
+  its family in the type descriptor, at offsets `a0rt.h` fixes (D28). Equality of two `any` words is
+  inline unless both are references (strings and boxed integers compare by value in the runtime).
+- Strings, arrays, maps, formatting and boxing of large integers are runtime calls.
 - Integer division by zero, and dividing the minimum `int` by -1, trap like the core IR's `sdiv`
   (`a0: trap: ...`, exit 101).
 - `a0 lower prog.hir` prints the core IR a module lowers to; `a0 run`/`a0 build` accept `.hir` files.
@@ -230,6 +233,8 @@ It complements Cranelift, which optimizes within each function:
 - **`any` folding.** `(x as any) is T` and `(x as any) as T` are decided from `x`'s type, also through
   a local: `let v = <... x as any>` (never reassigned) becomes `let raw = <... x>; let v = raw as
   any`, so tests of `v` fold and `v as T` reads `raw`.
+- **Guarded casts.** In `if v is T { ... v as T ... }`, with `v` a local that is never assigned, the
+  cast does not check again.
 - **Simplification**: constant `if`, `&&`, `||` and `!`; casts to the same type; copies of locals and
   of constants; unused locals and statements without effects; nested blocks; code after something
   that never finishes.

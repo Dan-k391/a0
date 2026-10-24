@@ -356,3 +356,28 @@ fn the_optimizer_inlines_small_functions_and_folds_any_tests() {
     assert!(!optimized.contains("select"), "{optimized}");
     assert!(!optimized.contains("a0_any"), "{optimized}");
 }
+
+#[test]
+fn casts_guarded_by_a_type_test_are_not_checked_again() {
+    let src = |assign: &str| {
+        format!(
+            "module \"m\";\nstruct C {{ n: int }}\nfn get(v: any) -> int {{\n  if v is C {{ {assign}(v as C).n }} else {{ 0 }}\n}}\nfn main() -> int {{ get(new C {{ n: 1 }} as any) }}\n"
+        )
+    };
+    let get_of = |src: &str, optimize: bool| {
+        let ir = lower_with(&parse_ok(src), LowerOptions { optimize })
+            .unwrap()
+            .to_string();
+        let start = ir.find("func @hir.get(").unwrap();
+        let end = ir[start..].find("\n}\n").unwrap();
+        ir[start..start + end].to_string()
+    };
+    let guarded = src("");
+    assert!(get_of(&guarded, false).contains("a0_any_cast_failed"));
+    let optimized = get_of(&guarded, true);
+    assert!(!optimized.contains("a0_any_cast_failed"), "{optimized}");
+    // Assigning `v` between the test and the cast voids the guarantee.
+    let assigned = src("v = 1 as any; ");
+    let optimized = get_of(&assigned, true);
+    assert!(optimized.contains("a0_any_cast_failed"), "{optimized}");
+}

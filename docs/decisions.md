@@ -248,3 +248,17 @@ and cleans up (constants, copies, dead code). It is about 820 lines, runs in lin
 default for every HIR language with no frontend work, and `A0_OPT=0` turns it off. It never removes
 or duplicates an expression with an effect. Languages that emit the core IR directly (Kaleidoscope)
 do not get it; an inliner on the core IR would be the next step if one needs it.
+
+## D28. Fast paths for `any` live in lowering and the runtime, not in frontends
+
+Dynamic languages spend their time testing, unpacking and comparing `any` values, so these paths are
+the framework's to make fast. Lowering tests an object's type inline (two loads and a compare)
+instead of calling the runtime, and decides `any` equality inline unless both words are references.
+Generated code thereby depends on two offsets in the runtime's layouts (an object's type 24 bytes
+before it, a type's family 24 bytes into its descriptor); `a0rt.h` documents them and `gc.c` checks
+them at compile time. The optimizer marks a cast as unchecked when an enclosing `is` test of the
+same never-assigned local guards it, so `if v is T { v as T }` tests once. In the runtime, array and
+map buffers up to 256 bytes come from the same free lists as small objects (D18), a map remembers the
+entry its last lookup found (so `has(m, k)` followed by `m[k]` hashes once), and string equality
+compares cached hashes before bytes. The alternative, letting each language write such paths in its
+prelude, would contradict the goal that programs run fast without tuning by the language author.

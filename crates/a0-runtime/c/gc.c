@@ -5,17 +5,9 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* Every object is preceded by a header; object pointers point at the payload. */
-typedef struct Header {
-    struct Header *next;
-    const A0Type *type;
-    uint64_t size; /* header + payload, for accounting */
-    uint32_t marked;
-    uint32_t reserved;
-} Header;
-
-#define HEADER(p) ((Header *)(p) - 1)
-#define PAYLOAD(h) ((void *)((h) + 1))
+/* Generated code relies on these offsets (see A0Type in a0rt.h); a wrong one fails to compile. */
+typedef char a0_object_type_offset_is_24[(sizeof(Header) - offsetof(Header, type) == 24) ? 1 : -1];
+typedef char a0_type_family_offset_is_24[(offsetof(A0Type, family) == 24) ? 1 : -1];
 
 const A0Type a0_builtin_string = {"string", A0_KIND_STRING, 0, NULL, &a0_builtin_string};
 const A0Type a0_builtin_array = {"array", A0_KIND_ARRAY, 0, NULL, &a0_builtin_array};
@@ -95,6 +87,7 @@ static void *check_address(void *p, size_t size) {
     return p;
 }
 
+/* A zeroed cell of `size` bytes (a multiple of GRANULE, at most SMALL_LIMIT). */
 static Header *small_alloc(size_t size) {
     size_t cls = size / GRANULE;
     if (free_lists[cls] == NULL) {
@@ -111,18 +104,24 @@ static Header *small_alloc(size_t size) {
     return (Header *)c;
 }
 
+static void small_free(void *p, size_t size) {
+    /* Under stress, poison dead memory so a missing root shows up as garbage, not stale data. */
+    if (stress) memset(p, 0xdd, size);
+    FreeCell *c = (FreeCell *)p;
+    c->next = free_lists[size / GRANULE];
+    free_lists[size / GRANULE] = c;
+}
+
 static void object_free(Header *h) {
     size_t size = h->size;
     if (size > SMALL_LIMIT) {
         free(h);
-        return;
+    } else {
+        small_free(h, size);
     }
-    /* Under stress, poison dead objects so a missing root shows up as garbage, not stale data. */
-    if (stress) memset(h, 0xdd, size);
-    FreeCell *c = (FreeCell *)h;
-    c->next = free_lists[size / GRANULE];
-    free_lists[size / GRANULE] = c;
 }
+
+static size_t rounded(size_t size) { return (size + GRANULE - 1) / GRANULE * GRANULE; }
 
 void *a0_gc_alloc(const A0Type *type, size_t payload_size) {
     size_t size = (sizeof(Header) + payload_size + GRANULE - 1) / GRANULE * GRANULE;
@@ -138,23 +137,40 @@ void *a0_gc_alloc(const A0Type *type, size_t payload_size) {
 
 void *a0_gc_new(A0Type *type) { return a0_gc_alloc(type, sizeof(uint64_t) * (size_t)type->word_count); }
 
+/* Buffers (array elements, map tables) up to SMALL_LIMIT bytes come from the same free lists as
+ * small objects. */
 void *a0_gc_buffer_alloc(size_t size) {
-    void *p = calloc(1, size > 0 ? size : 1);
+    size_t r = rounded(size > 0 ? size : 1);
+    void *p = r <= SMALL_LIMIT ? (void *)small_alloc(r) : calloc(1, r);
     if (p == NULL) a0_panic("out of memory");
     bytes_allocated += size;
     return p;
 }
 
 void *a0_gc_buffer_realloc(void *buffer, size_t old_size, size_t new_size) {
-    void *p = realloc(buffer, new_size > 0 ? new_size : 1);
-    if (p == NULL) a0_panic("out of memory");
-    if (new_size > old_size) memset((char *)p + old_size, 0, new_size - old_size);
-    bytes_allocated += new_size - old_size;
+    if (rounded(old_size > 0 ? old_size : 1) > SMALL_LIMIT && rounded(new_size) > SMALL_LIMIT) {
+        void *p = realloc(buffer, new_size);
+        if (p == NULL) a0_panic("out of memory");
+        if (new_size > old_size) memset((char *)p + old_size, 0, new_size - old_size);
+        bytes_allocated += new_size - old_size;
+        return p;
+    }
+    void *p = a0_gc_buffer_alloc(new_size);
+    if (buffer != NULL) {
+        memcpy(p, buffer, old_size < new_size ? old_size : new_size);
+        a0_gc_buffer_free(buffer, old_size);
+    }
     return p;
 }
 
 void a0_gc_buffer_free(void *buffer, size_t size) {
-    free(buffer);
+    if (buffer == NULL) return;
+    size_t r = rounded(size > 0 ? size : 1);
+    if (r <= SMALL_LIMIT) {
+        small_free(buffer, r);
+    } else {
+        free(buffer);
+    }
     bytes_allocated -= size;
 }
 
