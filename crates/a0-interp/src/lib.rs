@@ -1,0 +1,1005 @@
+//! An interpreter for the A0 core IR.
+//!
+//! The interpreter first compiles each function into a tree of [`Op`]s with operands resolved to
+//! frame slots, then walks that tree. It shares memory, the C runtime and C calling conventions with
+//! native code (see `docs/decisions.md`, D7 and D8):
+//!
+//! - `load`/`store` use real host addresses; globals live in host memory.
+//! - `extern func`s resolve through [`HostSymbols`] and are called with `a0_ffi_call`.
+//! - Addresses of IR functions are opaque tokens understood only by `call_indirect`.
+//!
+//! IR traps (division by zero, `unreachable`, ...) come back as [`Trap`] values; the embedding decides
+//! how to report them (the `a0` driver prints them through the runtime, exactly like native code).
+
+use std::collections::HashMap;
+use std::rc::Rc;
+
+use a0_diag::{Diagnostic, Diagnostics};
+use a0_ir::{FloatCC, FuncId, GlobalId, Inst, IntCC, Module, Opcode, Region, SymbolKind, Type, Value};
+use a0_runtime::{A0Symbol, ffi_ret, trap};
+
+/// Names and addresses of C functions that `extern func` declarations may resolve to.
+pub struct HostSymbols {
+    map: HashMap<String, usize>,
+}
+
+impl HostSymbols {
+    /// A registry pre-filled with the A0 runtime and common C library functions.
+    pub fn new() -> HostSymbols {
+        let mut s = HostSymbols::empty();
+        for (name, addr) in a0_runtime::runtime_symbols() {
+            s.map.insert(name, addr);
+        }
+        s
+    }
+
+    pub fn empty() -> HostSymbols {
+        HostSymbols {
+            map: HashMap::new(),
+        }
+    }
+
+    pub fn add(&mut self, name: &str, address: usize) {
+        self.map.insert(name.to_string(), address);
+    }
+
+    /// Adds every entry of a NULL-terminated C symbol table (see `A0Symbol` in `a0rt.h`).
+    ///
+    /// # Safety
+    /// `table` must point to a valid, NULL-terminated `A0Symbol` array.
+    pub unsafe fn add_table(&mut self, table: *const A0Symbol) {
+        for (name, addr) in unsafe { a0_runtime::read_symbol_table(table) } {
+            self.map.insert(name, addr);
+        }
+    }
+
+    pub fn lookup(&self, name: &str) -> Option<usize> {
+        self.map.get(name).copied()
+    }
+}
+
+impl Default for HostSymbols {
+    fn default() -> Self {
+        HostSymbols::new()
+    }
+}
+
+/// Why execution stopped abnormally.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Trap {
+    /// One of the `a0_runtime::trap` codes, or 0 for an interpreter-specific panic.
+    pub code: i32,
+    pub message: String,
+}
+
+impl Trap {
+    fn new(code: i32) -> Trap {
+        let message = match code {
+            trap::UNREACHABLE => "unreachable code was reached",
+            trap::DIVIDE_BY_ZERO => "integer division by zero",
+            trap::INTEGER_OVERFLOW => "integer overflow",
+            trap::STACK_OVERFLOW => "stack overflow",
+            _ => "unknown trap",
+        };
+        Trap {
+            code,
+            message: message.to_string(),
+        }
+    }
+
+    fn panic(message: String) -> Trap {
+        Trap { code: 0, message }
+    }
+
+    /// Reports the trap the same way native code does and exits the process.
+    pub fn report_and_exit(&self) -> ! {
+        if self.code != 0 {
+            a0_runtime::trap(self.code)
+        }
+        a0_runtime::flush();
+        eprintln!("a0: panic: {}", self.message);
+        std::process::exit(a0_runtime::PANIC_EXIT_CODE)
+    }
+}
+
+impl std::fmt::Display for Trap {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+type Slot = u32;
+
+/// One compiled instruction. Operands are frame slots.
+enum Op {
+    Const { dst: Slot, bits: u64 },
+    IntBin { op: Opcode, ty: Type, dst: Slot, a: Slot, b: Slot },
+    FloatBin { op: Opcode, ty: Type, dst: Slot, a: Slot, b: Slot },
+    Unary { op: Opcode, ty: Type, dst: Slot, a: Slot },
+    Icmp { cc: IntCC, ty: Type, dst: Slot, a: Slot, b: Slot },
+    Fcmp { cc: FloatCC, ty: Type, dst: Slot, a: Slot, b: Slot },
+    Cast { op: Opcode, from: Type, to: Type, dst: Slot, a: Slot },
+    Select { dst: Slot, c: Slot, a: Slot, b: Slot },
+    Load { ty: Type, dst: Slot, p: Slot },
+    Store { ty: Type, v: Slot, p: Slot },
+    Ptradd { dst: Slot, p: Slot, off: Slot },
+    Call { func: u32, args: Box<[Slot]>, dst: Option<Slot> },
+    CallIndirect { sig: Rc<Shape>, callee: Slot, args: Box<[Slot]>, dst: Option<Slot> },
+    Copy { dst: Slot, src: Slot },
+    If { c: Slot, then: Box<[Op]>, els: Box<[Op]> },
+    Loop { body: Box<[Op]> },
+    Break,
+    Continue,
+    Return(Option<Slot>),
+    Unreachable,
+}
+
+/// A call signature as the interpreter needs it.
+struct Shape {
+    params: Vec<Type>,
+    ret: Option<Type>,
+}
+
+impl Shape {
+    /// The `a0_ffi_call` description of this shape, or why it cannot be called from the interpreter.
+    fn ffi(&self) -> Result<(u32, i32), String> {
+        if self.params.len() > a0_runtime::FFI_MAX_ARGS {
+            return Err(format!(
+                "more than {} arguments",
+                a0_runtime::FFI_MAX_ARGS
+            ));
+        }
+        let mut mask = 0u32;
+        for (i, &t) in self.params.iter().enumerate() {
+            match t {
+                Type::F64 => mask |= 1 << i,
+                Type::F32 => return Err("f32 parameters".to_string()),
+                _ => {}
+            }
+        }
+        let ret = match self.ret {
+            None => ffi_ret::VOID,
+            Some(Type::F64) => ffi_ret::F64,
+            Some(Type::F32) => return Err("an f32 result".to_string()),
+            Some(_) => ffi_ret::INT,
+        };
+        Ok((mask, ret))
+    }
+}
+
+struct Code {
+    ops: Box<[Op]>,
+    params: Vec<Slot>,
+    frame_size: usize,
+}
+
+enum FuncKind {
+    Defined(Rc<Code>),
+    /// A resolved C function.
+    Native { address: usize, mask: u32, ret_kind: i32 },
+    /// An extern that is never called or referenced; calling it is a bug in the verifier's sense.
+    Unresolved,
+}
+
+struct FuncInfo {
+    name: String,
+    shape: Rc<Shape>,
+    kind: FuncKind,
+}
+
+enum Flow {
+    Next,
+    Break,
+    Continue,
+    Return(u64),
+}
+
+/// Default limit on nested calls before reporting a stack overflow trap.
+pub const DEFAULT_MAX_DEPTH: u32 = 10_000;
+
+/// A prepared program, ready to call into.
+pub struct Interpreter {
+    module: Module,
+    funcs: Vec<FuncInfo>,
+    /// Host memory backing `data` and `global` items. Never moved after preparation.
+    _global_memory: Vec<Box<[u64]>>,
+    /// Function tokens are addresses inside this allocation, so they never collide with real code.
+    tokens: Box<[u8]>,
+    stack: Vec<u64>,
+    depth: u32,
+    max_depth: u32,
+}
+
+impl Interpreter {
+    /// Verifies and prepares a module. Every extern that the module calls or takes the address of
+    /// must be present in `symbols`.
+    pub fn new(module: Module, symbols: &HostSymbols) -> Result<Interpreter, Diagnostics> {
+        let diags = a0_ir::verify(&module);
+        if diags.has_errors() {
+            return Err(diags);
+        }
+        let mut diags = Diagnostics::new();
+        let referenced = referenced_externs(&module);
+
+        let tokens = vec![0u8; module.func_count().max(1) as usize].into_boxed_slice();
+        let token_base = tokens.as_ptr() as u64;
+
+        // Globals live in 8-byte aligned host memory.
+        let mut global_memory = Vec::new();
+        let mut global_addrs = Vec::new();
+        for g in 0..module.global_count() {
+            let g = GlobalId(g);
+            let mem = match module.global_type(g) {
+                None => {
+                    let bytes = module.global_bytes(g);
+                    let mut words = vec![0u64; bytes.len().div_ceil(8).max(1)].into_boxed_slice();
+                    // SAFETY: the buffer holds at least `bytes.len()` bytes.
+                    unsafe {
+                        std::ptr::copy_nonoverlapping(bytes.as_ptr(), words.as_mut_ptr() as *mut u8, bytes.len())
+                    };
+                    words
+                }
+                Some(ty) => {
+                    let mut words = vec![0u64; 1].into_boxed_slice();
+                    unsafe { store(ty, words.as_mut_ptr() as u64, module.global_init_bits(g)) };
+                    words
+                }
+            };
+            global_addrs.push(mem.as_ptr() as u64);
+            global_memory.push(mem);
+        }
+
+        let mut funcs = Vec::new();
+        for f in 0..module.func_count() {
+            let f = FuncId(f);
+            let shape = Rc::new(Shape {
+                params: module.func_params(f).to_vec(),
+                ret: module.func_ret(f),
+            });
+            let name = module.func_name(f).to_string();
+            let kind = if module.func_is_extern(f) {
+                if !referenced[f.index()] {
+                    FuncKind::Unresolved
+                } else {
+                    match symbols.lookup(&name) {
+                        None => {
+                            diags.push(
+                                Diagnostic::error(
+                                    "interp.unresolved",
+                                    &format!("unresolved external function @{name}"),
+                                )
+                                .with_span_opt(module.func_span(f))
+                                .with_note("register its address in HostSymbols before interpreting"),
+                            );
+                            FuncKind::Unresolved
+                        }
+                        Some(address) => match shape.ffi() {
+                            Ok((mask, ret_kind)) => FuncKind::Native {
+                                address,
+                                mask,
+                                ret_kind,
+                            },
+                            Err(why) => {
+                                diags.push(
+                                    Diagnostic::error(
+                                        "interp.ffi",
+                                        &format!("the interpreter cannot call @{name}: it has {why}"),
+                                    )
+                                    .with_span_opt(module.func_span(f)),
+                                );
+                                FuncKind::Unresolved
+                            }
+                        },
+                    }
+                }
+            } else {
+                FuncKind::Unresolved // filled in below, once every function has a slot
+            };
+            funcs.push(FuncInfo { name, shape, kind });
+        }
+        if diags.has_errors() {
+            return Err(diags);
+        }
+
+        let addr_of = |sym: a0_ir::Symbol| -> u64 {
+            match sym.kind {
+                SymbolKind::Global => global_addrs[sym.index as usize],
+                SymbolKind::Func => match &funcs[sym.index as usize].kind {
+                    FuncKind::Native { address, .. } => *address as u64,
+                    _ => token_base + sym.index as u64,
+                },
+            }
+        };
+        let mut codes = Vec::new();
+        for f in 0..module.func_count() {
+            let f = FuncId(f);
+            codes.push(module.func_body(f).map(|_| compile_function(&module, f, &addr_of)));
+        }
+        for (info, code) in funcs.iter_mut().zip(codes) {
+            if let Some(code) = code {
+                info.kind = FuncKind::Defined(Rc::new(code));
+            }
+        }
+
+        Ok(Interpreter {
+            module,
+            funcs,
+            _global_memory: global_memory,
+            tokens,
+            stack: Vec::with_capacity(1 << 16),
+            depth: 0,
+            max_depth: DEFAULT_MAX_DEPTH,
+        })
+    }
+
+    pub fn module(&self) -> &Module {
+        &self.module
+    }
+
+    /// Limits how deeply calls may nest before a stack overflow trap.
+    pub fn set_max_depth(&mut self, depth: u32) {
+        self.max_depth = depth;
+    }
+
+    /// Initializes the runtime with `args`, calls `@main` and returns its exit status.
+    pub fn run_main(&mut self, args: &[String]) -> Result<i32, Trap> {
+        let diags = a0_ir::check_entry(&self.module);
+        if diags.has_errors() {
+            return Err(Trap::panic(diags.get(0).message.clone()));
+        }
+        let main = self.module.lookup_func("main").unwrap();
+        a0_runtime::init(args);
+        let result = self.call(main, &[])?;
+        Ok(result.unwrap_or(0) as i32)
+    }
+
+    /// Calls a function with raw argument bits (integers in canonical form, floats as bits).
+    /// Returns the raw result bits, or `None` for void functions.
+    pub fn call(&mut self, f: FuncId, args: &[u64]) -> Result<Option<u64>, Trap> {
+        let shape = self.funcs[f.index()].shape.clone();
+        if args.len() != shape.params.len() {
+            return Err(Trap::panic(format!(
+                "@{} takes {} arguments, {} given",
+                self.funcs[f.index()].name,
+                shape.params.len(),
+                args.len()
+            )));
+        }
+        let base = self.stack.len();
+        self.stack.extend_from_slice(args);
+        let slots: Vec<Slot> = (0..args.len() as u32).collect();
+        let r = self.call_func(f.0, base, &slots);
+        self.stack.truncate(base);
+        let v = r?;
+        Ok(shape.ret.map(|_| v))
+    }
+
+    fn call_func(&mut self, f: u32, caller_base: usize, args: &[Slot]) -> Result<u64, Trap> {
+        match &self.funcs[f as usize].kind {
+            FuncKind::Defined(code) => {
+                let code = code.clone();
+                if self.depth >= self.max_depth {
+                    return Err(Trap::new(trap::STACK_OVERFLOW));
+                }
+                self.depth += 1;
+                let base = self.stack.len();
+                self.stack.resize(base + code.frame_size, 0);
+                for (&param, &arg) in code.params.iter().zip(args) {
+                    self.stack[base + param as usize] = self.stack[caller_base + arg as usize];
+                }
+                let flow = self.exec(&code.ops, base);
+                self.stack.truncate(base);
+                self.depth -= 1;
+                match flow? {
+                    Flow::Return(v) => Ok(v),
+                    _ => Ok(0),
+                }
+            }
+            &FuncKind::Native {
+                address,
+                mask,
+                ret_kind,
+            } => {
+                let ret = self.funcs[f as usize].shape.ret;
+                self.native_call(address, mask, ret_kind, ret, caller_base, args)
+            }
+            FuncKind::Unresolved => Err(Trap::panic(format!(
+                "call to unresolved external function @{}",
+                self.funcs[f as usize].name
+            ))),
+        }
+    }
+
+    fn native_call(
+        &mut self,
+        address: usize,
+        mask: u32,
+        ret_kind: i32,
+        ret: Option<Type>,
+        base: usize,
+        args: &[Slot],
+    ) -> Result<u64, Trap> {
+        let mut buf = [0u64; a0_runtime::FFI_MAX_ARGS];
+        for (i, &a) in args.iter().enumerate() {
+            buf[i] = self.stack[base + a as usize];
+        }
+        // SAFETY: the address came from a symbol table entry whose signature the IR declares.
+        let raw = unsafe { a0_runtime::ffi_call(address, &buf[..args.len()], mask, ret_kind) };
+        match raw {
+            Some(v) => Ok(ret.map(|t| normalize(t, v)).unwrap_or(0)),
+            None => Err(Trap::panic("unsupported C call shape".to_string())),
+        }
+    }
+
+    fn call_indirect(&mut self, sig: &Shape, callee: u64, base: usize, args: &[Slot]) -> Result<u64, Trap> {
+        let token_base = self.tokens.as_ptr() as u64;
+        if callee >= token_base && callee < token_base + self.tokens.len() as u64 {
+            let f = (callee - token_base) as u32;
+            let actual = &self.funcs[f as usize].shape;
+            if actual.params != sig.params || actual.ret != sig.ret {
+                return Err(Trap::panic(format!(
+                    "call_indirect signature does not match @{}",
+                    self.funcs[f as usize].name
+                )));
+            }
+            return self.call_func(f, base, args);
+        }
+        if callee == 0 {
+            return Err(Trap::panic("call_indirect through a null pointer".to_string()));
+        }
+        match sig.ffi() {
+            Ok((mask, ret_kind)) => self.native_call(callee as usize, mask, ret_kind, sig.ret, base, args),
+            Err(why) => Err(Trap::panic(format!(
+                "the interpreter cannot call a C function pointer with {why}"
+            ))),
+        }
+    }
+
+    #[inline]
+    fn get(&self, base: usize, s: Slot) -> u64 {
+        self.stack[base + s as usize]
+    }
+
+    #[inline]
+    fn put(&mut self, base: usize, s: Slot, v: u64) {
+        self.stack[base + s as usize] = v;
+    }
+
+    fn exec(&mut self, ops: &[Op], base: usize) -> Result<Flow, Trap> {
+        for op in ops {
+            match op {
+                &Op::Const { dst, bits } => self.put(base, dst, bits),
+                &Op::Copy { dst, src } => {
+                    let v = self.get(base, src);
+                    self.put(base, dst, v)
+                }
+                &Op::IntBin { op, ty, dst, a, b } => {
+                    let v = int_binary(op, ty, self.get(base, a), self.get(base, b))?;
+                    self.put(base, dst, v)
+                }
+                &Op::FloatBin { op, ty, dst, a, b } => {
+                    let v = float_binary(op, ty, self.get(base, a), self.get(base, b));
+                    self.put(base, dst, v)
+                }
+                &Op::Unary { op, ty, dst, a } => {
+                    let x = self.get(base, a);
+                    let v = match op {
+                        Opcode::Ineg => canon(ty, (x as i64).wrapping_neg() as u64),
+                        Opcode::Not => canon(ty, !x),
+                        _ => match ty {
+                            Type::F32 => (-f32::from_bits(x as u32)).to_bits() as u64,
+                            _ => (-f64::from_bits(x)).to_bits(),
+                        },
+                    };
+                    self.put(base, dst, v)
+                }
+                &Op::Icmp { cc, ty, dst, a, b } => {
+                    let v = icmp(cc, ty, self.get(base, a), self.get(base, b));
+                    self.put(base, dst, v as u64)
+                }
+                &Op::Fcmp { cc, ty, dst, a, b } => {
+                    let v = fcmp(cc, ty, self.get(base, a), self.get(base, b));
+                    self.put(base, dst, v as u64)
+                }
+                &Op::Cast { op, from, to, dst, a } => {
+                    let v = cast(op, from, to, self.get(base, a));
+                    self.put(base, dst, v)
+                }
+                &Op::Select { dst, c, a, b } => {
+                    let v = if self.get(base, c) != 0 {
+                        self.get(base, a)
+                    } else {
+                        self.get(base, b)
+                    };
+                    self.put(base, dst, v)
+                }
+                &Op::Load { ty, dst, p } => {
+                    // SAFETY: memory safety of IR programs is the program's responsibility, as in C.
+                    let v = unsafe { load(ty, self.get(base, p)) };
+                    self.put(base, dst, v)
+                }
+                &Op::Store { ty, v, p } => unsafe { store(ty, self.get(base, p), self.get(base, v)) },
+                &Op::Ptradd { dst, p, off } => {
+                    let v = self.get(base, p).wrapping_add(self.get(base, off));
+                    self.put(base, dst, v)
+                }
+                Op::Call { func, args, dst } => {
+                    let v = self.call_func(*func, base, args)?;
+                    if let Some(d) = *dst {
+                        self.put(base, d, v)
+                    }
+                }
+                Op::CallIndirect {
+                    sig,
+                    callee,
+                    args,
+                    dst,
+                } => {
+                    let target = self.get(base, *callee);
+                    let v = self.call_indirect(sig, target, base, args)?;
+                    if let Some(d) = *dst {
+                        self.put(base, d, v)
+                    }
+                }
+                Op::If { c, then, els } => {
+                    let flow = if self.get(base, *c) != 0 {
+                        self.exec(then, base)?
+                    } else {
+                        self.exec(els, base)?
+                    };
+                    if !matches!(flow, Flow::Next) {
+                        return Ok(flow);
+                    }
+                }
+                Op::Loop { body } => loop {
+                    match self.exec(body, base)? {
+                        Flow::Next | Flow::Continue => {}
+                        Flow::Break => break,
+                        ret @ Flow::Return(_) => return Ok(ret),
+                    }
+                },
+                Op::Break => return Ok(Flow::Break),
+                Op::Continue => return Ok(Flow::Continue),
+                &Op::Return(v) => return Ok(Flow::Return(v.map(|s| self.get(base, s)).unwrap_or(0))),
+                Op::Unreachable => return Err(Trap::new(trap::UNREACHABLE)),
+            }
+        }
+        Ok(Flow::Next)
+    }
+}
+
+// ------------------------------------------------------------------------------------------ compile
+
+struct FuncCompiler<'a> {
+    m: &'a Module,
+    slots: HashMap<Value, Slot>,
+    vars: HashMap<a0_ir::Var, Slot>,
+    addr_of: &'a dyn Fn(a0_ir::Symbol) -> u64,
+}
+
+fn compile_function(m: &Module, f: FuncId, addr_of: &dyn Fn(a0_ir::Symbol) -> u64) -> Code {
+    let mut c = FuncCompiler {
+        m,
+        slots: HashMap::new(),
+        vars: HashMap::new(),
+        addr_of,
+    };
+    let mut next = 0u32;
+    let mut params = Vec::new();
+    for &p in m.func_param_values(f) {
+        c.slots.insert(p, next);
+        params.push(next);
+        next += 1;
+    }
+    let body = m.func_body(f).unwrap();
+    for inst in a0_ir::insts_in_text_order(m, body) {
+        if let Some(v) = m.inst_result(inst) {
+            c.slots.insert(v, next);
+            next += 1;
+        }
+    }
+    for &var in m.func_vars(f) {
+        c.vars.insert(var, next);
+        next += 1;
+    }
+    let ops = c.region(body);
+    Code {
+        ops,
+        params,
+        frame_size: next as usize,
+    }
+}
+
+impl FuncCompiler<'_> {
+    fn s(&self, v: Value) -> Slot {
+        self.slots[&v]
+    }
+
+    fn region(&self, r: Region) -> Box<[Op]> {
+        self.m.region_insts(r).iter().map(|&i| self.inst(i)).collect()
+    }
+
+    fn inst(&self, i: Inst) -> Op {
+        let m = self.m;
+        let op = m.inst_opcode(i);
+        let args = m.inst_args(i);
+        let a = |n: usize| self.s(args[n]);
+        let dst = m.inst_result(i).map(|v| self.s(v));
+        let ty = |n: usize| m.value_type(args[n]);
+        match op {
+            Opcode::Iconst => Op::Const {
+                dst: dst.unwrap(),
+                bits: m.inst_iconst(i) as u64,
+            },
+            Opcode::Fconst => Op::Const {
+                dst: dst.unwrap(),
+                bits: m.inst_fconst_bits(i),
+            },
+            Opcode::Null => Op::Const {
+                dst: dst.unwrap(),
+                bits: 0,
+            },
+            Opcode::Addr => Op::Const {
+                dst: dst.unwrap(),
+                bits: (self.addr_of)(m.inst_symbol(i)),
+            },
+            op if op.is_int_binary() => Op::IntBin {
+                op,
+                ty: ty(0),
+                dst: dst.unwrap(),
+                a: a(0),
+                b: a(1),
+            },
+            op if op.is_float_binary() => Op::FloatBin {
+                op,
+                ty: ty(0),
+                dst: dst.unwrap(),
+                a: a(0),
+                b: a(1),
+            },
+            op if op.is_unary() => Op::Unary {
+                op,
+                ty: ty(0),
+                dst: dst.unwrap(),
+                a: a(0),
+            },
+            Opcode::Icmp => Op::Icmp {
+                cc: m.inst_int_cc(i),
+                ty: ty(0),
+                dst: dst.unwrap(),
+                a: a(0),
+                b: a(1),
+            },
+            Opcode::Fcmp => Op::Fcmp {
+                cc: m.inst_float_cc(i),
+                ty: ty(0),
+                dst: dst.unwrap(),
+                a: a(0),
+                b: a(1),
+            },
+            op if op.is_cast() => Op::Cast {
+                op,
+                from: ty(0),
+                to: m.value_type(m.inst_result(i).unwrap()),
+                dst: dst.unwrap(),
+                a: a(0),
+            },
+            Opcode::Select => Op::Select {
+                dst: dst.unwrap(),
+                c: a(0),
+                a: a(1),
+                b: a(2),
+            },
+            Opcode::Load => Op::Load {
+                ty: m.value_type(m.inst_result(i).unwrap()),
+                dst: dst.unwrap(),
+                p: a(0),
+            },
+            Opcode::Store => Op::Store {
+                ty: ty(0),
+                v: a(0),
+                p: a(1),
+            },
+            Opcode::Ptradd => Op::Ptradd {
+                dst: dst.unwrap(),
+                p: a(0),
+                off: a(1),
+            },
+            Opcode::Call => Op::Call {
+                func: m.inst_callee(i).0,
+                args: args.iter().map(|&v| self.s(v)).collect(),
+                dst,
+            },
+            Opcode::CallIndirect => {
+                let sig = m.inst_sig(i);
+                Op::CallIndirect {
+                    sig: Rc::new(Shape {
+                        params: m.sig_params(sig).to_vec(),
+                        ret: m.sig_ret(sig),
+                    }),
+                    callee: a(0),
+                    args: args[1..].iter().map(|&v| self.s(v)).collect(),
+                    dst,
+                }
+            }
+            Opcode::Get => Op::Copy {
+                dst: dst.unwrap(),
+                src: self.vars[&m.inst_var(i)],
+            },
+            Opcode::Set => Op::Copy {
+                dst: self.vars[&m.inst_var(i)],
+                src: a(0),
+            },
+            Opcode::If => Op::If {
+                c: a(0),
+                then: self.region(m.inst_region(i, 0).unwrap()),
+                els: m
+                    .inst_region(i, 1)
+                    .map(|r| self.region(r))
+                    .unwrap_or_default(),
+            },
+            Opcode::Loop => Op::Loop {
+                body: self.region(m.inst_region(i, 0).unwrap()),
+            },
+            Opcode::Break => Op::Break,
+            Opcode::Continue => Op::Continue,
+            Opcode::Return => Op::Return(args.first().map(|&v| self.s(v))),
+            Opcode::Unreachable => Op::Unreachable,
+            _ => unreachable!("verified IR has no other opcodes"),
+        }
+    }
+}
+
+/// Which externs are called or have their address taken anywhere in the module.
+fn referenced_externs(m: &Module) -> Vec<bool> {
+    let mut used = vec![false; m.func_count() as usize];
+    for f in 0..m.func_count() {
+        if let Some(body) = m.func_body(FuncId(f)) {
+            for inst in a0_ir::insts_in_text_order(m, body) {
+                match m.inst_opcode(inst) {
+                    Opcode::Call => used[m.inst_callee(inst).index()] = true,
+                    Opcode::Addr => {
+                        if let Some(g) = m.inst_symbol(inst).as_func() {
+                            used[g.index()] = true;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+    used
+}
+
+// ------------------------------------------------------------------------------------------ semantics
+
+/// Bit mask of an integer type's width.
+fn mask(ty: Type) -> u64 {
+    match ty.bits() {
+        Some(64) | None => u64::MAX,
+        Some(b) => (1u64 << b) - 1,
+    }
+}
+
+/// Canonical form of an integer value: sign-extended from its width (`i1` is 0 or 1).
+fn canon(ty: Type, v: u64) -> u64 {
+    a0_ir::canonical_int(ty, v as i64) as u64
+}
+
+/// Normalizes a raw 64-bit value returned from C to the canonical form of `ty`.
+fn normalize(ty: Type, v: u64) -> u64 {
+    match ty {
+        Type::F64 | Type::Ptr => v,
+        Type::F32 => v & 0xffff_ffff,
+        _ => canon(ty, v),
+    }
+}
+
+fn signed_min(ty: Type) -> i64 {
+    match ty.bits() {
+        Some(b) if b < 64 => -(1i64 << (b - 1)),
+        _ => i64::MIN,
+    }
+}
+
+fn int_binary(op: Opcode, ty: Type, a: u64, b: u64) -> Result<u64, Trap> {
+    let (sa, sb) = (a as i64, b as i64);
+    let (ua, ub) = (a & mask(ty), b & mask(ty));
+    let bits = ty.bits().unwrap_or(64);
+    let shift = (ub % bits as u64) as u32;
+    let r = match op {
+        Opcode::Iadd => sa.wrapping_add(sb) as u64,
+        Opcode::Isub => sa.wrapping_sub(sb) as u64,
+        Opcode::Imul => sa.wrapping_mul(sb) as u64,
+        Opcode::Sdiv | Opcode::Srem => {
+            if sb == 0 {
+                return Err(Trap::new(trap::DIVIDE_BY_ZERO));
+            }
+            if op == Opcode::Sdiv {
+                if sa == signed_min(ty) && sb == -1 {
+                    return Err(Trap::new(trap::INTEGER_OVERFLOW));
+                }
+                sa.wrapping_div(sb) as u64
+            } else {
+                sa.wrapping_rem(sb) as u64
+            }
+        }
+        Opcode::Udiv | Opcode::Urem => {
+            if ub == 0 {
+                return Err(Trap::new(trap::DIVIDE_BY_ZERO));
+            }
+            if op == Opcode::Udiv { ua / ub } else { ua % ub }
+        }
+        Opcode::And => a & b,
+        Opcode::Or => a | b,
+        Opcode::Xor => a ^ b,
+        Opcode::Shl => ua.wrapping_shl(shift),
+        Opcode::Lshr => ua.wrapping_shr(shift),
+        Opcode::Ashr => sa.wrapping_shr(shift) as u64,
+        _ => unreachable!(),
+    };
+    Ok(canon(ty, r))
+}
+
+fn float_binary(op: Opcode, ty: Type, a: u64, b: u64) -> u64 {
+    if ty == Type::F32 {
+        let (x, y) = (f32::from_bits(a as u32), f32::from_bits(b as u32));
+        let r = match op {
+            Opcode::Fadd => x + y,
+            Opcode::Fsub => x - y,
+            Opcode::Fmul => x * y,
+            _ => x / y,
+        };
+        r.to_bits() as u64
+    } else {
+        let (x, y) = (f64::from_bits(a), f64::from_bits(b));
+        let r = match op {
+            Opcode::Fadd => x + y,
+            Opcode::Fsub => x - y,
+            Opcode::Fmul => x * y,
+            _ => x / y,
+        };
+        r.to_bits()
+    }
+}
+
+fn icmp(cc: IntCC, ty: Type, a: u64, b: u64) -> bool {
+    let (sa, sb) = (a as i64, b as i64);
+    let (ua, ub) = (a & mask(ty), b & mask(ty));
+    match cc {
+        IntCC::Eq => ua == ub,
+        IntCC::Ne => ua != ub,
+        IntCC::Slt => sa < sb,
+        IntCC::Sle => sa <= sb,
+        IntCC::Sgt => sa > sb,
+        IntCC::Sge => sa >= sb,
+        IntCC::Ult => ua < ub,
+        IntCC::Ule => ua <= ub,
+        IntCC::Ugt => ua > ub,
+        IntCC::Uge => ua >= ub,
+    }
+}
+
+fn fcmp(cc: FloatCC, ty: Type, a: u64, b: u64) -> bool {
+    let (x, y) = if ty == Type::F32 {
+        (f32::from_bits(a as u32) as f64, f32::from_bits(b as u32) as f64)
+    } else {
+        (f64::from_bits(a), f64::from_bits(b))
+    };
+    match cc {
+        FloatCC::Eq => x == y,
+        FloatCC::Ne => x != y,
+        FloatCC::Lt => x < y,
+        FloatCC::Le => x <= y,
+        FloatCC::Gt => x > y,
+        FloatCC::Ge => x >= y,
+    }
+}
+
+fn float_of(ty: Type, bits: u64) -> f64 {
+    if ty == Type::F32 {
+        f32::from_bits(bits as u32) as f64
+    } else {
+        f64::from_bits(bits)
+    }
+}
+
+fn float_bits(ty: Type, v: f64) -> u64 {
+    if ty == Type::F32 {
+        (v as f32).to_bits() as u64
+    } else {
+        v.to_bits()
+    }
+}
+
+/// Saturating float-to-int conversion; NaN becomes 0.
+fn float_to_int(ty: Type, v: f64, signed: bool) -> u64 {
+    let r = match (ty, signed) {
+        (Type::I1, _) => (v as i64 != 0) as u64,
+        (Type::I8, true) => v as i8 as i64 as u64,
+        (Type::I16, true) => v as i16 as i64 as u64,
+        (Type::I32, true) => v as i32 as i64 as u64,
+        (_, true) => v as i64 as u64,
+        (Type::I8, false) => v as u8 as u64,
+        (Type::I16, false) => v as u16 as u64,
+        (Type::I32, false) => v as u32 as u64,
+        (_, false) => v as u64,
+    };
+    canon(ty, r)
+}
+
+fn cast(op: Opcode, from: Type, to: Type, a: u64) -> u64 {
+    match op {
+        Opcode::Zext => canon(to, a & mask(from)),
+        Opcode::Sext => {
+            if from == Type::I1 {
+                canon(to, (a & 1).wrapping_neg())
+            } else {
+                canon(to, a)
+            }
+        }
+        Opcode::Trunc => canon(to, a),
+        Opcode::Sitofp => float_bits(to, a as i64 as f64),
+        Opcode::Uitofp => float_bits(to, (a & mask(from)) as f64),
+        Opcode::Fptosi => float_to_int(to, float_of(from, a), true),
+        Opcode::Fptoui => float_to_int(to, float_of(from, a), false),
+        Opcode::Fext => (f32::from_bits(a as u32) as f64).to_bits(),
+        Opcode::Ftrunc => (f64::from_bits(a) as f32).to_bits() as u64,
+        Opcode::Bitcast => match to {
+            Type::F32 => a & 0xffff_ffff,
+            Type::I32 => canon(Type::I32, a),
+            _ => a,
+        },
+        Opcode::Ptrtoint => canon(to, a),
+        Opcode::Inttoptr => a & mask(from),
+        _ => unreachable!(),
+    }
+}
+
+/// Reads a value of type `ty` at `addr` and returns it in canonical form.
+///
+/// # Safety
+/// `addr` must be valid for reading `ty`.
+unsafe fn load(ty: Type, addr: u64) -> u64 {
+    let p = addr as usize as *const u8;
+    unsafe {
+        match ty {
+            Type::I1 => (p.read() & 1) as u64,
+            Type::I8 => (p as *const i8).read_unaligned() as i64 as u64,
+            Type::I16 => (p as *const i16).read_unaligned() as i64 as u64,
+            Type::I32 => (p as *const i32).read_unaligned() as i64 as u64,
+            Type::F32 => (p as *const u32).read_unaligned() as u64,
+            Type::I64 | Type::F64 | Type::Ptr => (p as *const u64).read_unaligned(),
+        }
+    }
+}
+
+/// Writes a canonical value of type `ty` to `addr`.
+///
+/// # Safety
+/// `addr` must be valid for writing `ty`.
+unsafe fn store(ty: Type, addr: u64, v: u64) {
+    let p = addr as usize as *mut u8;
+    unsafe {
+        match ty {
+            Type::I1 | Type::I8 => p.write(v as u8),
+            Type::I16 => (p as *mut u16).write_unaligned(v as u16),
+            Type::I32 | Type::F32 => (p as *mut u32).write_unaligned(v as u32),
+            Type::I64 | Type::F64 | Type::Ptr => (p as *mut u64).write_unaligned(v),
+        }
+    }
+}
+
+/// Runs `@main` of a module on a thread with a large stack and returns its exit status. This is
+/// what command-line drivers use; traps are returned rather than reported.
+pub fn run_main(module: Module, symbols: HostSymbols, args: Vec<String>) -> Result<Result<i32, Trap>, Diagnostics> {
+    let handle = std::thread::Builder::new()
+        .name("a0-interp".to_string())
+        .stack_size(1 << 30)
+        .spawn(move || {
+            let mut interp = Interpreter::new(module, &symbols)?;
+            Ok(interp.run_main(&args))
+        })
+        .expect("failed to spawn the interpreter thread");
+    handle.join().expect("the interpreter thread panicked")
+}

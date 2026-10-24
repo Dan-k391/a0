@@ -1,0 +1,11 @@
+[package]
+name = "a0-interp"
+description = "Interpreter for the A0 core IR"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+a0-diag.workspace = true
+a0-ir.workspace = true
+a0-runtime.workspace = true
