@@ -1,0 +1,33 @@
+; Function pointers to IR functions and to C functions.
+; expect-stdout: 42
+; expect-stdout: 9
+module "indirect"
+
+extern func @sqrt(f64) -> f64
+extern func @a0_print_f64(f64)
+extern func @a0_print_newline()
+
+func @twice(%x: f64) -> f64 {
+  %r: f64 = fadd %x, %x
+  return %r
+}
+
+func @apply(%f: ptr, %x: f64) -> f64 {
+  %r: f64 = call_indirect %f(%x) : (f64) -> f64
+  return %r
+}
+
+func @main() -> i32 {
+  %t: ptr = addr @twice
+  %x: f64 = fconst 21.0
+  %a: f64 = call @apply(%t, %x)
+  call @a0_print_f64(%a)
+  call @a0_print_newline()
+  %s: ptr = addr @sqrt
+  %y: f64 = fconst 81.0
+  %b: f64 = call @apply(%s, %y)
+  call @a0_print_f64(%b)
+  call @a0_print_newline()
+  %ok: i32 = iconst 0
+  return %ok
+}

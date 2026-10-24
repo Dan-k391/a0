@@ -1,0 +1,132 @@
+; A small ASCII Mandelbrot set: floating point loops, putchar, nested control flow.
+; expect-stdout: .........::::::::::::::::::+++++++*++++++::::::::::
+; expect-stdout: .......:::::::::::::::::+++++++++****++++++::::::::
+; expect-stdout: ......:::::::::::::::++++++++++**@@@@*+++++++::::::
+; expect-stdout: .....:::::::::::::++++++++**@**@@@@@@@@*****++:::::
+; expect-stdout: .....::::::::++++++++++++*@@@@@@@@@@@@@@@@@*+++::::
+; expect-stdout: ....:::+++++++++**********@@@@@@@@@@@@@@@@@**+++:::
+; expect-stdout: ....+++++++++****@@@@@@@*@@@@@@@@@@@@@@@@@@@++++:::
+; expect-stdout: ....@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@**++++++::
+; expect-stdout: ....+++++++++****@@@@@@@*@@@@@@@@@@@@@@@@@@@++++:::
+; expect-stdout: ....:::+++++++++**********@@@@@@@@@@@@@@@@@**+++:::
+; expect-stdout: .....::::::::++++++++++++*@@@@@@@@@@@@@@@@@*+++::::
+; expect-stdout: .....:::::::::::::++++++++**@**@@@@@@@@*****++:::::
+; expect-stdout: ......:::::::::::::::++++++++++**@@@@*+++++++::::::
+; expect-stdout: .......:::::::::::::::::+++++++++****++++++::::::::
+; expect-stdout: .........::::::::::::::::::+++++++*++++++::::::::::
+module "mandelbrot"
+
+extern func @a0_putchar(i32) -> i32
+
+; Iterations until |z| > 2, up to 64.
+func @escape(%cr: f64, %ci: f64) -> i64 {
+  var $zr: f64
+  var $zi: f64
+  var $n: i64
+  loop {
+    %n: i64 = get $n
+    %max: i64 = iconst 64
+    %done: i1 = icmp sge %n, %max
+    if %done {
+      break
+    }
+    %zr: f64 = get $zr
+    %zi: f64 = get $zi
+    %zr2: f64 = fmul %zr, %zr
+    %zi2: f64 = fmul %zi, %zi
+    %mag: f64 = fadd %zr2, %zi2
+    %four: f64 = fconst 4.0
+    %out: i1 = fcmp gt %mag, %four
+    if %out {
+      break
+    }
+    %diff: f64 = fsub %zr2, %zi2
+    %nzr: f64 = fadd %diff, %cr
+    %prod: f64 = fmul %zr, %zi
+    %twice: f64 = fadd %prod, %prod
+    %nzi: f64 = fadd %twice, %ci
+    set $zr, %nzr
+    set $zi, %nzi
+    %one: i64 = iconst 1
+    %next: i64 = iadd %n, %one
+    set $n, %next
+  }
+  %r: i64 = get $n
+  return %r
+}
+
+func @pixel(%n: i64) -> i32 {
+  %a: i64 = iconst 64
+  %inside: i1 = icmp sge %n, %a
+  if %inside {
+    %at: i32 = iconst 64
+    return %at
+  }
+  %b: i64 = iconst 8
+  %star: i1 = icmp sge %n, %b
+  if %star {
+    %s: i32 = iconst 42
+    return %s
+  }
+  %c: i64 = iconst 4
+  %plus: i1 = icmp sge %n, %c
+  if %plus {
+    %p: i32 = iconst 43
+    return %p
+  }
+  %d: i64 = iconst 2
+  %colon: i1 = icmp sge %n, %d
+  if %colon {
+    %co: i32 = iconst 58
+    return %co
+  }
+  %dot: i32 = iconst 46
+  return %dot
+}
+
+func @main() -> i32 {
+  var $row: i64
+  var $col: i64
+  loop {
+    %row: i64 = get $row
+    %rows: i64 = iconst 15
+    %rdone: i1 = icmp sge %row, %rows
+    if %rdone {
+      break
+    }
+    %zero: i64 = iconst 0
+    set $col, %zero
+    loop {
+      %col: i64 = get $col
+      %cols: i64 = iconst 51
+      %cdone: i1 = icmp sge %col, %cols
+      if %cdone {
+        break
+      }
+      ; c = (-2.2 + col * 0.06) + (-1.05 + row * 0.15)i
+      %fc: f64 = sitofp %col
+      %xs: f64 = fconst 0.06
+      %x0: f64 = fconst -2.2
+      %xo: f64 = fmul %fc, %xs
+      %cr: f64 = fadd %x0, %xo
+      %fr: f64 = sitofp %row
+      %ys: f64 = fconst 0.15
+      %y0: f64 = fconst -1.05
+      %yo: f64 = fmul %fr, %ys
+      %ci: f64 = fadd %y0, %yo
+      %n: i64 = call @escape(%cr, %ci)
+      %ch: i32 = call @pixel(%n)
+      %0: i32 = call @a0_putchar(%ch)
+      %one: i64 = iconst 1
+      %ncol: i64 = iadd %col, %one
+      set $col, %ncol
+    }
+    %nl: i32 = iconst 10
+    %1: i32 = call @a0_putchar(%nl)
+    %one.1: i64 = iconst 1
+    %nrow: i64 = iadd %row, %one.1
+    set $row, %nrow
+  }
+  %ok: i32 = iconst 0
+  return %ok
+}

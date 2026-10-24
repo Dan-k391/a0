@@ -1,0 +1,16 @@
+; The result of @main is the exit status; output is flushed first.
+; expect-stdout: bye
+; expect-exit: 3
+module "exit code"
+
+data @bye = "bye\0a"
+
+extern func @a0_print_bytes(ptr, i64)
+
+func @main() -> i32 {
+  %p: ptr = addr @bye
+  %n: i64 = iconst 4
+  call @a0_print_bytes(%p, %n)
+  %code: i32 = iconst 3
+  return %code
+}

@@ -1,0 +1,16 @@
+[package]
+name = "a0"
+description = "The A0 command-line driver"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "a0"
+path = "src/main.rs"
+
+[dependencies]
+a0-diag.workspace = true
+a0-ir.workspace = true
+a0-interp.workspace = true
+a0-runtime.workspace = true

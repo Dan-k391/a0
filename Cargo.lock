@@ -3,6 +3,16 @@
 version = 4
 
 [[package]]
+name = "a0"
+version = "0.1.0"
+dependencies = [
+ "a0-diag",
+ "a0-interp",
+ "a0-ir",
+ "a0-runtime",
+]
+
+[[package]]
 name = "a0-diag"
 version = "0.1.0"
 

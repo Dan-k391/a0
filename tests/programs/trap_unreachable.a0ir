@@ -1,0 +1,7 @@
+; expect-stderr: a0: trap: unreachable code was reached
+; expect-exit: 101
+module "unreachable"
+
+func @main() -> i32 {
+  unreachable
+}

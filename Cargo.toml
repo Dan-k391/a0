@@ -5,6 +5,7 @@ members = [
     "crates/a0-ir",
     "crates/a0-runtime",
     "crates/a0-interp",
+    "crates/a0",
 ]
 
 [workspace.package]

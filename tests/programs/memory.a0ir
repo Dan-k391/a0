@@ -1,0 +1,65 @@
+; Globals, heap memory, byte-sized loads and stores, and pointer arithmetic.
+; expect-stdout: 10 bytes reversed: 9876543210
+; expect-stdout: counter=3
+module "memory"
+
+data @digits = "0123456789"
+data @label = " bytes reversed: "
+data @counter_label = "counter="
+global @counter: i64 = 0
+
+extern func @a0_alloc(i64) -> ptr
+extern func @a0_free(ptr)
+extern func @a0_print_bytes(ptr, i64)
+extern func @a0_print_i64(i64)
+extern func @a0_print_newline()
+
+func @bump() {
+  %p: ptr = addr @counter
+  %v: i64 = load %p
+  %one: i64 = iconst 1
+  %w: i64 = iadd %v, %one
+  store %w, %p
+}
+
+func @main() -> i32 {
+  var $i: i64
+  %n: i64 = iconst 10
+  %buf: ptr = call @a0_alloc(%n)
+  %src: ptr = addr @digits
+  %one: i64 = iconst 1
+  loop {
+    %i: i64 = get $i
+    %done: i1 = icmp eq %i, %n
+    if %done {
+      break
+    }
+    %from: ptr = ptradd %src, %i
+    %byte: i8 = load %from
+    %last: i64 = isub %n, %one
+    %j: i64 = isub %last, %i
+    %to: ptr = ptradd %buf, %j
+    store %byte, %to
+    %next: i64 = iadd %i, %one
+    set $i, %next
+  }
+  call @a0_print_i64(%n)
+  %label: ptr = addr @label
+  %ll: i64 = iconst 17
+  call @a0_print_bytes(%label, %ll)
+  call @a0_print_bytes(%buf, %n)
+  call @a0_print_newline()
+  call @a0_free(%buf)
+  call @bump()
+  call @bump()
+  call @bump()
+  %cl: ptr = addr @counter_label
+  %cn: i64 = iconst 8
+  call @a0_print_bytes(%cl, %cn)
+  %cp: ptr = addr @counter
+  %c: i64 = load %cp
+  call @a0_print_i64(%c)
+  call @a0_print_newline()
+  %ok: i32 = iconst 0
+  return %ok
+}

@@ -1,0 +1,64 @@
+; Float arithmetic, conversions and the runtime's number formatting.
+; expect-stdout: 6765
+; expect-stdout: 0.30000000000000004
+; expect-stdout: -0
+; expect-stdout: 1e+300
+; expect-stdout: inf
+; expect-stdout: 3.5
+; expect-stdout: 7
+; expect-stdout: 1.4142135623730951
+module "floats"
+
+extern func @a0_print_f64(f64)
+extern func @a0_print_i64(i64)
+extern func @a0_print_newline()
+extern func @sqrt(f64) -> f64
+
+func @fib(%n: f64) -> f64 {
+  %two: f64 = fconst 2.0
+  %small: i1 = fcmp lt %n, %two
+  if %small {
+    return %n
+  }
+  %one: f64 = fconst 1.0
+  %a: f64 = fsub %n, %one
+  %fa: f64 = call @fib(%a)
+  %b: f64 = fsub %n, %two
+  %fb: f64 = call @fib(%b)
+  %s: f64 = fadd %fa, %fb
+  return %s
+}
+
+func @show(%x: f64) {
+  call @a0_print_f64(%x)
+  call @a0_print_newline()
+}
+
+func @main() -> i32 {
+  %twenty: f64 = fconst 20.0
+  %f: f64 = call @fib(%twenty)
+  call @show(%f)
+  %a: f64 = fconst 0.1
+  %b: f64 = fconst 0.2
+  %c: f64 = fadd %a, %b
+  call @show(%c)
+  %z: f64 = fconst 0.0
+  %nz: f64 = fneg %z
+  call @show(%nz)
+  %big: f64 = fconst 1e300
+  call @show(%big)
+  %bigger: f64 = fmul %big, %big
+  call @show(%bigger)
+  %seven: i64 = iconst 7
+  %fs: f64 = sitofp %seven
+  %two: f64 = fconst 2.0
+  %half: f64 = fdiv %fs, %two
+  call @show(%half)
+  %back: i64 = fptosi %fs
+  call @a0_print_i64(%back)
+  call @a0_print_newline()
+  %root: f64 = call @sqrt(%two)
+  call @show(%root)
+  %ok: i32 = iconst 0
+  return %ok
+}

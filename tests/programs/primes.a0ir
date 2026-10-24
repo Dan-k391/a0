@@ -1,0 +1,73 @@
+; Prints the primes below 50 with nested loops, break and continue.
+; expect-stdout: 2 3 5 7 11 13 17 19 23 29 31 37 41 43 47
+module "primes"
+
+extern func @a0_print_i64(i64)
+extern func @a0_putchar(i32) -> i32
+extern func @a0_print_newline()
+
+func @is_prime(%n: i64) -> i1 {
+  var $d: i64
+  %two: i64 = iconst 2
+  %small: i1 = icmp slt %n, %two
+  if %small {
+    %no: i1 = iconst 0
+    return %no
+  }
+  set $d, %two
+  loop {
+    %d: i64 = get $d
+    %sq: i64 = imul %d, %d
+    %past: i1 = icmp sgt %sq, %n
+    if %past {
+      break
+    }
+    %r: i64 = srem %n, %d
+    %zero: i64 = iconst 0
+    %divides: i1 = icmp eq %r, %zero
+    if %divides {
+      %no.1: i1 = iconst 0
+      return %no.1
+    }
+    %one: i64 = iconst 1
+    %next: i64 = iadd %d, %one
+    set $d, %next
+  }
+  %yes: i1 = iconst 1
+  return %yes
+}
+
+func @main() -> i32 {
+  var $n: i64
+  var $first: i1
+  %t: i1 = iconst 1
+  set $first, %t
+  loop {
+    %n: i64 = get $n
+    %one: i64 = iconst 1
+    %next: i64 = iadd %n, %one
+    set $n, %next
+    %limit: i64 = iconst 50
+    %done: i1 = icmp sge %n, %limit
+    if %done {
+      break
+    }
+    %p: i1 = call @is_prime(%n)
+    if %p {
+    } else {
+      continue
+    }
+    %first: i1 = get $first
+    if %first {
+      %f: i1 = iconst 0
+      set $first, %f
+    } else {
+      %space: i32 = iconst 32
+      %0: i32 = call @a0_putchar(%space)
+    }
+    call @a0_print_i64(%n)
+  }
+  call @a0_print_newline()
+  %ok: i32 = iconst 0
+  return %ok
+}

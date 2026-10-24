@@ -1,0 +1,25 @@
+; Integer division by zero traps with the same message in every backend.
+; expect-stdout: before
+; expect-stderr: a0: trap: integer division by zero
+; expect-exit: 101
+module "trap"
+
+data @before = "before\0a"
+
+extern func @a0_print_bytes(ptr, i64)
+
+func @divide(%a: i64, %b: i64) -> i64 {
+  %q: i64 = sdiv %a, %b
+  return %q
+}
+
+func @main() -> i32 {
+  %p: ptr = addr @before
+  %n: i64 = iconst 7
+  call @a0_print_bytes(%p, %n)
+  %one: i64 = iconst 1
+  %zero: i64 = iconst 0
+  %q: i64 = call @divide(%one, %zero)
+  %r: i32 = trunc %q
+  return %r
+}
