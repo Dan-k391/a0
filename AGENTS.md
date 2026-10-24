@@ -16,7 +16,7 @@ cargo fmt --all                     # run before committing
 
 Needs a C compiler: MSVC on Windows (found automatically), `cc` on Linux/macOS. Useful while
 debugging: `a0 run|build|fmt|check file.a0ir|file.hir`, `a0 lower file.hir` (the core IR a HIR
-module becomes), `a0 parse lang.a0g input`, `lox ir file.lox`, `kaleidoscope ir file.k`, and
+module becomes), `a0 parse lang.a0g input`, `lox hir|ir file.lox`, `kaleidoscope ir file.k`, and
 `A0_GC_STRESS=1` (the collector runs on every allocation).
 
 ## Layer map and dependency rules

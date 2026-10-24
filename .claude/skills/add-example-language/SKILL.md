@@ -39,8 +39,9 @@ output, and report errors with source locations.
 
 - Kaleidoscope: grammar in `kaleidoscope.a0g`, lowering in `src/lib.rs`; add a program to
   `tests/programs/*.k` with `# expect:` lines.
-- Lox: grammar `lox.a0g`, checks and resolver in `src/analyze.rs`, IR in `src/codegen.rs`, runtime
-  in `runtime/lox.c`. The official suite (`tests/suite.rs`) must stay fully green in all three modes.
+- Lox: grammar `lox.a0g`, checks and resolver in `src/analyze.rs`, HIR generation in `src/emit.rs`,
+  runtime semantics in HIR in `prelude.hir` (prefer changing the prelude over emitting more code).
+  The official suite (`tests/suite.rs`) must stay fully green in all three modes.
 
 ## Checks that must pass
 

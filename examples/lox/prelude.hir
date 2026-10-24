@@ -1,0 +1,212 @@
+// Lox's runtime semantics, written in HIR. The compiler emits calls to these functions; every Lox
+// value is an `any`. Error messages and the exit status (70) match jlox.
+module "lox";
+
+struct LoxFunction { name: string, arity: int, code: fn(any, array<any>) -> any }
+struct LoxNative { arity: int, code: fn(array<any>) -> any }
+struct LoxClass { name: string, methods: map<string, LoxFunction> }
+struct LoxInstance { class: LoxClass, fields: map<string, any> }
+struct LoxBound { receiver: any, method: LoxFunction }
+
+global depth: int;
+
+fn runtime_error(message: string, line: int) -> never {
+  eprint(message + "\n[line " + str(line) + "]\n");
+  exit(70)
+}
+
+// Each Lox global is a HIR global with a flag saying whether it has been defined yet.
+fn undefined_variable(name: string, line: int) -> never {
+  runtime_error("Undefined variable '" + name + "'.", line)
+}
+
+fn native_clock() -> any {
+  new LoxNative { arity: 0, code: fn(args: array<any>) -> any { clock() as any } } as any
+}
+
+fn truthy(v: any) -> bool {
+  if v is unit { false } else if v is bool { v as bool } else { true }
+}
+
+fn numbers(a: any, b: any, line: int) {
+  if !(a is float && b is float) {
+    runtime_error("Operands must be numbers.", line);
+  }
+}
+
+fn add(a: any, b: any, line: int) -> any {
+  if a is float && b is float {
+    return ((a as float) + (b as float)) as any;
+  }
+  if a is string && b is string {
+    return ((a as string) + (b as string)) as any;
+  }
+  runtime_error("Operands must be two numbers or two strings.", line)
+}
+
+fn subtract(a: any, b: any, line: int) -> any {
+  numbers(a, b, line);
+  ((a as float) - (b as float)) as any
+}
+
+fn multiply(a: any, b: any, line: int) -> any {
+  numbers(a, b, line);
+  ((a as float) * (b as float)) as any
+}
+
+fn divide(a: any, b: any, line: int) -> any {
+  numbers(a, b, line);
+  ((a as float) / (b as float)) as any
+}
+
+fn less(a: any, b: any, line: int) -> any {
+  numbers(a, b, line);
+  ((a as float) < (b as float)) as any
+}
+
+fn less_equal(a: any, b: any, line: int) -> any {
+  numbers(a, b, line);
+  ((a as float) <= (b as float)) as any
+}
+
+fn greater(a: any, b: any, line: int) -> any {
+  numbers(a, b, line);
+  ((a as float) > (b as float)) as any
+}
+
+fn greater_equal(a: any, b: any, line: int) -> any {
+  numbers(a, b, line);
+  ((a as float) >= (b as float)) as any
+}
+
+fn negate(a: any, line: int) -> any {
+  if !(a is float) {
+    runtime_error("Operand must be a number.", line);
+  }
+  (-(a as float)) as any
+}
+
+fn stringify(v: any) -> string {
+  if v is unit {
+    "nil"
+  } else if v is bool {
+    if v as bool { "true" } else { "false" }
+  } else if v is float {
+    str(v as float)
+  } else if v is string {
+    v as string
+  } else if v is LoxFunction {
+    "<fn " + (v as LoxFunction).name + ">"
+  } else if v is LoxBound {
+    "<fn " + (v as LoxBound).method.name + ">"
+  } else if v is LoxClass {
+    (v as LoxClass).name
+  } else if v is LoxInstance {
+    (v as LoxInstance).class.name + " instance"
+  } else {
+    "<native fn>"
+  }
+}
+
+fn print_value(v: any) {
+  print(stringify(v) + "\n");
+}
+
+fn arity(expected: int, given: int, line: int) {
+  if expected != given {
+    runtime_error("Expected " + str(expected) + " arguments but got " + str(given) + ".", line);
+  }
+}
+
+// Calls a Lox value. Each Lox call is two native frames (this and the callee), so the limit keeps
+// deep recursion a Lox error rather than a stack overflow of the host.
+fn call(callee: any, args: array<any>, line: int) -> any {
+  depth = depth + 1;
+  if depth > 3000 {
+    runtime_error("Stack overflow.", line);
+  }
+  let result: any = if callee is LoxFunction {
+    let f = callee as LoxFunction;
+    arity(f.arity, len(args), line);
+    f.code(() as any, args)
+  } else if callee is LoxBound {
+    let b = callee as LoxBound;
+    arity(b.method.arity, len(args), line);
+    b.method.code(b.receiver, args)
+  } else if callee is LoxClass {
+    let k = callee as LoxClass;
+    let instance = new LoxInstance { class: k, fields: new map<string, any> } as any;
+    if has(k.methods, "init") {
+      let init = k.methods["init"];
+      arity(init.arity, len(args), line);
+      init.code(instance, args);
+    } else {
+      arity(0, len(args), line);
+    }
+    instance
+  } else if callee is LoxNative {
+    let n = callee as LoxNative;
+    arity(n.arity, len(args), line);
+    n.code(args)
+  } else {
+    runtime_error("Can only call functions and classes.", line)
+  };
+  depth = depth - 1;
+  result
+}
+
+fn get_property(object: any, name: string, line: int) -> any {
+  if !(object is LoxInstance) {
+    runtime_error("Only instances have properties.", line);
+  }
+  let instance = object as LoxInstance;
+  if has(instance.fields, name) {
+    return instance.fields[name];
+  }
+  if has(instance.class.methods, name) {
+    return new LoxBound { receiver: object, method: instance.class.methods[name] } as any;
+  }
+  runtime_error("Undefined property '" + name + "'.", line)
+}
+
+// jlox checks the object before it evaluates the value being assigned.
+fn check_fields(object: any, line: int) {
+  if !(object is LoxInstance) {
+    runtime_error("Only instances have fields.", line);
+  }
+}
+
+fn set_property(object: any, name: string, value: any) -> any {
+  (object as LoxInstance).fields[name] = value;
+  value
+}
+
+fn get_super(superclass: any, receiver: any, name: string, line: int) -> any {
+  let k = superclass as LoxClass;
+  if !has(k.methods, name) {
+    runtime_error("Undefined property '" + name + "'.", line);
+  }
+  new LoxBound { receiver: receiver, method: k.methods[name] } as any
+}
+
+fn check_superclass(superclass: any, line: int) {
+  if !(superclass is LoxClass) {
+    runtime_error("Superclass must be a class.", line);
+  }
+}
+
+// Methods are copied down: classes never change after they are created, so this is the same as
+// looking them up through the superclass chain.
+fn new_class(name: string, superclass: any) -> LoxClass {
+  let k = new LoxClass { name: name, methods: new map<string, LoxFunction> };
+  if superclass is LoxClass {
+    let inherited = (superclass as LoxClass).methods;
+    let names = keys(inherited);
+    let i = 0;
+    while i < len(names) {
+      k.methods[names[i]] = inherited[names[i]];
+      i = i + 1;
+    }
+  }
+  k
+}

@@ -191,13 +191,74 @@ One entry per milestone: what was done, what changed along the way, and open que
 3. Numbers print in the shortest round-trip form, which equals jlox's output for everything the suite
    prints, but extreme magnitudes differ (`1e+21` here, `1.0E21` in jlox).
 
+## M6. High-level IR, runtime GC, Lox on the HIR
+
+**Done**
+
+- `AGENTS.md` (commands, layer map and dependency rules, conventions, testing and docs-sync rules,
+  commit rules) and five workflow skills in `.claude/skills/`: `add-ir-instruction`,
+  `add-hir-feature`, `add-runtime-function`, `add-example-language`, `differential-tests`.
+- `a0rt` gained the language runtime (D15, D16, D18): a precise mark-sweep collector generalized from
+  Lox's (type descriptors with per-word layouts, a shadow stack, registered roots, `A0_GC_STRESS=1`),
+  immutable strings, growable arrays, insertion-ordered hash maps, NaN-boxed `any` values and number
+  formatting. Small objects come from size-class free lists; small arrays keep their elements inline.
+- `a0-hir`, the high-level IR (`docs/hir.md`, D14, D17): a typed expression tree with strings, arrays,
+  maps, structs, enums, closures and `any`; a handle-based builder that types eagerly; a checker; a
+  text format parsed with A0's own grammar layer, with an exact round trip; and lowering to the core
+  IR plus `a0rt` calls. Lowering keeps the collector precise without stack maps: reference and `any`
+  locals live in shadow-stack slots, captured locals in heap boxes, and temporaries are spilled only
+  when something after them can allocate. `a0 run|build|fmt|check|lower` accept `.hir` files.
+- Tests: `tests/hir/*.hir` run interpreted, native and under GC stress next to the core IR programs;
+  the HIR test suite checks round trips, precedence, 13 type errors, name and syntax errors and the
+  lowering of closures. The program harnesses now kill a program after 60 seconds, so a collector bug
+  that makes a program loop forever fails the test instead of hanging it.
+- **Lox runs on the HIR.** Its C runtime (values, strings, tables, closures, classes and its own
+  collector) is gone. Lox's semantics are written in HIR (`prelude.hir`); the compiler emits one
+  closure per Lox function and leaves captures, rooting and collection to the HIR. All 241 tests of
+  the `jlox` suite still pass interpreted, native and under GC stress.
+
+  | Lines | Before | After |
+  |---|---|---|
+  | resolver and checks (`analyze.rs`) | 606 | 504 |
+  | code generation (`codegen.rs` → `emit.rs`) | 935 | 504 |
+  | runtime (`runtime/lox.c` → `prelude.hir`) | 783 | 212 (HIR) |
+  | `lib.rs`, `main.rs`, `build.rs` | 242 | 243 |
+  | grammar (`lox.a0g`) | 81 | 81 |
+  | **total** | **2647** | **1544** |
+
+- Found and fixed along the way: the runtime's symbol table did not compile with MSVC in release
+  builds (`floor`, `ceil` and `log2` are intrinsics at `/O2`, and their addresses are not constant
+  initializers).
+
+**Changed**
+
+- The collector moved into `a0rt` (D16 supersedes D13), as the fundamentals asked.
+- Lox's stack-overflow limit is 3000 calls (it was 5000): each Lox call is now two IR calls, and the
+  interpreter allows 10000 nested calls.
+- Speed. The first port was 2.4 to 10.8 times slower than the hand-written C runtime on the book's
+  benchmarks, natively. Two general runtime fixes (D18) and compiling Lox globals to HIR globals
+  (D19) brought it to 1.0 to 2.1 times the old time on nine of the ten benchmarks
+  (`instantiation`, `invocation` 1.0; `properties` 1.2; `zoo` 1.3; `equality`, `string_equality` 1.4;
+  `trees` 1.5; `method_call` 1.6; `binary_trees` 2.1) and 5.4 on `fib`, which is nothing but calls
+  and arithmetic. Measured natively on x86-64 Windows against the pre-port compiler.
+
+**Open questions**
+
+1. Lox is still slower than with its hand-written runtime: every operator is a call into the prelude,
+   every call allocates an argument array, and string equality compares contents (the old runtime
+   interned strings). Worth closing further? The options are an inlining hint in the HIR, interned
+   strings in `a0rt`, or fixed-arity closure calls for small argument counts.
+2. Memory management is per module, and `gc` is the only mode. Is a non-GC mode (arena or manual)
+   needed before the typed example language, or only when a language asks for it?
+
 ## Overall open questions
 
 These need a decision from you:
 
-1. **aarch64-windows** (M2): Cranelift's object writer cannot produce AArch64 COFF objects. Contribute
-   the relocations upstream, write that part ourselves, or leave the target out for now?
-2. **Linking on Linux and macOS** (M2) is implemented but untested, because only an x86-64 Windows
-   machine was available. Objects for those targets are validated structurally.
-3. **C-bindable APIs** (M1, D2): is the interpretation in D2 the intended line?
-4. **Garbage collector placement** (M5, D13): in `a0rt` now, or when a second language needs one?
+1. **C-bindable APIs** (M1, D2): is the interpretation in D2 the intended line?
+2. **Lox speed on the HIR** (M6): close the remaining gap to the hand-written runtime (an inlining
+   hint, interned strings, fixed-arity calls), or leave it until a language needs the speed?
+
+Settled since earlier milestones: aarch64-windows is out of scope; the collector lives in `a0rt`
+(D16); linking on x86-64 Linux was verified under WSL (every test, including native executables and
+the Lox suite), and macOS is covered once CI runs.

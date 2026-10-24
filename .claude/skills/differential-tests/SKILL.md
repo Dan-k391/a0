@@ -12,7 +12,7 @@ description: Run and debug A0's differential tests, which require the interprete
 | IR programs `tests/programs/*.a0ir` | `crates/a0/tests/programs.rs` | `a0 run`, `a0 build` + run |
 | Objects for every target | `crates/a0-native/tests/objects.rs` | object inspection only |
 | Kaleidoscope `examples/kaleidoscope/tests/programs/*.k` | `examples/kaleidoscope/tests/kaleidoscope.rs` | interpreted, native |
-| Lox official suite | `examples/lox/tests/suite.rs` | interpreted, native, interpreted + `LOX_GC_STRESS=1` |
+| Lox official suite | `examples/lox/tests/suite.rs` | interpreted, native, interpreted + `A0_GC_STRESS=1` |
 
 ```
 cargo test -p a0 --test programs

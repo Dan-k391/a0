@@ -1,16 +1,17 @@
 //! Lox (from Crafting Interpreters) built on A0.
 //!
 //! The grammar (`lox.a0g`) reproduces jlox's syntax errors; [`analyze`] performs jlox's parse-time
-//! checks and its resolver, and works out which variables closures capture; [`codegen`] emits A0 IR
-//! that calls the Lox runtime (`runtime/lox.c`) for dynamic operations. Programs run in the A0
-//! interpreter or as native executables, with jlox's output, error messages and exit codes.
+//! checks and its resolver; [`emit`] builds a HIR module on top of Lox's runtime, which is itself
+//! written in HIR (`prelude.hir`). Programs run in the A0 interpreter or as native executables, with
+//! jlox's output, error messages and exit codes.
 
 pub mod analyze;
-pub mod codegen;
+pub mod emit;
 
 use std::fmt;
 
 use a0_diag::{SourceId, SourceMap};
+use a0_hir::HirModule;
 use a0_ir::Module;
 use a0_syntax::Grammar;
 
@@ -63,6 +64,15 @@ impl fmt::Display for CompileError {
 
 /// Compiles a Lox program to an IR module whose `@main` runs the script.
 pub fn compile(text: &str) -> Result<Module, Vec<CompileError>> {
+    let hir = compile_hir(text)?;
+    match a0_hir::lower(&hir) {
+        Ok(m) => Ok(m),
+        Err(d) => panic!("the HIR of a Lox program does not lower:\n{}", d.summary()),
+    }
+}
+
+/// Compiles a Lox program to a HIR module (the prelude plus the program).
+pub fn compile_hir(text: &str) -> Result<HirModule, Vec<CompileError>> {
     let mut sources = SourceMap::new();
     let id = sources.add("script", text);
     let g = grammar();
@@ -107,7 +117,7 @@ pub fn compile(text: &str) -> Result<Module, Vec<CompileError>> {
             return Err(errors);
         }
     };
-    Ok(codegen::generate(&tree, &names, &analysis, &lines))
+    Ok(emit::generate(&tree, &names, &analysis, &lines))
 }
 
 fn sort_errors(errors: &mut [CompileError]) {
@@ -140,24 +150,4 @@ impl Lines<'_> {
             offset: tree.span(token).start,
         }
     }
-}
-
-/// The Lox runtime library, for linking native executables.
-pub fn runtime_library() -> a0_native::Library {
-    a0_native::Library {
-        name: "lox_rt".to_string(),
-        bytes: include_bytes!(concat!(env!("OUT_DIR"), "/lox_rt.embedded")).to_vec(),
-    }
-}
-
-unsafe extern "C" {
-    static lox_symbols: a0_runtime::A0Symbol;
-}
-
-/// Host symbols for the interpreter: the A0 runtime, the C library and the Lox runtime.
-pub fn host_symbols() -> a0_interp::HostSymbols {
-    let mut symbols = a0_interp::HostSymbols::new();
-    // SAFETY: `lox_symbols` is a NULL-terminated table defined in runtime/lox.c.
-    unsafe { symbols.add_table(&raw const lox_symbols) };
-    symbols
 }

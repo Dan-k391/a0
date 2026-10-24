@@ -130,3 +130,23 @@ panics.
 instead of a third hand-written parser). That is a deliberate exception to "frontend and IR are
 independent": the HIR is a layer above both, and using the grammar layer for it is also its biggest
 real-world test.
+
+## D18. Small objects come from size-class free lists
+
+`a0rt` first allocated every object and every array buffer with `calloc` and released it with `free`.
+That cost about 40 ns per object, and Lox on the HIR spent most of its time there (every call
+allocates its argument array). Objects up to 256 bytes now come from free lists, one per 16-byte size
+class, carved from 64 KB chunks; the sweep returns dead objects to their lists. Bigger objects still
+use `malloc`. Chunks are never returned to the system, which is acceptable for the programs A0 runs
+today; a compacting or generational collector would be the next step if it is not. Under
+`A0_GC_STRESS=1` dead objects are filled with `0xdd`, so a missing root shows up as garbage at once
+instead of as stale data that happens to still look right. Arrays created with a capacity of at most
+16 keep their elements inline in the object, so an array literal is one allocation.
+
+## D19. Lox globals are HIR globals with a "defined" flag
+
+The first port kept Lox globals in a map looked up by name at run time, which made every global
+access two hash lookups (about 13 ns, ten times the old IR's indexed globals). Each Lox global is now
+a HIR global of type `any` plus a `bool` HIR global that says whether it has been defined; reading
+or assigning an undefined one is jlox's runtime error. Names are prefixed (`g_x`, `d_x`) so they never
+clash with each other or with the prelude.

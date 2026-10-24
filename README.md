@@ -8,9 +8,13 @@ The core is written in Rust; the runtime is written in C. Each layer is a separa
 used on its own:
 
 ```
-grammar file ──a0-syntax──▶ syntax tree ──(your frontend + a0-sema)──▶ A0 IR ──┬─ a0-interp ──▶ run it
-                                                                              └─ a0-native ──▶ executable
+grammar ──a0-syntax──▶ syntax tree ──(frontend + a0-sema)──▶ HIR ──a0-hir──▶ A0 IR ──┬─ a0-interp ──▶ run it
+                                                                                     └─ a0-native ──▶ executable
 ```
+
+The high-level IR (HIR) gives a language strings, arrays, maps, structs, enums, closures, dynamic
+values and garbage collection. The core IR is the low-level layer under it; a frontend can also emit
+it directly.
 
 ## Status
 
@@ -21,6 +25,7 @@ grammar file ──a0-syntax──▶ syntax tree ──(your frontend + a0-sema
 | 3. Frontend: grammar layer, diagnostics | done |
 | 4. Kaleidoscope end to end | done: tutorial programs run interpreted and native |
 | 5. Lox end to end | done: all 241 tests of the official `jlox` suite pass, interpreted, native, and under GC stress |
+| 6. High-level IR, runtime GC, Lox on the HIR | done: Lox shrank from 2647 to 1544 lines and still passes all 241 tests three ways |
 
 `docs/milestones.md` has the summary of each milestone and the open questions.
 
@@ -37,11 +42,12 @@ grammar file ──a0-syntax──▶ syntax tree ──(your frontend + a0-sema
 | `crates/a0-target` | Explicit target descriptions |
 | `crates/a0-native` | Native code through Cranelift, linked by the system linker |
 | `crates/a0-runtime` | The C runtime (`include/a0rt.h`, `c/`) and its Rust build glue |
-| `crates/a0-build` | Build-script helper for languages that ship a C runtime library |
+| `crates/a0-build` | Build-script helper for languages that ship a C runtime library (Kaleidoscope) |
 | `crates/a0` | The `a0` command-line driver |
 | `examples/kaleidoscope` | Kaleidoscope (LLVM's tutorial language) end to end |
 | `examples/lox` | Lox (Crafting Interpreters) end to end, with the official test suite |
 | `tests/programs`, `tests/hir` | Core IR and HIR programs with expected output, run by both backends |
+| `AGENTS.md`, `.claude/skills` | How to work on A0: commands, layer rules, conventions, workflows |
 | `docs/ir.md`, `docs/hir.md`, `docs/grammar.md` | Core IR, high-level IR and grammar DSL |
 | `docs/decisions.md`, `docs/milestones.md` | Design decisions; milestone summaries and open questions |
 
@@ -66,6 +72,8 @@ a0 run prog.a0ir                          # interpret @main
 a0 build prog.a0ir                        # native executable for the host
 a0 obj --target aarch64-linux prog.a0ir   # object file for another target
 a0 parse lang.a0g input.txt               # try a grammar: print the tree or the errors
+a0 run prog.hir                           # HIR programs: run, build, fmt, check work the same
+a0 lower prog.hir                         # print the core IR a HIR module lowers to
 
 kaleidoscope run examples/kaleidoscope/tests/programs/mandelbrot.k
 lox script.lox                            # like jlox; `lox build script.lox` for an executable
@@ -75,10 +83,14 @@ lox script.lox                            # like jlox; `lox build script.lox` fo
 
 1. Write a grammar (`docs/grammar.md`): tokens, rules, `@prec` operator tables, `~ "message"` error
    messages, `@recover` for panic-mode recovery. Try it with `a0 parse`.
-2. Walk the `SyntaxTree` and emit IR with `a0_ir::Builder`: variables instead of SSA, `if_`/`loop_`
-   for control flow. Use `a0_sema::Scopes` for name resolution.
-3. Run the module with `a0_interp`, or build an executable with `a0_native::build_executable`. If the
-   language needs C support code, ship it with `a0_build::runtime_library`.
+2. Walk the `SyntaxTree` and emit HIR with `a0_hir::HirBuilder` (`docs/hir.md`): typed expressions,
+   with strings, collections, closures, `any` and garbage collection built in. Runtime support can be
+   written in HIR text and parsed with `a0_hir::parse`. Use `a0_sema::Scopes` for name resolution.
+   For full control, emit the core IR with `a0_ir::Builder` instead (variables instead of SSA,
+   `if_`/`loop_` for control flow).
+3. Lower with `a0_hir::lower`, then run the module with `a0_interp` or build an executable with
+   `a0_native::build_executable`. A language that needs C support code ships it with
+   `a0_build::runtime_library`.
 
-`examples/kaleidoscope` (about 650 lines of Rust) is the small, complete example; `examples/lox` is the
-large one.
+`examples/kaleidoscope` (about 650 lines of Rust, on the core IR) is the small, complete example;
+`examples/lox` (on the HIR) is the large one.

@@ -14,6 +14,54 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::Mutex;
 
+/// Runs a program, killing it after a minute: a collector bug can make a program loop forever, and
+/// the test should then fail rather than hang.
+fn run(cmd: &mut Command) -> Output {
+    use std::io::Read;
+    use std::process::Stdio;
+    use std::time::{Duration, Instant};
+    let mut child = cmd
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut out = child.stdout.take().unwrap();
+    let mut err = child.stderr.take().unwrap();
+    let stdout = std::thread::spawn(move || {
+        let mut v = Vec::new();
+        out.read_to_end(&mut v).ok();
+        v
+    });
+    let stderr = std::thread::spawn(move || {
+        let mut v = Vec::new();
+        err.read_to_end(&mut v).ok();
+        v
+    });
+    let start = Instant::now();
+    let mut timed_out = false;
+    let status = loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            break status;
+        }
+        if start.elapsed() > Duration::from_secs(60) {
+            child.kill().ok();
+            timed_out = true;
+            break child.wait().unwrap();
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    };
+    let mut stderr = stderr.join().unwrap();
+    if timed_out {
+        stderr.extend_from_slice(b"\n(killed after 60 seconds)\n");
+    }
+    Output {
+        status,
+        stdout: stdout.join().unwrap(),
+        stderr,
+    }
+}
+
 const SKIPPED: &[&str] = &[
     "test/scanning",
     "test/expressions",
@@ -282,21 +330,16 @@ fn run_suite(mode: &str, run: &(dyn Fn(&str, &Path) -> Output + Sync)) {
 #[test]
 fn suite_interpreted() {
     run_suite("interpreted", &|_, path| {
-        Command::new(env!("CARGO_BIN_EXE_lox"))
-            .arg(path)
-            .output()
-            .unwrap()
+        run(Command::new(env!("CARGO_BIN_EXE_lox")).arg(path))
     });
 }
 
 #[test]
 fn suite_interpreted_with_gc_stress() {
     run_suite("interpreted, GC stress", &|_, path| {
-        Command::new(env!("CARGO_BIN_EXE_lox"))
+        run(Command::new(env!("CARGO_BIN_EXE_lox"))
             .arg(path)
-            .env("LOX_GC_STRESS", "1")
-            .output()
-            .unwrap()
+            .env("A0_GC_STRESS", "1"))
     });
 }
 
@@ -310,18 +353,16 @@ fn suite_native() {
             rel.replace('/', "_"),
             std::env::consts::EXE_SUFFIX
         ));
-        let build = Command::new(env!("CARGO_BIN_EXE_lox"))
+        let build = run(Command::new(env!("CARGO_BIN_EXE_lox"))
             .arg("build")
             .arg(path)
             .arg("-o")
-            .arg(&exe)
-            .output()
-            .unwrap();
+            .arg(&exe));
         if !build.status.success() {
             // Compile errors are reported by the compiler, as they are when interpreting.
             return build;
         }
-        Command::new(&exe).output().unwrap()
+        run(&mut Command::new(&exe))
     });
     std::fs::remove_dir_all(&dir).ok();
 }

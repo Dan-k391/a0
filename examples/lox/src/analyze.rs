@@ -1,8 +1,7 @@
 //! Static analysis of a Lox syntax tree: jlox's parse-time checks and its resolver.
 //!
-//! Besides reporting jlox's errors, resolution records where every variable lives (a local
-//! declaration or a global), which locals are captured by closures, and for every function the list
-//! of outer variables it captures (its upvalues). Code generation relies on all of this.
+//! Besides reporting jlox's errors, resolution records where every variable lives: a local
+//! declaration, or a global looked up by name at run time.
 
 use std::collections::HashMap;
 
@@ -12,7 +11,6 @@ use a0_syntax::{FieldId, Grammar, KindId, NodeId, SyntaxTree};
 use crate::{CompileError, Lines};
 
 pub type DeclId = usize;
-pub type FnId = usize;
 
 /// Field and kind ids of the Lox grammar.
 #[derive(Clone, Copy)]
@@ -197,52 +195,35 @@ pub fn is_variable(tree: &SyntaxTree, n: &Names, node: NodeId) -> bool {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum FnKind {
+enum FnKind {
     Script,
     Function,
     Method,
     Initializer,
 }
 
+/// Where a variable lives: a local declaration, or a global looked up by name at run time.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Place {
     Local(DeclId),
-    Global(u32),
+    Global,
 }
 
-pub struct DeclInfo {
-    pub name: String,
-    pub func: FnId,
-    pub captured: bool,
-}
-
-pub struct FnInfo {
-    /// The `fun_decl` or `method` node (`None` for the script).
-    pub node: Option<NodeId>,
-    pub kind: FnKind,
-    pub name: String,
-    pub params: Vec<DeclId>,
-    /// Outer variables this function captures, in closure cell order.
-    pub upvalues: Vec<DeclId>,
-    pub this_decl: Option<DeclId>,
-}
-
-/// Everything code generation needs to know about names.
+/// What code generation needs to know about names. Nothing about closures: the HIR captures
+/// whatever outer locals a function uses.
+#[derive(Default)]
 pub struct Analysis {
-    pub functions: Vec<FnInfo>,
-    pub decls: Vec<DeclInfo>,
-    /// Variable uses (`primary` nodes for names, `this` and `super`, and `assign` nodes) to places.
+    /// Variable uses (`primary` nodes for names, `this` and `super`, `assign` nodes, and superclass
+    /// name tokens) to places.
     pub uses: HashMap<NodeId, Place>,
-    /// For `super` expressions: the method's `this`.
-    pub super_this: HashMap<NodeId, DeclId>,
-    /// Declarations (`var_decl`, `fun_decl`, `class_decl`) to places.
+    /// Declarations (`var_decl`, `fun_decl` and `class_decl` nodes, parameter tokens) to places.
     pub defs: HashMap<NodeId, Place>,
+    /// Methods to their `this`.
+    pub this_decls: HashMap<NodeId, DeclId>,
     /// `class_decl` nodes with a superclass to their `super` variable.
     pub super_decls: HashMap<NodeId, DeclId>,
-    /// `fun_decl` and `method` nodes to functions.
-    pub fn_of: HashMap<NodeId, FnId>,
-    pub globals: Vec<String>,
-    pub clock_global: u32,
+    /// `super` expressions to the method's `this`.
+    pub super_this: HashMap<NodeId, DeclId>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -259,8 +240,8 @@ struct Resolver<'a> {
     scopes: Scopes,
     errors: Vec<CompileError>,
     a: Analysis,
-    global_index: HashMap<String, u32>,
-    fn_stack: Vec<FnId>,
+    decls: DeclId,
+    functions: Vec<FnKind>,
     class: ClassKind,
 }
 
@@ -272,29 +253,11 @@ pub fn resolve(tree: &SyntaxTree, n: &Names, lines: &Lines) -> Result<Analysis, 
         lines,
         scopes: Scopes::new(),
         errors: Vec::new(),
-        a: Analysis {
-            functions: vec![FnInfo {
-                node: None,
-                kind: FnKind::Script,
-                name: "script".to_string(),
-                params: Vec::new(),
-                upvalues: Vec::new(),
-                this_decl: None,
-            }],
-            decls: Vec::new(),
-            uses: HashMap::new(),
-            super_this: HashMap::new(),
-            defs: HashMap::new(),
-            super_decls: HashMap::new(),
-            fn_of: HashMap::new(),
-            globals: Vec::new(),
-            clock_global: 0,
-        },
-        global_index: HashMap::new(),
-        fn_stack: vec![0],
+        a: Analysis::default(),
+        decls: 0,
+        functions: vec![FnKind::Script],
         class: ClassKind::None,
     };
-    r.a.clock_global = r.global("clock");
     for stmt in statements(tree, tree.root()) {
         r.stmt(stmt);
     }
@@ -311,80 +274,40 @@ impl Resolver<'_> {
         self.errors.push(e);
     }
 
-    fn global(&mut self, name: &str) -> u32 {
-        if let Some(&i) = self.global_index.get(name) {
-            return i;
-        }
-        let i = self.a.globals.len() as u32;
-        self.a.globals.push(name.to_string());
-        self.global_index.insert(name.to_string(), i);
-        i
-    }
-
-    fn current_fn(&self) -> FnId {
-        *self.fn_stack.last().unwrap()
-    }
-
-    fn new_decl(&mut self, name: &str) -> DeclId {
-        self.a.decls.push(DeclInfo {
-            name: name.to_string(),
-            func: self.current_fn(),
-            captured: false,
-        });
-        self.a.decls.len() - 1
-    }
-
-    /// Declares `name` (a token) in the innermost scope, or as a global at the top level. Locals start
-    /// out declared but not defined.
-    fn declare(&mut self, token: NodeId) -> Place {
-        let name = self.tree.text(token);
+    /// Declares `token` in the innermost scope, or as a global at the top level. Locals start out
+    /// declared but not defined, unless `defined`.
+    fn declare(&mut self, token: NodeId, defined: bool) -> Place {
         if self.scopes.depth() == 0 {
-            return Place::Global(self.global(name));
+            return Place::Global;
         }
-        let d = self.new_decl(name);
-        if self.scopes.declare(name, d as u64).is_err() {
+        let d = self.declare_name(self.tree.text(token), defined);
+        if d.is_none() {
             self.error(token, "Already a variable with this name in this scope.");
         }
-        Place::Local(d)
+        Place::Local(d.unwrap_or(0))
+    }
+
+    fn declare_name(&mut self, name: &str, defined: bool) -> Option<DeclId> {
+        let d = self.decls;
+        self.decls += 1;
+        let declared = if defined {
+            self.scopes.declare_defined(name, d as u64)
+        } else {
+            self.scopes.declare(name, d as u64)
+        };
+        declared.ok().map(|_| d)
     }
 
     fn define(&mut self, token: NodeId) {
-        if self.scopes.depth() == 0 {
-            return;
-        }
         if let Some(s) = self.scopes.lookup_in_current(self.tree.text(token)) {
             self.scopes.define(s);
         }
     }
 
-    /// Declares a variable that is defined from the start (`this`, `super`, parameters).
-    fn declare_defined(&mut self, name: &str) -> DeclId {
-        let d = self.new_decl(name);
-        let _ = self.scopes.declare_defined(name, d as u64);
-        d
-    }
-
-    /// Resolves a use of `name`: a local (marking captures along the way) or a global.
     fn resolve_name(&mut self, name: &str) -> Place {
         match self.scopes.resolve(name) {
-            Some(r) => {
-                let d = self.scopes.data(r.symbol) as DeclId;
-                let home = self.a.decls[d].func;
-                if home != self.current_fn() {
-                    self.a.decls[d].captured = true;
-                    // Every function between the use and the declaration passes the variable on.
-                    for &f in self.fn_stack.iter().rev() {
-                        if f == home {
-                            break;
-                        }
-                        if !self.a.functions[f].upvalues.contains(&d) {
-                            self.a.functions[f].upvalues.push(d);
-                        }
-                    }
-                }
-                Place::Local(d)
-            }
-            None => Place::Global(self.global(name)),
+            Some(r) => Place::Local(self.scopes.data(r.symbol) as DeclId),
+            None => Place::Global,
         }
     }
 
@@ -394,17 +317,15 @@ impl Resolver<'_> {
         let kind = tree.kind(node);
         if kind == n.var_decl {
             let name = tree.field(node, n.name).unwrap();
-            let place = self.declare(name);
+            let place = self.declare(name, false);
             self.a.defs.insert(node, place);
             if let Some(init) = tree.field(node, n.init) {
                 self.expr(init);
             }
             self.define(name);
         } else if kind == n.fun_decl {
-            let name = tree.field(node, n.name).unwrap();
-            let place = self.declare(name);
+            let place = self.declare(tree.field(node, n.name).unwrap(), true);
             self.a.defs.insert(node, place);
-            self.define(name);
             self.function(node, FnKind::Function);
         } else if kind == n.class_decl {
             self.class_decl(node);
@@ -430,20 +351,17 @@ impl Resolver<'_> {
         } else if kind == n.for_stmt {
             // jlox desugars `for` into a block holding the initializer and a while loop.
             self.scopes.push(ScopeKind::Block);
-            if let Some(init) = tree.field(node, n.init) {
-                self.stmt(init);
-            }
-            if let Some(cond) = tree.field(node, n.cond) {
-                self.expr(cond);
-            }
-            self.stmt(tree.field(node, n.body).unwrap());
-            if let Some(incr) = tree.field(node, n.incr) {
-                self.expr(incr);
+            for f in [n.init, n.cond, n.body, n.incr] {
+                match tree.field(node, f) {
+                    Some(s) if f == n.init || f == n.body => self.stmt(s),
+                    Some(e) => self.expr(e),
+                    None => {}
+                }
             }
             self.scopes.pop();
         } else if kind == n.return_stmt {
             let keyword = tree.child(node, 0);
-            let fn_kind = self.a.functions[self.current_fn()].kind;
+            let fn_kind = *self.functions.last().unwrap();
             if fn_kind == FnKind::Script {
                 self.error(keyword, "Can't return from top-level code.");
             }
@@ -459,41 +377,24 @@ impl Resolver<'_> {
     fn function(&mut self, node: NodeId, kind: FnKind) {
         let n = self.n;
         let tree = self.tree;
-        let name = tree.text(tree.field(node, n.name).unwrap()).to_string();
-        let id = self.a.functions.len();
-        self.a.functions.push(FnInfo {
-            node: Some(node),
-            kind,
-            name,
-            params: Vec::new(),
-            upvalues: Vec::new(),
-            this_decl: None,
-        });
-        self.a.fn_of.insert(node, id);
-        self.fn_stack.push(id);
+        self.functions.push(kind);
         self.scopes.push(ScopeKind::Function);
-        if matches!(kind, FnKind::Method | FnKind::Initializer) {
-            let this = self.declare_defined("this");
-            self.a.functions[id].this_decl = Some(this);
+        if kind != FnKind::Function {
+            let this = self.declare_name("this", true).unwrap();
+            self.a.this_decls.insert(node, this);
         }
         if let Some(params) = tree.field(node, n.params) {
             for p in tree.fields(params, n.param) {
-                let name = tree.text(p);
-                let d = self.new_decl(name);
-                match self.scopes.declare_defined(name, d as u64) {
-                    Ok(_) => {}
-                    Err(_) => self.error(p, "Already a variable with this name in this scope."),
-                }
-                self.a.functions[id].params.push(d);
+                let place = self.declare(p, true);
+                self.a.defs.insert(p, place);
             }
         }
         // The body's statements live in the function's own scope, as in jlox.
-        let body = tree.field(node, n.body).unwrap();
-        for s in statements(tree, body) {
+        for s in statements(tree, tree.field(node, n.body).unwrap()) {
             self.stmt(s);
         }
         self.scopes.pop();
-        self.fn_stack.pop();
+        self.functions.pop();
     }
 
     fn class_decl(&mut self, node: NodeId) {
@@ -502,9 +403,8 @@ impl Resolver<'_> {
         let enclosing = self.class;
         self.class = ClassKind::Class;
         let name = tree.field(node, n.name).unwrap();
-        let place = self.declare(name);
+        let place = self.declare(name, true);
         self.a.defs.insert(node, place);
-        self.define(name);
         let superclass = tree.field(node, n.superclass);
         if let Some(sup) = superclass {
             if tree.text(sup) == tree.text(name) {
@@ -513,17 +413,19 @@ impl Resolver<'_> {
             self.variable_use(sup, sup);
             self.class = ClassKind::Subclass;
             self.scopes.push(ScopeKind::Block);
-            let d = self.declare_defined("super");
+            let d = self.declare_name("super", true).unwrap();
             self.a.super_decls.insert(node, d);
         }
         for m in tree.fields(node, n.methods) {
-            let method_name = tree.text(tree.field(m, n.name).unwrap());
-            let kind = if method_name == "init" {
-                FnKind::Initializer
-            } else {
-                FnKind::Method
-            };
-            self.function(m, kind);
+            let init = tree.text(tree.field(m, n.name).unwrap()) == "init";
+            self.function(
+                m,
+                if init {
+                    FnKind::Initializer
+                } else {
+                    FnKind::Method
+                },
+            );
         }
         if superclass.is_some() {
             self.scopes.pop();
@@ -577,11 +479,9 @@ impl Resolver<'_> {
             }
         } else if kind == n.assign {
             let left = tree.field(node, n.left).unwrap();
-            let right = tree.field(node, n.right).unwrap();
-            self.expr(right);
+            self.expr(tree.field(node, n.right).unwrap());
             if is_variable(tree, &n, left) {
-                let name = tree.text(tree.child(left, 0));
-                let place = self.resolve_name(name);
+                let place = self.resolve_name(tree.text(tree.child(left, 0)));
                 self.a.uses.insert(node, place);
             } else {
                 // A property assignment: resolve the object.
@@ -590,7 +490,7 @@ impl Resolver<'_> {
         } else if kind == n.logical || kind == n.binary {
             self.expr(tree.field(node, n.left).unwrap());
             self.expr(tree.field(node, n.right).unwrap());
-        } else if kind == n.unary {
+        } else if kind == n.unary || kind == n.get {
             self.expr(tree.field(node, n.operand).unwrap());
         } else if kind == n.call {
             self.expr(tree.field(node, n.operand).unwrap());
@@ -599,8 +499,6 @@ impl Resolver<'_> {
                     self.expr(a);
                 }
             }
-        } else if kind == n.get {
-            self.expr(tree.field(node, n.operand).unwrap());
         }
     }
 }
