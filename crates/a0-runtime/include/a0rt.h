@@ -99,6 +99,139 @@ enum { A0_FFI_VOID = 0, A0_FFI_INT = 1, A0_FFI_F64 = 2 };
 int32_t a0_ffi_call(void *fn, int32_t nargs, const uint64_t *args, uint32_t float_mask,
                     int32_t ret_kind, uint64_t *ret);
 
+/* ---- Garbage collector -------------------------------------------------------------------- *
+ *
+ * A precise mark-sweep collector. Objects are allocated with a type descriptor (A0Type) and live in
+ * the GC heap; a pointer to an object points at its payload. The collector finds roots in:
+ *   - the shadow stack: frames of 64-bit words pushed by generated code (a0_gc_frame_push/pop), each
+ *     word in the `any` encoding below;
+ *   - registered roots (a0_gc_add_root), such as global variables;
+ *   - its own temporaries while a runtime function allocates more than once.
+ * Only object allocation can start a collection, so a runtime function that allocates once needs no
+ * rooting as long as its arguments are rooted by the caller. A0_GC_STRESS=1 in the environment makes
+ * every allocation collect. */
+
+/* How one 64-bit word is traced. */
+enum { A0_WORD_RAW = 0, A0_WORD_REF = 1, A0_WORD_ANY = 2 };
+
+/* Kinds of objects. FIXED objects (structs, enum variants, closures, boxes) are a fixed number of
+ * words described by the type's layout; the others have built-in descriptors. */
+enum { A0_KIND_FIXED = 0, A0_KIND_STRING = 1, A0_KIND_ARRAY = 2, A0_KIND_MAP = 3, A0_KIND_INT = 4 };
+
+typedef struct A0Type {
+    char *name;
+    int32_t kind;
+    int32_t word_count;
+    uint8_t *layout;
+    /* The enum a variant belongs to; a type's own descriptor otherwise. */
+    const struct A0Type *family;
+} A0Type;
+
+/* Registers a FIXED type: `word_count` payload words traced as `layout[i]` says. `family` is the
+ * descriptor that `a0_any_is_type` compares against (NULL means the type itself). The descriptor
+ * lives for the rest of the program. */
+A0Type *a0_type_new(const uint8_t *name, int64_t name_len, int64_t word_count, const uint8_t *layout,
+                    A0Type *family);
+/* Allocates a zeroed FIXED object. */
+void *a0_gc_new(A0Type *type);
+const A0Type *a0_gc_type_of(const void *object);
+
+/* Pushes a frame of `slots` zeroed words onto the shadow stack and returns it. */
+uint64_t *a0_gc_frame_push(int64_t slots);
+void a0_gc_frame_pop(int64_t slots);
+/* Registers the word at `address` as a root holding a pointer (A0_WORD_REF) or an `any`
+ * (A0_WORD_ANY). */
+void a0_gc_add_root(void *address, int64_t word_kind);
+void a0_gc_collect(void);
+/* Number of collections so far (for tests and statistics). */
+int64_t a0_gc_collections(void);
+/* Number of live objects after the last collection. */
+int64_t a0_gc_live_objects(void);
+
+/* ---- Dynamic values (`any`) ----------------------------------------------------------------- *
+ * NaN-boxed 64-bit words: doubles as themselves (NaNs canonicalized), unit and booleans as special
+ * NaN patterns, references as A0_ANY_REF_TAG | pointer (a null pointer boxes to unit), and 64-bit
+ * integers as boxed heap objects. */
+#define A0_ANY_QNAN 0x7ffc000000000000ull
+#define A0_ANY_REF_TAG 0xfffc000000000000ull
+#define A0_ANY_UNIT (A0_ANY_QNAN | 1)
+#define A0_ANY_FALSE (A0_ANY_QNAN | 2)
+#define A0_ANY_TRUE (A0_ANY_QNAN | 3)
+
+uint64_t a0_any_from_float(double value);
+uint64_t a0_any_from_int(int64_t value); /* allocates */
+uint64_t a0_any_from_ref(void *object);
+int64_t a0_any_is_int(uint64_t value);
+int64_t a0_any_is_string(uint64_t value);
+/* Whether `value` holds an object whose type (or type family) is `type`. */
+int64_t a0_any_is_type(uint64_t value, const A0Type *type);
+int64_t a0_any_to_int(uint64_t value);
+/* Equality of two dynamic values: floats by IEEE, ints by value, strings by content, others by
+ * identity. */
+int64_t a0_any_eq(uint64_t a, uint64_t b);
+/* Panics with "expected <expected>, found <type of value>". */
+A0_NORETURN void a0_any_cast_failed(uint64_t value, const uint8_t *expected, int64_t len);
+
+/* ---- Strings ----------------------------------------------------------------------------------- */
+
+typedef struct A0String {
+    int64_t len;
+    uint64_t hash; /* 0 until computed */
+    uint8_t bytes[];
+} A0String;
+
+A0String *a0_string_new(const uint8_t *bytes, int64_t len);
+A0String *a0_string_concat(A0String *a, A0String *b);
+int64_t a0_string_len(A0String *s);
+int64_t a0_string_eq(A0String *a, A0String *b);
+/* -1, 0 or 1, comparing bytes. */
+int64_t a0_string_compare(A0String *a, A0String *b);
+A0String *a0_string_substr(A0String *s, int64_t start, int64_t count);
+int64_t a0_string_byte_at(A0String *s, int64_t index);
+A0String *a0_string_from_int(int64_t value);
+A0String *a0_string_from_float(double value);
+A0String *a0_string_from_bool(int64_t value);
+void a0_string_print(A0String *s);
+void a0_string_eprint(A0String *s);
+A0_NORETURN void a0_string_panic(A0String *message);
+
+/* ---- Arrays ------------------------------------------------------------------------------------ *
+ * Elements are 64-bit words traced as `elem_kind` (A0_WORD_*). */
+
+typedef struct A0Array {
+    int64_t len;
+    int64_t cap;
+    uint64_t *data;
+    int64_t elem_kind;
+} A0Array;
+
+A0Array *a0_array_new(int64_t elem_kind, int64_t capacity);
+int64_t a0_array_len(A0Array *a);
+uint64_t a0_array_get(A0Array *a, int64_t index);
+void a0_array_set(A0Array *a, int64_t index, uint64_t value);
+void a0_array_push(A0Array *a, uint64_t value);
+uint64_t a0_array_pop(A0Array *a);
+
+/* ---- Maps -------------------------------------------------------------------------------------- *
+ * Hash maps that remember insertion order. Keys are raw words (ints, booleans) or strings compared by
+ * content; values are words traced as `value_kind`. */
+
+enum { A0_KEY_RAW = 0, A0_KEY_STRING = 1 };
+
+typedef struct A0Map A0Map;
+
+A0Map *a0_map_new(int64_t key_kind, int64_t value_kind);
+int64_t a0_map_len(A0Map *m);
+int64_t a0_map_has(A0Map *m, uint64_t key);
+uint64_t a0_map_get(A0Map *m, uint64_t key);
+void a0_map_set(A0Map *m, uint64_t key, uint64_t value);
+int64_t a0_map_remove(A0Map *m, uint64_t key);
+/* The keys in insertion order, as an array with elements of the key's word kind. */
+A0Array *a0_map_keys(A0Map *m);
+
+/* Panics for HIR's checked operations. */
+A0_NORETURN void a0_panic_null(void);
+
 #ifdef __cplusplus
 }
 #endif

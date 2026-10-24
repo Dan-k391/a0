@@ -1,0 +1,44 @@
+/* Declarations shared by the runtime's C files; not part of the public API. */
+#ifndef A0RT_INTERNAL_H
+#define A0RT_INTERNAL_H
+
+#include "a0rt.h"
+
+#include <stddef.h>
+
+/* Built-in object types. */
+extern const A0Type a0_builtin_string;
+extern const A0Type a0_builtin_array;
+extern const A0Type a0_builtin_map;
+extern const A0Type a0_builtin_int;
+
+typedef struct {
+    int64_t value;
+} A0BoxedInt;
+
+/* Allocates an object with `payload_size` zeroed bytes. May collect first. */
+void *a0_gc_alloc(const A0Type *type, size_t payload_size);
+
+/* Memory owned by an object (array elements, map tables): counted toward the next collection, but
+ * never starts one, so growing a buffer needs no rooting. */
+void *a0_gc_buffer_alloc(size_t size);
+void *a0_gc_buffer_realloc(void *buffer, size_t old_size, size_t new_size);
+void a0_gc_buffer_free(void *buffer, size_t size);
+
+/* Marking, for the tracers of built-in kinds. */
+void a0_gc_mark_object(const void *object);
+void a0_gc_mark_word(uint64_t word, int64_t word_kind);
+
+/* Called by the collector for built-in kinds. */
+void a0_array_trace(A0Array *a);
+void a0_array_finalize(A0Array *a);
+void a0_map_trace(A0Map *m);
+void a0_map_finalize(A0Map *m);
+
+uint64_t a0_string_hash(A0String *s);
+
+#define A0_ANY_IS_REF(w) (((w) & A0_ANY_REF_TAG) == A0_ANY_REF_TAG)
+#define A0_ANY_PTR(w) ((void *)(uintptr_t)((w) & 0x0000ffffffffffffull))
+#define A0_ANY_IS_FLOAT(w) (((w) & A0_ANY_QNAN) != A0_ANY_QNAN)
+
+#endif
