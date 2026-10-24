@@ -1,0 +1,13 @@
+[package]
+name = "a0-runtime"
+description = "The A0 C runtime, built as a static library, and its Rust glue"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+links = "a0rt"
+build = "build.rs"
+
+[dependencies]
+
+[build-dependencies]
+cc = "1.2"

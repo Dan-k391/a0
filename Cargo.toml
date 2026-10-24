@@ -3,6 +3,7 @@ resolver = "3"
 members = [
     "crates/a0-diag",
     "crates/a0-ir",
+    "crates/a0-runtime",
 ]
 
 [workspace.package]
@@ -14,6 +15,7 @@ repository = "https://github.com/Dan-k391/a0"
 [workspace.dependencies]
 a0-diag = { path = "crates/a0-diag" }
 a0-ir = { path = "crates/a0-ir" }
+a0-runtime = { path = "crates/a0-runtime" }
 
 [profile.dev]
 opt-level = 1
