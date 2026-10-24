@@ -33,6 +33,7 @@ pub fn parse(text: &str, source: SourceId) -> Result<HirModule, Diagnostics> {
         scopes: Scopes::new(),
         body: None,
         extra_scopes: Vec::new(),
+        tparams: Vec::new(),
     };
     p.module(root);
     if p.diags.has_errors() {
@@ -81,6 +82,8 @@ struct TextParser<'a> {
     body: Option<BodyId>,
     /// Scopes opened by `let` shadowing in each open block, to close when the block ends.
     extra_scopes: Vec<u32>,
+    /// The type parameters of the item being parsed, by name.
+    tparams: Vec<(String, TypeId)>,
 }
 
 impl TextParser<'_> {
@@ -123,12 +126,14 @@ impl TextParser<'_> {
         for &item in &items {
             self.at(item);
             let name = self.field(item, "name").map(|n| self.text(n).to_string());
+            let tparams = self.type_param_names(item);
+            let tparams: Vec<&str> = tparams.iter().map(String::as_str).collect();
             match (self.kind(item), name) {
                 ("struct_decl", Some(n)) => {
-                    self.b.declare_struct(&n);
+                    self.b.declare_generic_struct(&n, &tparams);
                 }
                 ("enum_decl", Some(n)) => {
-                    self.b.declare_enum(&n);
+                    self.b.declare_generic_enum(&n, &tparams);
                 }
                 _ => {}
             }
@@ -138,11 +143,39 @@ impl TextParser<'_> {
         for &item in &items {
             self.at(item);
             let _ = self.declaration(item, &mut funcs);
+            self.tparams.clear();
         }
-        // Pass 3: bodies.
+        // Pass 3: bodies, with their function's type parameters in scope.
         for (f, item) in funcs {
+            self.bind_type_params(Item::Func(f));
             let _ = self.function_body(f, item);
+            self.tparams.clear();
         }
+    }
+
+    fn type_param_names(&self, item: NodeId) -> Vec<String> {
+        let Some(tp) = self
+            .tree
+            .children(item)
+            .into_iter()
+            .find(|&c| self.kind(c) == "type_params")
+        else {
+            return Vec::new();
+        };
+        self.fields(tp, "tparam")
+            .into_iter()
+            .map(|n| self.text(n).to_string())
+            .collect()
+    }
+
+    /// Puts the type parameters of `owner` in scope for the types that follow.
+    fn bind_type_params(&mut self, owner: Item) {
+        let names = self.b.module().type_params(owner).to_vec();
+        self.tparams = names
+            .into_iter()
+            .enumerate()
+            .map(|(i, n)| (n, self.b.type_param(owner, i as u32)))
+            .collect();
     }
 
     fn declaration(&mut self, item: NodeId, funcs: &mut Vec<(FuncId, NodeId)>) -> R<()> {
@@ -155,6 +188,7 @@ impl TextParser<'_> {
                 let Some(Item::Struct(s)) = self.b.module().lookup_type(&name) else {
                     return Ok(());
                 };
+                self.bind_type_params(Item::Struct(s));
                 for f in self.tree.children(item) {
                     if self.kind(f) == "field" {
                         let fname = self.text(self.field(f, "name").unwrap()).to_string();
@@ -168,6 +202,7 @@ impl TextParser<'_> {
                 let Some(Item::Enum(e)) = self.b.module().lookup_type(&name) else {
                     return Ok(());
                 };
+                self.bind_type_params(Item::Enum(e));
                 for v in self.tree.children(item) {
                     if self.kind(v) == "variant" {
                         let vname = self.text(self.field(v, "name").unwrap()).to_string();
@@ -195,11 +230,16 @@ impl TextParser<'_> {
                 self.b.declare_extern(&name, &params, ret);
             }
             "fn_decl" => {
+                let tparams = self.type_param_names(item);
+                let tparams: Vec<&str> = tparams.iter().map(String::as_str).collect();
+                self.at(item);
+                let f = self.b.declare_generic_function(&name, &tparams);
+                self.bind_type_params(Item::Func(f));
                 let (names, types) = self.params(item)?;
                 let ret = self.ret(item)?;
                 let refs: Vec<&str> = names.iter().map(String::as_str).collect();
                 self.at(item);
-                let f = self.b.declare_function(&name, &refs, &types, ret);
+                self.b.set_signature(f, &refs, &types, ret);
                 funcs.push((f, item));
             }
             _ => {}
@@ -227,6 +267,32 @@ impl TextParser<'_> {
     }
 
     fn ty(&mut self, node: NodeId) -> R<TypeId> {
+        let t = self.base_type(self.field(node, "base").unwrap())?;
+        if self.field(node, "nullable").is_some() {
+            self.at(node);
+            return Ok(self.b.nullable_type(t));
+        }
+        Ok(t)
+    }
+
+    /// The type arguments written after `node`'s name, if any.
+    fn type_args(&mut self, node: NodeId) -> R<Option<Vec<TypeId>>> {
+        let Some(ta) = self
+            .tree
+            .children(node)
+            .into_iter()
+            .find(|&c| self.kind(c) == "type_args")
+        else {
+            return Ok(None);
+        };
+        let mut out = Vec::new();
+        for t in self.fields(ta, "targ") {
+            out.push(self.ty(t)?);
+        }
+        Ok(Some(out))
+    }
+
+    fn base_type(&mut self, node: NodeId) -> R<TypeId> {
         let first = self.tree.child(node, 0);
         Ok(match self.text(first) {
             "unit" => TypeId::UNIT,
@@ -254,11 +320,20 @@ impl TextParser<'_> {
                 let r = self.ret(node)?;
                 self.b.fn_type(&ps, r)
             }
-            name => match self.b.module().lookup_type(name) {
-                Some(Item::Struct(s)) => self.b.struct_type(s),
-                Some(Item::Enum(e)) => self.b.enum_type(e),
-                _ => return self.error(node, &format!("unknown type '{name}'")),
-            },
+            "(" => return self.ty(self.field(node, "inner").unwrap()),
+            name => {
+                let name = name.to_string();
+                if let Some((_, t)) = self.tparams.iter().find(|(n, _)| *n == name) {
+                    return Ok(*t);
+                }
+                let args = self.type_args(node)?.unwrap_or_default();
+                self.at(node);
+                match self.b.module().lookup_type(&name) {
+                    Some(Item::Struct(s)) => self.b.struct_type_args(s, &args),
+                    Some(Item::Enum(e)) => self.b.enum_type_args(e, &args),
+                    _ => return self.error(node, &format!("unknown type '{name}'")),
+                }
+            }
         })
     }
 
@@ -339,6 +414,12 @@ impl TextParser<'_> {
         Ok(self.b.let_(local, value))
     }
 
+    /// The name in a `name_expr` (without type arguments).
+    fn name_of(&self, name_expr: NodeId) -> String {
+        self.text(self.field(name_expr, "name").unwrap())
+            .to_string()
+    }
+
     fn lookup_local(&self, name: &str) -> Option<LocalId> {
         self.scopes
             .lookup(name)
@@ -397,6 +478,11 @@ impl TextParser<'_> {
                 self.at(node);
                 self.b.field_named(o, &name)
             }
+            "unwrap" => {
+                let o = self.expr(self.field(node, "operand").unwrap())?;
+                self.at(node);
+                self.b.unwrap(o)
+            }
             "index" => {
                 let t = self.expr(self.field(node, "operand").unwrap())?;
                 let i = self.expr(self.field(node, "index").unwrap())?;
@@ -451,7 +537,7 @@ impl TextParser<'_> {
         let value_node = self.field(node, "right").unwrap();
         match self.kind(target) {
             "primary" if self.kind(self.tree.child(target, 0)) == "name_expr" => {
-                let name = self.text(target).to_string();
+                let name = self.name_of(self.tree.child(target, 0));
                 let value = self.expr(value_node)?;
                 self.at(node);
                 if let Some(l) = self.lookup_local(&name) {
@@ -466,15 +552,8 @@ impl TextParser<'_> {
                 let o = self.expr(self.field(target, "operand").unwrap())?;
                 let name = self.text(self.field(target, "name").unwrap()).to_string();
                 let value = self.expr(value_node)?;
-                let idx = match self.b.module().kind(self.b.type_of(o)) {
-                    TypeKind::Struct(s) => self.b.module().struct_field_index(*s, &name),
-                    _ => None,
-                };
                 self.at(node);
-                match idx {
-                    Some(i) => Ok(self.b.set_field(o, i, value)),
-                    None => self.error(target, &format!("no field '{name}'")),
-                }
+                Ok(self.b.set_field_named(o, &name, value))
             }
             "index" => {
                 let t = self.expr(self.field(target, "operand").unwrap())?;
@@ -491,7 +570,9 @@ impl TextParser<'_> {
         let callee = self.field(node, "operand").unwrap();
         // A bare name may be a builtin, a function or an extern; anything else is a closure value.
         if self.kind(callee) == "primary" && self.kind(self.tree.child(callee, 0)) == "name_expr" {
-            let name = self.text(callee).to_string();
+            let name_node = self.tree.child(callee, 0);
+            let name = self.name_of(name_node);
+            let targs = self.type_args(name_node)?;
             if self.lookup_local(&name).is_none() {
                 if let Some(op) = Builtin::from_name(&name) {
                     let args = self.args(node)?;
@@ -502,7 +583,10 @@ impl TextParser<'_> {
                     Some(Item::Func(f)) => {
                         let args = self.args(node)?;
                         self.at(node);
-                        return Ok(self.b.call(f, &args));
+                        return Ok(match targs {
+                            Some(t) => self.b.call_generic(f, &t, &args),
+                            None => self.b.call(f, &args),
+                        });
                     }
                     Some(Item::Extern(x)) => {
                         let args = self.args(node)?;
@@ -570,9 +654,13 @@ impl TextParser<'_> {
                 let Some(v) = self.b.module().variant_index(e, &vname) else {
                     return self.error(node, &format!("enum {ename} has no variant '{vname}'"));
                 };
+                let targs = self.type_args(node)?;
                 let args = self.args(node)?;
                 self.at(node);
-                self.b.variant(e, v, &args)
+                match targs {
+                    Some(t) => self.b.variant_generic(e, &t, v, &args),
+                    None => self.b.variant(e, v, &args),
+                }
             }
             "lambda" => {
                 let (names, types) = self.params(node)?;
@@ -621,13 +709,18 @@ impl TextParser<'_> {
                 self.b.return_(v)
             }
             "name_expr" => {
-                let name = self.text(node).to_string();
+                let name = self.name_of(node);
                 if let Some(l) = self.lookup_local(&name) {
                     return Ok(self.b.local(l));
                 }
+                let targs = self.type_args(node)?;
+                self.at(node);
                 match self.b.module().lookup_value(&name) {
                     Some(Item::Global(g)) => self.b.global(g),
-                    Some(Item::Func(f)) => self.b.func(f),
+                    Some(Item::Func(f)) => match targs {
+                        Some(t) => self.b.func_generic(f, &t),
+                        None => self.b.func(f),
+                    },
                     _ => return self.error(node, &format!("unknown name '{name}'")),
                 }
             }
@@ -672,8 +765,12 @@ impl TextParser<'_> {
                     }
                 }
             }
+            let targs = self.type_args(s)?;
             self.at(node);
-            return Ok(self.b.new_struct(sid, &fields));
+            return Ok(match targs {
+                Some(t) => self.b.new_struct_generic(sid, &t, &fields),
+                None => self.b.new_struct(sid, &fields),
+            });
         }
         let coll = self
             .tree
@@ -699,7 +796,7 @@ impl TextParser<'_> {
         let scrutinee = self.expr(self.field(node, "scrutinee").unwrap())?;
         let st = self.b.type_of(scrutinee);
         let e = match self.b.module().kind(st) {
-            TypeKind::Enum(e) => *e,
+            TypeKind::Enum(e, _) => *e,
             _ => return self.error(node, "match needs an enum"),
         };
         let mut arms = Vec::new();
@@ -723,16 +820,16 @@ impl TextParser<'_> {
                 };
                 let mut binds = Vec::new();
                 if let Some(v) = variant {
-                    let fields = self.b.module().variant_fields(e, v).to_vec();
+                    let count = self.b.module().variant_fields(e, v).len();
                     let bind_nodes = self.fields(pattern, "bind");
-                    if bind_nodes.len() != fields.len() {
-                        return self.error(
-                            pattern,
-                            &format!("this variant has {} fields", fields.len()),
-                        );
+                    if bind_nodes.len() != count {
+                        return self.error(pattern, &format!("this variant has {count} fields"));
                     }
-                    for (bn, ft) in bind_nodes.into_iter().zip(fields) {
+                    for bn in bind_nodes {
                         let bname = self.text(bn).to_string();
+                        // The binding's type comes from the scrutinee's type when the match is typed.
+                        let ft = self.b.fresh_type();
+                        self.at(bn);
                         let l = self.b.new_local(self.body.unwrap(), &bname, ft);
                         let _ = self.scopes.declare_defined(&bname, l.0 as u64);
                         binds.push(l);

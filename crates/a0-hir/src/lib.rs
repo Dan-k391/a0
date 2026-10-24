@@ -29,6 +29,7 @@ mod lower;
 mod model;
 mod print;
 mod text;
+mod types;
 
 pub use builder::{HirBuilder, KEYWORDS};
 pub use check::{check, check_entry};

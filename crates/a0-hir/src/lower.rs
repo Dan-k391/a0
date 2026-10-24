@@ -411,7 +411,7 @@ impl<'a> Lowerer<'a> {
         }
         // Functions used as values get a wrapper with the closure calling convention.
         for e in &m.exprs {
-            if let ExprKind::Func(f) = e.kind {
+            if let ExprKind::Func(f, _) = e.kind {
                 if self.wrappers.contains_key(&f) {
                     continue;
                 }
@@ -855,7 +855,7 @@ impl<'a> Lowerer<'a> {
         let m = self.m;
         let own = match &m.expr(e).kind {
             ExprKind::Let(l, _) => self.captured[l.index()],
-            ExprKind::Func(_)
+            ExprKind::Func(..)
             | ExprKind::Lambda(_)
             | ExprKind::Call(..)
             | ExprKind::CallExtern(..)
@@ -941,7 +941,7 @@ impl<'a> Lowerer<'a> {
                 }
                 None => V::Unit,
             },
-            ExprKind::Func(f) => {
+            ExprKind::Func(f, _) => {
                 let (w, desc) = self.wrappers[&f];
                 let obj = self.new_object(desc);
                 let code = self.b.func_addr(w);
@@ -981,7 +981,6 @@ impl<'a> Lowerer<'a> {
                     return V::Never;
                 };
                 let obj = vs[0].val();
-                self.null_check(obj);
                 let w = self.word_of(vs[1], m.expr_type(value));
                 self.store_word(obj, f, w);
                 V::Unit
@@ -1028,7 +1027,7 @@ impl<'a> Lowerer<'a> {
                 self.b.end_if();
                 V::Val(self.b.get(result))
             }
-            ExprKind::Call(f, args) => {
+            ExprKind::Call(f, _, args) => {
                 let Some(vs) = self.operands(&args, false) else {
                     return V::Never;
                 };
@@ -1057,7 +1056,6 @@ impl<'a> Lowerer<'a> {
                     return V::Never;
                 };
                 let c = vs[0].val();
-                self.null_check(c);
                 let w = self.load_word(c, 0);
                 let code = self.b.cast(Opcode::Inttoptr, w, Type::Ptr);
                 let mut ir_args = vec![c];
@@ -1107,9 +1105,18 @@ impl<'a> Lowerer<'a> {
             ExprKind::Field(o, f) => {
                 let v = self.expr(o);
                 let V::Val(obj) = v else { return v };
-                self.null_check(obj);
                 let w = self.load_word(obj, f);
                 self.word_decode(w, ty)
+            }
+            ExprKind::Unwrap(o) => {
+                let v = self.expr(o);
+                if let V::Val(p) = v {
+                    self.null_check(p);
+                }
+                v
+            }
+            ExprKind::FieldName(..) | ExprKind::SetFieldName(..) => {
+                unreachable!("finish resolves fields named before their object's type was known")
             }
             ExprKind::Match(s, arms) => self.match_(s, &arms, ty),
             ExprKind::Array(elems) => {
@@ -1339,6 +1346,8 @@ impl<'a> Lowerer<'a> {
         } else {
             m.expr_type(a)
         };
+        // `s == null` with a `string?` still compares strings (the runtime handles null).
+        let t = m.non_null(t);
         let allocates = op == BinOp::Add && t == TypeId::STRING;
         let Some(vs) = self.operands(&[a, b], allocates) else {
             return V::Never;
@@ -1516,14 +1525,39 @@ impl<'a> Lowerer<'a> {
         if to == TypeId::ANY {
             return V::Val(self.box_any(v, from));
         }
+        // `T` to `T?` changes nothing at run time.
+        if m.non_null(to) == from {
+            return v;
+        }
         let V::Val(v) = v else { return V::Unit };
+        if let TypeKind::Nullable(inner) = *m.kind(to) {
+            // From `any`: `()` is null, anything else must be a `T`.
+            let result = self.b.declare_var("cast", Type::Ptr);
+            let unit = self.b.iconst(Type::I64, ANY_UNIT);
+            let is_unit = self.b.icmp(IntCC::Eq, v, unit);
+            self.b.if_(is_unit);
+            let null = self.b.null();
+            self.b.set(result, null);
+            self.b.else_();
+            let V::Val(p) = self.unpack_any(v, inner) else {
+                unreachable!("nullable types are references")
+            };
+            self.b.set(result, p);
+            self.b.end_if();
+            return V::Val(self.b.get(result));
+        }
         if from == TypeId::INT && to == TypeId::FLOAT {
             return V::Val(self.b.cast(Opcode::Sitofp, v, Type::F64));
         }
         if from == TypeId::FLOAT && to == TypeId::INT {
             return V::Val(self.b.cast(Opcode::Fptosi, v, Type::I64));
         }
-        // From `any`: check, then unpack.
+        self.unpack_any(v, to)
+    }
+
+    /// Unpacks an `any` word that must hold a `to`.
+    fn unpack_any(&mut self, v: Value, to: TypeId) -> V {
+        let m = self.m;
         let ok = self.is_type(v, to);
         let bad = self.b.not(ok);
         self.b.if_(bad);
@@ -1565,13 +1599,14 @@ impl<'a> Lowerer<'a> {
             }
             TypeKind::Int => self.b.call(self.rt.any_from_int, &[v]).unwrap(),
             TypeKind::Any => v,
-            _ => {
+            TypeKind::Nullable(_) => {
                 let null = self.b.null();
                 let is_null = self.b.icmp(IntCC::Eq, v, null);
                 let tagged = self.encode(v, from);
                 let unit = self.b.iconst(Type::I64, ANY_UNIT);
                 self.b.select(is_null, unit, tagged)
             }
+            _ => self.encode(v, from),
         }
     }
 
@@ -1604,15 +1639,21 @@ impl<'a> Lowerer<'a> {
                 let r = self.b.call(self.rt.any_is_string, &[w]).unwrap();
                 self.b.icmp(IntCC::Ne, r, zero)
             }
-            TypeKind::Struct(s) => {
+            TypeKind::Struct(s, _) => {
                 let desc = self.struct_desc[s.index()];
                 self.is_desc(w, desc)
             }
-            TypeKind::Enum(e) => {
+            TypeKind::Enum(e, _) => {
                 let desc = self.enum_desc[e.index()].0;
                 self.is_desc(w, desc)
             }
             TypeKind::Any => self.b.iconst(Type::I1, 1),
+            TypeKind::Nullable(inner) => {
+                let u = self.b.iconst(Type::I64, ANY_UNIT);
+                let is_unit = self.b.icmp(IntCC::Eq, w, u);
+                let is_inner = self.is_type(w, *inner);
+                self.b.or(is_unit, is_inner)
+            }
             _ => self.b.iconst(Type::I1, 0),
         }
     }
@@ -1663,7 +1704,6 @@ impl<'a> Lowerer<'a> {
         let V::Val(obj) = sv else { return sv };
         // Keep the scrutinee alive while payloads are bound (binding a captured local allocates).
         self.spill(obj, m.expr_type(s));
-        self.null_check(obj);
         let tag = self.load_word(obj, 0);
         let result = self.ir_type(ty).map(|t| self.b.declare_var("match", t));
         let mut open = 0;

@@ -1,8 +1,11 @@
 //! Construction of HIR modules.
 //!
 //! Expressions are built bottom-up and typed as they are built, so a frontend can ask for the type of
-//! anything it has made. A type error is recorded as a diagnostic and the offending node gets the type
-//! `never`, which fits everywhere, so one mistake is reported once. `finish` runs the checker.
+//! anything it has made. A type that is not known yet is an inference variable
+//! ([`HirBuilder::fresh_type`], the elements of `[]`, the type arguments of a generic call), fixed later
+//! by unification. A node whose rule needs a type that is still open (a field of an object of unknown
+//! type) is typed again by `finish`. A type error is recorded as a diagnostic at the expression it is
+//! about and the node gets `never`, which fits everywhere, so one mistake is reported once.
 
 use std::collections::HashSet;
 
@@ -73,6 +76,8 @@ pub struct HirBuilder {
     m: HirModule,
     diags: Diagnostics,
     span: Option<Span>,
+    /// Nodes whose typing rule needed a type that was still open, with their hints.
+    deferred: Vec<(ExprId, TypeId)>,
 }
 
 impl HirBuilder {
@@ -86,6 +91,7 @@ impl HirBuilder {
             m,
             diags: Diagnostics::new(),
             span: None,
+            deferred: Vec::new(),
         }
     }
 
@@ -103,10 +109,18 @@ impl HirBuilder {
             .push(Diagnostic::error("hir.type", message).with_span_opt(self.span));
     }
 
-    /// Checks the module and returns it, or every problem found.
-    pub fn finish(self) -> Result<HirModule, Diagnostics> {
+    fn error_at(&mut self, span: Option<Span>, message: &str) {
+        self.diags
+            .push(Diagnostic::error("hir.type", message).with_span_opt(span));
+    }
+
+    /// Finishes inference, checks the module and returns it, or every problem found.
+    pub fn finish(mut self) -> Result<HirModule, Diagnostics> {
+        self.solve_deferred();
+        self.report_unresolved();
+        self.resolve_all();
         let mut diags = self.diags;
-        diags.extend(check(&self.m));
+        diags.extend(check(&mut self.m));
         if diags.has_errors() {
             Err(diags)
         } else {
@@ -114,16 +128,133 @@ impl HirBuilder {
         }
     }
 
+    /// Types the deferred nodes again until no more can be typed.
+    fn solve_deferred(&mut self) {
+        loop {
+            let pending = std::mem::take(&mut self.deferred);
+            let before = pending.len();
+            for (e, hint) in pending {
+                let kind = self.m.exprs[e.index()].kind.clone();
+                match infer(&mut self.m, &kind, hint) {
+                    Ok(t) => {
+                        let node = self.m.exprs[e.index()].ty;
+                        self.m.unify(node, t);
+                    }
+                    Err(TypeErr::Open(_)) => self.deferred.push((e, hint)),
+                    Err(TypeErr::At(at, msg)) => {
+                        let span = self.m.exprs[at.unwrap_or(e).index()].span;
+                        self.error_at(span, &msg);
+                        self.m.exprs[e.index()].ty = TypeId::NEVER;
+                    }
+                }
+            }
+            if self.deferred.is_empty() || self.deferred.len() == before {
+                break;
+            }
+        }
+        for (e, _) in std::mem::take(&mut self.deferred) {
+            let kind = self.m.exprs[e.index()].kind.clone();
+            if let Err(TypeErr::Open(at)) = infer(&mut self.m, &kind, TypeId::NEVER) {
+                let span = self.m.exprs[at.index()].span;
+                self.error_at(
+                    span,
+                    "the type of this value must be known here; add a type annotation",
+                );
+            }
+            self.m.exprs[e.index()].ty = TypeId::NEVER;
+        }
+    }
+
+    /// Reports each inference variable that nothing fixed, once, where it first appears.
+    fn report_unresolved(&mut self) {
+        if self.diags.has_errors() {
+            return;
+        }
+        let mut reported = HashSet::new();
+        for i in 0..self.m.exprs.len() {
+            let t = self.m.exprs[i].ty;
+            if let Some(v) = self.m.first_var(t)
+                && reported.insert(v)
+            {
+                let msg = format!(
+                    "cannot infer the type `{}`; add a type annotation",
+                    self.m.type_name(t)
+                );
+                self.error_at(self.m.exprs[i].span, &msg);
+            }
+        }
+        for i in 0..self.m.locals.len() {
+            let t = self.m.locals[i].ty;
+            if let Some(v) = self.m.first_var(t)
+                && reported.insert(v)
+            {
+                let msg = format!(
+                    "cannot infer the type of `{}`; add a type annotation",
+                    self.m.locals[i].name
+                );
+                self.error_at(self.m.locals[i].span, &msg);
+            }
+        }
+    }
+
+    /// Replaces every inferred type by what inference found, and names in field nodes by indices.
+    fn resolve_all(&mut self) {
+        let m = &mut self.m;
+        for i in 0..m.exprs.len() {
+            m.exprs[i].ty = m.resolve(m.exprs[i].ty);
+            let kind = match m.exprs[i].kind.clone() {
+                ExprKind::Is(e, t) => ExprKind::Is(e, m.resolve(t)),
+                ExprKind::Call(f, targs, args) => {
+                    let targs = targs.into_iter().map(|t| m.resolve(t)).collect();
+                    ExprKind::Call(f, targs, args)
+                }
+                ExprKind::Func(f, targs) => {
+                    let targs = targs.into_iter().map(|t| m.resolve(t)).collect();
+                    ExprKind::Func(f, targs)
+                }
+                ExprKind::FieldName(o, name) => match field_index(m, o, &name) {
+                    Some(i) => ExprKind::Field(o, i),
+                    None => continue,
+                },
+                ExprKind::SetFieldName(o, name, v) => match field_index(m, o, &name) {
+                    Some(i) => ExprKind::SetField(o, i, v),
+                    None => continue,
+                },
+                _ => continue,
+            };
+            m.exprs[i].kind = kind;
+        }
+        for i in 0..m.locals.len() {
+            m.locals[i].ty = m.resolve(m.locals[i].ty);
+        }
+        for i in 0..m.bodies.len() {
+            m.bodies[i].ret = m.resolve(m.bodies[i].ret);
+        }
+    }
+
     // ---------------------------------------------------------------- types
+
+    /// A type to be inferred from how it is used.
+    pub fn fresh_type(&mut self) -> TypeId {
+        self.m.fresh_var()
+    }
+
+    /// Resolves what is known about `t` so far (inference variables bound by unification).
+    pub fn resolved_type(&mut self, t: TypeId) -> TypeId {
+        self.m.resolve(t)
+    }
 
     pub fn array_type(&mut self, elem: TypeId) -> TypeId {
         self.m.intern(TypeKind::Array(elem))
     }
 
     pub fn map_type(&mut self, key: TypeId, value: TypeId) -> TypeId {
-        if !matches!(key, TypeId::INT | TypeId::BOOL | TypeId::STRING) {
+        if !matches!(
+            self.m.kind(key),
+            TypeKind::Int | TypeKind::Bool | TypeKind::String | TypeKind::Var(_)
+        ) {
             let k = self.m.type_name(key);
-            self.error(&format!("map keys must be int, bool or string, not {k}"));
+            self.error(&format!("map keys must be int, bool or string, not `{k}`"));
         }
         self.m.intern(TypeKind::Map(key, value))
     }
@@ -132,12 +263,71 @@ impl HirBuilder {
         self.m.intern(TypeKind::Fn(params.to_vec(), ret))
     }
 
+    /// `T?`: `t` or null. `t` must be a reference type.
+    pub fn nullable_type(&mut self, t: TypeId) -> TypeId {
+        match self.m.kind(t) {
+            TypeKind::Nullable(_) => self.m.shallow(t),
+            TypeKind::Var(_) => self.m.intern(TypeKind::Nullable(t)),
+            _ if self.m.is_reference(t) => self.m.intern(TypeKind::Nullable(t)),
+            _ => {
+                let name = self.m.type_name(t);
+                self.error(&format!(
+                    "only reference types can be nullable, not `{name}`"
+                ));
+                t
+            }
+        }
+    }
+
+    /// A non-generic struct's type.
     pub fn struct_type(&mut self, s: StructId) -> TypeId {
-        self.m.intern(TypeKind::Struct(s))
+        self.struct_type_args(s, &[])
+    }
+
+    /// A struct's type with type arguments, one per type parameter.
+    pub fn struct_type_args(&mut self, s: StructId, args: &[TypeId]) -> TypeId {
+        self.arity(Item::Struct(s), args.len());
+        self.m.intern(TypeKind::Struct(s, args.to_vec()))
     }
 
     pub fn enum_type(&mut self, e: EnumId) -> TypeId {
-        self.m.intern(TypeKind::Enum(e))
+        self.enum_type_args(e, &[])
+    }
+
+    pub fn enum_type_args(&mut self, e: EnumId, args: &[TypeId]) -> TypeId {
+        self.arity(Item::Enum(e), args.len());
+        self.m.intern(TypeKind::Enum(e, args.to_vec()))
+    }
+
+    /// The `index`th type parameter of a generic struct, enum or function.
+    pub fn type_param(&mut self, owner: Item, index: u32) -> TypeId {
+        if index as usize >= self.m.type_params(owner).len() {
+            self.error("no such type parameter");
+        }
+        self.m.intern(TypeKind::Param(owner, index))
+    }
+
+    fn arity(&mut self, item: Item, given: usize) {
+        let want = self.m.type_params(item).len();
+        if want != given {
+            let name = match item {
+                Item::Struct(s) => self.m.struct_name(s).to_string(),
+                Item::Enum(e) => self.m.enum_name(e).to_string(),
+                Item::Func(f) => self.m.func_name(f).to_string(),
+                _ => String::new(),
+            };
+            self.error(&format!(
+                "`{name}` takes {want} type argument{}, {given} given",
+                if want == 1 { "" } else { "s" }
+            ));
+        }
+    }
+
+    /// Fresh inference variables for a generic item's type parameters.
+    fn fresh_args(&mut self, item: Item) -> Vec<TypeId> {
+        (0..self.m.type_params(item).len())
+            .map(|_| self.m.fresh_var())
+            .collect()
     }
 
     // ---------------------------------------------------------------- declarations
@@ -166,12 +356,27 @@ impl HirBuilder {
         self.m.items.push(item);
     }
 
+    fn type_param_names(&mut self, params: &[&str]) -> Vec<String> {
+        for p in params {
+            self.item_name(p);
+        }
+        params.iter().map(|p| p.to_string()).collect()
+    }
+
     /// Declares a struct; add its fields with [`HirBuilder::add_field`] (structs may refer to
     /// themselves).
     pub fn declare_struct(&mut self, name: &str) -> StructId {
+        self.declare_generic_struct(name, &[])
+    }
+
+    /// Declares a struct with type parameters; its fields use them through
+    /// [`HirBuilder::type_param`].
+    pub fn declare_generic_struct(&mut self, name: &str, type_params: &[&str]) -> StructId {
         let s = StructId(self.m.structs.len() as u32);
+        let type_params = self.type_param_names(type_params);
         self.m.structs.push(StructDef {
             name: name.to_string(),
+            type_params,
             fields: Vec::new(),
             span: self.span,
         });
@@ -194,9 +399,15 @@ impl HirBuilder {
     }
 
     pub fn declare_enum(&mut self, name: &str) -> EnumId {
+        self.declare_generic_enum(name, &[])
+    }
+
+    pub fn declare_generic_enum(&mut self, name: &str, type_params: &[&str]) -> EnumId {
         let e = EnumId(self.m.enums.len() as u32);
+        let type_params = self.type_param_names(type_params);
         self.m.enums.push(EnumDef {
             name: name.to_string(),
+            type_params,
             variants: Vec::new(),
             span: self.span,
         });
@@ -220,7 +431,15 @@ impl HirBuilder {
         def.variants.len() as u32 - 1
     }
 
+    /// Declares a global. Globals start at the zero value of their type, so a reference type must
+    /// be nullable.
     pub fn declare_global(&mut self, name: &str, ty: TypeId) -> GlobalId {
+        if self.m.is_reference(ty) && !matches!(self.m.kind(ty), TypeKind::Nullable(_)) {
+            let t = self.m.type_name(ty);
+            self.error(&format!(
+                "global '{name}' starts as null, so its type must be nullable (`{t}?`)"
+            ));
+        }
         let g = GlobalId(self.m.globals.len() as u32);
         self.m.globals.push(GlobalDef {
             name: name.to_string(),
@@ -261,24 +480,51 @@ impl HirBuilder {
         params: &[TypeId],
         ret: TypeId,
     ) -> FuncId {
+        let f = self.declare_generic_function(name, &[]);
+        self.set_signature(f, param_names, params, ret);
+        f
+    }
+
+    /// Declares a generic function without its signature, so that the signature can use the type
+    /// parameters ([`HirBuilder::type_param`]); give it with [`HirBuilder::set_signature`].
+    pub fn declare_generic_function(&mut self, name: &str, type_params: &[&str]) -> FuncId {
         let f = FuncId(self.m.funcs.len() as u32);
         let body = BodyId(self.m.bodies.len() as u32);
+        let type_params = self.type_param_names(type_params);
         self.m.funcs.push(FuncDef {
             name: name.to_string(),
+            type_params,
             body,
             span: self.span,
             local_names: HashSet::new(),
         });
         self.m.bodies.push(BodyData {
             params: Vec::new(),
-            ret,
+            ret: TypeId::UNIT,
             root: None,
             parent: None,
             func: f,
         });
         self.add_value_name(name, Item::Func(f));
-        self.add_params(body, param_names, params);
         f
+    }
+
+    /// Sets the parameters and result type of a function declared with
+    /// [`HirBuilder::declare_generic_function`].
+    pub fn set_signature(
+        &mut self,
+        f: FuncId,
+        param_names: &[&str],
+        params: &[TypeId],
+        ret: TypeId,
+    ) {
+        let body = self.m.funcs[f.index()].body;
+        if !self.m.bodies[body.index()].params.is_empty() {
+            self.error("a function's signature can only be set once");
+            return;
+        }
+        self.m.bodies[body.index()].ret = ret;
+        self.add_params(body, param_names, params);
     }
 
     pub fn function_body(&self, f: FuncId) -> BodyId {
@@ -324,7 +570,7 @@ impl HirBuilder {
 
     /// Creates a local of `body`. Names are made unique within the function (`x`, `x_1`, ...) and
     /// adjusted if they are not valid identifiers; locals are referred to by handle, so this only
-    /// affects printing.
+    /// affects printing. The type may be [`HirBuilder::fresh_type`] to infer it.
     pub fn new_local(&mut self, body: BodyId, name: &str, ty: TypeId) -> LocalId {
         if ty == TypeId::NEVER {
             self.error("a local cannot have type never");
@@ -359,25 +605,59 @@ impl HirBuilder {
             name: unique,
             ty,
             body,
+            span: self.span,
         });
         l
     }
 
+    /// Attaches a body's expression. Its value and every `return` in it must fit the body's result
+    /// type (any value is allowed when the result type is `unit`).
     pub fn set_root(&mut self, body: BodyId, root: ExprId) {
         self.m.bodies[body.index()].root = Some(root);
+        let ret = self.m.bodies[body.index()].ret;
+        if ret == TypeId::UNIT {
+            return;
+        }
+        let rt = self.m.expr_type(root);
+        let (want, found) = (self.m.type_name(ret), self.m.type_name(rt));
+        if !self.m.coerce(rt, ret) {
+            let span = self.m.exprs[root.index()].span;
+            self.error_at(
+                span,
+                &format!("this body evaluates to `{found}` but must return `{want}`"),
+            );
+        }
+        let mut returns = Vec::new();
+        collect_returns(&self.m, root, &mut returns);
+        for v in returns {
+            let vt = self.m.expr_type(v);
+            let msg = mismatch(&self.m, ret, vt);
+            if !self.m.coerce(vt, ret) {
+                let span = self.m.exprs[v.index()].span;
+                self.error_at(span, &msg);
+            }
+        }
     }
 
     // ---------------------------------------------------------------- expressions
 
     fn push(&mut self, kind: ExprKind, hint: TypeId) -> ExprId {
-        let ty = match infer(&self.m, &kind, hint) {
+        let e = ExprId(self.m.exprs.len() as u32);
+        let ty = match infer(&mut self.m, &kind, hint) {
             Ok(t) => t,
-            Err(msg) => {
-                self.error(&msg);
+            Err(TypeErr::Open(_)) => {
+                self.deferred.push((e, hint));
+                self.m.fresh_var()
+            }
+            Err(TypeErr::At(at, msg)) => {
+                let span = match at {
+                    Some(x) => self.m.exprs[x.index()].span,
+                    None => self.span,
+                };
+                self.error_at(span, &msg);
                 TypeId::NEVER
             }
         };
-        let e = ExprId(self.m.exprs.len() as u32);
         self.m.exprs.push(ExprData {
             kind,
             ty,
@@ -414,9 +694,10 @@ impl HirBuilder {
         self.push(ExprKind::Str(s.to_string()), TypeId::STRING)
     }
 
-    /// The null reference of a reference type.
+    /// `null` of type `T?`, for a reference type `T` (which may be [`HirBuilder::fresh_type`]).
     pub fn null(&mut self, ty: TypeId) -> ExprId {
-        self.push(ExprKind::Null, ty)
+        let t = self.nullable_type(ty);
+        self.push(ExprKind::Null, t)
     }
 
     pub fn local(&mut self, l: LocalId) -> ExprId {
@@ -427,22 +708,16 @@ impl HirBuilder {
         self.push(ExprKind::Global(g), TypeId::NEVER)
     }
 
-    /// A function used as a closure value.
+    /// A function used as a closure value; a generic function's type arguments are inferred.
     pub fn func(&mut self, f: FuncId) -> ExprId {
-        let body = self.m.func_body(f);
-        self.intern_body_type(body);
-        self.push(ExprKind::Func(f), TypeId::NEVER)
+        let targs = self.fresh_args(Item::Func(f));
+        self.push(ExprKind::Func(f, targs), TypeId::NEVER)
     }
 
-    fn intern_body_type(&mut self, body: BodyId) -> TypeId {
-        let params: Vec<TypeId> = self
-            .m
-            .body_params(body)
-            .iter()
-            .map(|&p| self.m.local_type(p))
-            .collect();
-        let ret = self.m.body_ret(body);
-        self.fn_type(&params, ret)
+    /// A generic function used as a closure value, with explicit type arguments.
+    pub fn func_generic(&mut self, f: FuncId, type_args: &[TypeId]) -> ExprId {
+        self.arity(Item::Func(f), type_args.len());
+        self.push(ExprKind::Func(f, type_args.to_vec()), TypeId::NEVER)
     }
 
     pub fn let_(&mut self, l: LocalId, init: ExprId) -> ExprId {
@@ -459,6 +734,14 @@ impl HirBuilder {
 
     pub fn set_field(&mut self, object: ExprId, field: u32, value: ExprId) -> ExprId {
         self.push(ExprKind::SetField(object, field, value), TypeId::UNIT)
+    }
+
+    /// `object.name = value`; the object's type may still be open.
+    pub fn set_field_named(&mut self, object: ExprId, name: &str, value: ExprId) -> ExprId {
+        self.push(
+            ExprKind::SetFieldName(object, name.to_string(), value),
+            TypeId::UNIT,
+        )
     }
 
     /// `target[index] = value` for arrays and maps.
@@ -482,8 +765,19 @@ impl HirBuilder {
         self.push(ExprKind::Or(a, b), TypeId::BOOL)
     }
 
+    /// Calls a function; a generic function's type arguments are inferred from the arguments.
     pub fn call(&mut self, f: FuncId, args: &[ExprId]) -> ExprId {
-        self.push(ExprKind::Call(f, args.to_vec()), TypeId::NEVER)
+        let targs = self.fresh_args(Item::Func(f));
+        self.push(ExprKind::Call(f, targs, args.to_vec()), TypeId::NEVER)
+    }
+
+    /// Calls a generic function with explicit type arguments.
+    pub fn call_generic(&mut self, f: FuncId, type_args: &[TypeId], args: &[ExprId]) -> ExprId {
+        self.arity(Item::Func(f), type_args.len());
+        self.push(
+            ExprKind::Call(f, type_args.to_vec(), args.to_vec()),
+            TypeId::NEVER,
+        )
     }
 
     pub fn call_extern(&mut self, x: ExternId, args: &[ExprId]) -> ExprId {
@@ -497,39 +791,55 @@ impl HirBuilder {
 
     /// A closure made from a body created with [`HirBuilder::new_closure_body`].
     pub fn lambda(&mut self, body: BodyId) -> ExprId {
-        self.intern_body_type(body);
         self.push(ExprKind::Lambda(body), TypeId::NEVER)
     }
 
-    /// Constructs a struct; `fields` are in declaration order.
+    /// Constructs a struct; `fields` are in declaration order. A generic struct's type arguments
+    /// are inferred from the fields.
     pub fn new_struct(&mut self, s: StructId, fields: &[ExprId]) -> ExprId {
-        self.struct_type(s);
-        self.push(ExprKind::New(s, fields.to_vec()), TypeId::NEVER)
+        let args = self.fresh_args(Item::Struct(s));
+        let t = self.m.intern(TypeKind::Struct(s, args));
+        self.push(ExprKind::New(s, fields.to_vec()), t)
+    }
+
+    /// Constructs a generic struct with explicit type arguments.
+    pub fn new_struct_generic(
+        &mut self,
+        s: StructId,
+        type_args: &[TypeId],
+        fields: &[ExprId],
+    ) -> ExprId {
+        let t = self.struct_type_args(s, type_args);
+        self.push(ExprKind::New(s, fields.to_vec()), t)
     }
 
     pub fn field(&mut self, object: ExprId, field: u32) -> ExprId {
         self.push(ExprKind::Field(object, field), TypeId::NEVER)
     }
 
-    /// Field access by name; reports an error if the object is not a struct with that field.
+    /// Field access by name. The object's type may still be open; the field is then looked up once
+    /// it is known.
     pub fn field_named(&mut self, object: ExprId, name: &str) -> ExprId {
-        let idx = match self.m.kind(self.m.expr_type(object)) {
-            TypeKind::Struct(s) => self.m.struct_field_index(*s, name),
-            _ => None,
-        };
-        match idx {
-            Some(i) => self.field(object, i),
-            None => {
-                let t = self.m.type_name(self.m.expr_type(object));
-                self.error(&format!("{t} has no field '{name}'"));
-                self.push(ExprKind::Field(object, u32::MAX), TypeId::NEVER)
-            }
-        }
+        self.push(ExprKind::FieldName(object, name.to_string()), TypeId::NEVER)
     }
 
+    /// An enum value; a generic enum's type arguments are inferred from the payload and from how the
+    /// value is used.
     pub fn variant(&mut self, e: EnumId, v: u32, args: &[ExprId]) -> ExprId {
-        self.enum_type(e);
-        self.push(ExprKind::Variant(e, v, args.to_vec()), TypeId::NEVER)
+        let targs = self.fresh_args(Item::Enum(e));
+        let t = self.m.intern(TypeKind::Enum(e, targs));
+        self.push(ExprKind::Variant(e, v, args.to_vec()), t)
+    }
+
+    pub fn variant_generic(
+        &mut self,
+        e: EnumId,
+        type_args: &[TypeId],
+        v: u32,
+        args: &[ExprId],
+    ) -> ExprId {
+        let t = self.enum_type_args(e, type_args);
+        self.push(ExprKind::Variant(e, v, args.to_vec()), t)
     }
 
     /// A `match` arm: `variant` (or `None` for `_`), locals bound to its payload, and the arm body.
@@ -546,12 +856,9 @@ impl HirBuilder {
         self.push(ExprKind::Match(scrutinee, arms.to_vec()), TypeId::NEVER)
     }
 
-    /// An array literal; it must not be empty (use [`HirBuilder::new_array`]).
+    /// An array literal. Its element type is inferred; `[]` gets it from later uses.
     pub fn array(&mut self, elems: &[ExprId]) -> ExprId {
-        let elem = elems
-            .first()
-            .map(|&e| self.m.expr_type(e))
-            .unwrap_or(TypeId::NEVER);
+        let elem = self.m.fresh_var();
         let ty = self.array_type(elem);
         self.push(ExprKind::Array(elems.to_vec()), ty)
     }
@@ -571,18 +878,17 @@ impl HirBuilder {
     }
 
     pub fn builtin(&mut self, op: Builtin, args: &[ExprId]) -> ExprId {
-        if op == Builtin::Keys
-            && let Some(&a) = args.first()
-            && let TypeKind::Map(k, _) = *self.m.kind(self.m.expr_type(a))
-        {
-            self.array_type(k);
-        }
         self.push(ExprKind::Builtin(op, args.to_vec()), TypeId::NEVER)
     }
 
     /// `e as ty`.
     pub fn cast(&mut self, e: ExprId, ty: TypeId) -> ExprId {
         self.push(ExprKind::Cast(e), ty)
+    }
+
+    /// `e!`: the value of a nullable reference; panics with `null reference` if it is null.
+    pub fn unwrap(&mut self, e: ExprId) -> ExprId {
+        self.push(ExprKind::Unwrap(e), TypeId::NEVER)
     }
 
     /// `e is ty`, for `e: any`.
@@ -620,300 +926,339 @@ impl HirBuilder {
     }
 }
 
-/// Whether a value of type `found` can be used where `expected` is required.
-pub(crate) fn fits(found: TypeId, expected: TypeId) -> bool {
-    found == expected || found == TypeId::NEVER
+/// The `return` values in a body, not counting nested closures.
+fn collect_returns(m: &HirModule, e: ExprId, out: &mut Vec<ExprId>) {
+    if let ExprKind::Return(Some(v)) = m.expr(e).kind {
+        out.push(v);
+    }
+    visit_children(m, e, &mut |c| collect_returns(m, c, out));
+}
+
+fn field_index(m: &HirModule, object: ExprId, name: &str) -> Option<u32> {
+    match m.kind(m.expr_type(object)) {
+        TypeKind::Struct(s, _) => m.struct_field_index(*s, name),
+        _ => None,
+    }
+}
+
+/// Why a node could not be typed.
+pub(crate) enum TypeErr {
+    /// A type error, about the given sub-expression (or the node itself).
+    At(Option<ExprId>, String),
+    /// The rule needs the type of this sub-expression, which is not inferred yet.
+    Open(ExprId),
+}
+
+type Typed = Result<TypeId, TypeErr>;
+
+fn fail<T>(msg: String) -> Result<T, TypeErr> {
+    Err(TypeErr::At(None, msg))
+}
+
+pub(crate) fn mismatch(m: &HirModule, expected: TypeId, found: TypeId) -> String {
+    format!(
+        "mismatched types: expected `{}`, found `{}`",
+        m.type_name(expected),
+        m.type_name(found)
+    )
+}
+
+/// Requires `e` to fit `want`.
+fn expect(m: &mut HirModule, e: ExprId, want: TypeId) -> Result<(), TypeErr> {
+    let found = m.expr_type(e);
+    let msg = mismatch(m, want, found);
+    if m.coerce(found, want) {
+        Ok(())
+    } else {
+        Err(TypeErr::At(Some(e), msg))
+    }
+}
+
+fn args_match(m: &mut HirModule, params: &[TypeId], args: &[ExprId]) -> Result<(), TypeErr> {
+    if params.len() != args.len() {
+        return fail(format!(
+            "expected {} argument{}, found {}",
+            params.len(),
+            if params.len() == 1 { "" } else { "s" },
+            args.len()
+        ));
+    }
+    for (&p, &a) in params.iter().zip(args) {
+        expect(m, a, p)?;
+    }
+    Ok(())
+}
+
+/// The parameter and result types of a function, instantiated with type arguments.
+fn signature(
+    m: &mut HirModule,
+    f: FuncId,
+    targs: &[TypeId],
+) -> Result<(Vec<TypeId>, TypeId), TypeErr> {
+    let want = m.funcs[f.index()].type_params.len();
+    if want != targs.len() {
+        return fail(format!(
+            "`{}` takes {want} type arguments, {} given",
+            m.func_name(f),
+            targs.len()
+        ));
+    }
+    let body = m.func_body(f);
+    let params: Vec<TypeId> = m
+        .body_params(body)
+        .iter()
+        .map(|&p| m.local_type(p))
+        .collect();
+    let ret = m.body_ret(body);
+    let owner = Item::Func(f);
+    let params = params
+        .into_iter()
+        .map(|p| m.subst(p, owner, targs))
+        .collect();
+    Ok((params, m.subst(ret, owner, targs)))
+}
+
+fn open_or<T>(m: &HirModule, e: ExprId, msg: impl FnOnce() -> String) -> Result<T, TypeErr> {
+    if matches!(m.kind(m.expr_type(e)), TypeKind::Var(_)) {
+        Err(TypeErr::Open(e))
+    } else {
+        Err(TypeErr::At(Some(e), msg()))
+    }
 }
 
 /// The type of an expression, or why it is ill-typed. `hint` carries the type written in the node
-/// itself (the target of `as`, the type of `null` and of empty collections).
-pub(crate) fn infer(m: &HirModule, kind: &ExprKind, hint: TypeId) -> Result<TypeId, String> {
-    let ty = |e: &ExprId| m.expr_type(*e);
-    let name = |t: TypeId| m.type_name(t);
-    let expect = |e: &ExprId, want: TypeId, what: &str| -> Result<(), String> {
-        if fits(ty(e), want) {
-            Ok(())
-        } else {
-            Err(format!(
-                "{what} must be {}, found {}",
-                name(want),
-                name(ty(e))
-            ))
-        }
-    };
-    let args_match = |params: &[TypeId], args: &[ExprId], callee: &str| -> Result<(), String> {
-        if params.len() != args.len() {
-            return Err(format!(
-                "{callee} takes {} arguments, {} given",
-                params.len(),
-                args.len()
-            ));
-        }
-        for (i, (p, a)) in params.iter().zip(args).enumerate() {
-            if !fits(ty(a), *p) {
-                return Err(format!(
-                    "argument {} of {callee} must be {}, found {}",
-                    i + 1,
-                    name(*p),
-                    name(ty(a))
-                ));
-            }
-        }
-        Ok(())
-    };
+/// itself (the target of `as`, the type of `null`, collections and constructed values); for those
+/// nodes the result is the hint.
+pub(crate) fn infer(m: &mut HirModule, kind: &ExprKind, hint: TypeId) -> Typed {
+    let ty = |m: &HirModule, e: ExprId| m.expr_type(e);
     Ok(match kind {
         ExprKind::Unit => TypeId::UNIT,
         ExprKind::Bool(_) => TypeId::BOOL,
         ExprKind::Int(_) => TypeId::INT,
         ExprKind::Float(_) => TypeId::FLOAT,
         ExprKind::Str(_) => TypeId::STRING,
-        ExprKind::Null => {
-            if !m.is_reference(hint) {
-                return Err(format!("null needs a reference type, not {}", name(hint)));
+        ExprKind::Null => match m.kind(hint) {
+            TypeKind::Nullable(_) => hint,
+            _ => {
+                return fail(format!(
+                    "`null` needs a nullable type, not `{}`",
+                    m.type_name(hint)
+                ));
             }
-            hint
-        }
+        },
         ExprKind::Local(l) => m.local_type(*l),
         ExprKind::Global(g) => m.global_type(*g),
-        ExprKind::Func(f) => {
-            let body = m.func_body(*f);
-            let params: Vec<TypeId> = m
-                .body_params(body)
-                .iter()
-                .map(|&p| m.local_type(p))
-                .collect();
-            m.type_map
-                .get(&TypeKind::Fn(params, m.body_ret(body)))
-                .copied()
-                .ok_or_else(|| "the function's type was not interned".to_string())?
+        ExprKind::Func(f, targs) => {
+            let (params, ret) = signature(m, *f, targs)?;
+            m.intern(TypeKind::Fn(params, ret))
         }
         ExprKind::Let(l, init) | ExprKind::SetLocal(l, init) => {
-            expect(
-                init,
-                m.local_type(*l),
-                &format!("the value of '{}'", m.local_name(*l)),
-            )?;
+            expect(m, *init, m.local_type(*l))?;
             TypeId::UNIT
         }
         ExprKind::SetGlobal(g, value) => {
-            expect(
-                value,
-                m.global_type(*g),
-                &format!("the value of '{}'", m.global_name(*g)),
-            )?;
+            expect(m, *value, m.global_type(*g))?;
             TypeId::UNIT
         }
         ExprKind::SetField(object, field, value) => {
-            let ft = field_type(m, ty(object), *field)?;
-            expect(value, ft, "the field's new value")?;
+            let ft = field_type(m, *object, *field)?;
+            expect(m, *value, ft)?;
+            TypeId::UNIT
+        }
+        ExprKind::SetFieldName(object, name, value) => {
+            let i = named_field(m, *object, name)?;
+            let ft = field_type(m, *object, i)?;
+            expect(m, *value, ft)?;
             TypeId::UNIT
         }
         ExprKind::SetIndex(target, index, value) => {
-            let (key, elem) = index_types(m, ty(target))?;
-            expect(index, key, "the index")?;
-            expect(value, elem, "the element")?;
+            let (key, elem) = index_types(m, *target)?;
+            expect(m, *index, key)?;
+            expect(m, *value, elem)?;
             TypeId::UNIT
         }
-        ExprKind::Unary(op, a) => match op {
-            UnOp::Neg if matches!(ty(a), TypeId::INT | TypeId::FLOAT | TypeId::NEVER) => ty(a),
-            UnOp::Not if fits(ty(a), TypeId::BOOL) => TypeId::BOOL,
+        ExprKind::Unary(UnOp::Neg, a) => match m.kind(ty(m, *a)) {
+            TypeKind::Int | TypeKind::Float | TypeKind::Never => m.shallow(ty(m, *a)),
             _ => {
-                let o = if *op == UnOp::Neg { "-" } else { "!" };
-                return Err(format!("cannot apply {o} to {}", name(ty(a))));
+                return open_or(m, *a, || {
+                    format!(
+                        "operator `-` cannot be applied to `{}`",
+                        m.type_name(ty(m, *a))
+                    )
+                });
             }
         },
-        ExprKind::Binary(op, a, b) => binary_type(m, *op, ty(a), ty(b))?,
-        ExprKind::And(a, b) | ExprKind::Or(a, b) => {
-            expect(a, TypeId::BOOL, "an operand of && or ||")?;
-            expect(b, TypeId::BOOL, "an operand of && or ||")?;
+        ExprKind::Unary(UnOp::Not, a) => {
+            expect(m, *a, TypeId::BOOL)?;
             TypeId::BOOL
         }
-        ExprKind::Call(f, args) => {
-            let body = m.func_body(*f);
-            let params: Vec<TypeId> = m
-                .body_params(body)
-                .iter()
-                .map(|&p| m.local_type(p))
-                .collect();
-            args_match(&params, args, m.func_name(*f))?;
-            m.body_ret(body)
+        ExprKind::Binary(op, a, b) => binary_type(m, *op, *a, *b)?,
+        ExprKind::And(a, b) | ExprKind::Or(a, b) => {
+            expect(m, *a, TypeId::BOOL)?;
+            expect(m, *b, TypeId::BOOL)?;
+            TypeId::BOOL
+        }
+        ExprKind::Call(f, targs, args) => {
+            let (params, ret) = signature(m, *f, targs)?;
+            args_match(m, &params, args)?;
+            ret
         }
         ExprKind::CallExtern(x, args) => {
-            let def = &m.externs[x.index()];
-            args_match(&def.params, args, &def.name)?;
-            def.ret
+            let (params, ret) = (
+                m.externs[x.index()].params.clone(),
+                m.externs[x.index()].ret,
+            );
+            args_match(m, &params, args)?;
+            ret
         }
-        ExprKind::CallValue(callee, args) => match m.kind(ty(callee)) {
-            TypeKind::Fn(params, ret) => {
-                args_match(params, args, "the closure")?;
-                *ret
+        ExprKind::CallValue(callee, args) => {
+            let ct = ty(m, *callee);
+            match m.kind(ct).clone() {
+                TypeKind::Fn(params, ret) => {
+                    args_match(m, &params, args)?;
+                    ret
+                }
+                TypeKind::Never => TypeId::NEVER,
+                TypeKind::Var(_) => {
+                    // An unknown callee is a function of the arguments' types.
+                    let params: Vec<TypeId> = args.iter().map(|&a| ty(m, a)).collect();
+                    let ret = m.fresh_var();
+                    let ft = m.intern(TypeKind::Fn(params, ret));
+                    m.unify(ct, ft);
+                    ret
+                }
+                _ => {
+                    let msg = format!("`{}` is not a function", m.type_name(ct));
+                    return Err(TypeErr::At(Some(*callee), msg));
+                }
             }
-            TypeKind::Never => TypeId::NEVER,
-            _ => return Err(format!("cannot call a value of type {}", name(ty(callee)))),
-        },
+        }
         ExprKind::Lambda(body) => {
             let params: Vec<TypeId> = m
                 .body_params(*body)
                 .iter()
                 .map(|&p| m.local_type(p))
                 .collect();
-            m.type_map
-                .get(&TypeKind::Fn(params, m.body_ret(*body)))
-                .copied()
-                .ok_or_else(|| "the closure's type was not interned".to_string())?
+            let ret = m.body_ret(*body);
+            m.intern(TypeKind::Fn(params, ret))
         }
         ExprKind::New(s, fields) => {
-            let def = &m.structs[s.index()];
-            if fields.len() != def.fields.len() {
-                return Err(format!(
-                    "struct {} has {} fields, {} given",
-                    def.name,
-                    def.fields.len(),
+            let args = m.type_args(hint).to_vec();
+            let def_fields: Vec<(String, TypeId)> = m.structs[s.index()].fields.clone();
+            if fields.len() != def_fields.len() {
+                return fail(format!(
+                    "struct `{}` has {} fields, {} given",
+                    m.struct_name(*s),
+                    def_fields.len(),
                     fields.len()
                 ));
             }
-            for ((fname, fty), v) in def.fields.iter().zip(fields) {
-                expect(v, *fty, &format!("field '{fname}' of {}", def.name))?;
+            for ((_, ft), &v) in def_fields.iter().zip(fields) {
+                let ft = m.subst(*ft, Item::Struct(*s), &args);
+                expect(m, v, ft)?;
             }
-            m.type_map
-                .get(&TypeKind::Struct(*s))
-                .copied()
-                .ok_or_else(|| "the struct's type was not interned".to_string())?
+            hint
         }
-        ExprKind::Field(object, field) => field_type(m, ty(object), *field)?,
+        ExprKind::Field(object, field) => field_type(m, *object, *field)?,
+        ExprKind::FieldName(object, name) => {
+            let i = named_field(m, *object, name)?;
+            field_type(m, *object, i)?
+        }
         ExprKind::Variant(e, v, args) => {
-            let def = &m.enums[e.index()];
-            let Some(var) = def.variants.get(*v as usize) else {
-                return Err(format!("enum {} has no variant {v}", def.name));
+            let targs = m.type_args(hint).to_vec();
+            let Some(var) = m.enums[e.index()].variants.get(*v as usize) else {
+                return fail(format!("enum `{}` has no variant {v}", m.enum_name(*e)));
             };
-            args_match(&var.fields, args, &format!("{}::{}", def.name, var.name))?;
-            m.type_map
-                .get(&TypeKind::Enum(*e))
-                .copied()
-                .ok_or_else(|| "the enum's type was not interned".to_string())?
+            let fields: Vec<TypeId> = var.fields.clone();
+            let fields: Vec<TypeId> = fields
+                .into_iter()
+                .map(|f| m.subst(f, Item::Enum(*e), &targs))
+                .collect();
+            args_match(m, &fields, args)?;
+            hint
         }
-        ExprKind::Match(scrutinee, arms) => {
-            let st = ty(scrutinee);
-            let e = match m.kind(st) {
-                TypeKind::Enum(e) => *e,
-                TypeKind::Never => return Ok(TypeId::NEVER),
-                _ => return Err(format!("match needs an enum, found {}", name(st))),
-            };
-            let mut result = TypeId::NEVER;
-            let mut covered = vec![false; m.variant_count(e) as usize];
-            let mut wildcard = false;
-            for &a in arms {
-                let arm = &m.arms[a.index()];
-                match arm.variant {
-                    Some(v) => {
-                        let Some(fields) = m.enums[e.index()]
-                            .variants
-                            .get(v as usize)
-                            .map(|v| &v.fields)
-                        else {
-                            return Err(format!("enum {} has no variant {v}", m.enum_name(e)));
-                        };
-                        if arm.binds.len() != fields.len() {
-                            return Err(format!(
-                                "variant {} has {} fields, the arm binds {}",
-                                m.variant_name(e, v),
-                                fields.len(),
-                                arm.binds.len()
-                            ));
-                        }
-                        for (&b, &f) in arm.binds.iter().zip(fields) {
-                            if m.local_type(b) != f {
-                                return Err(format!(
-                                    "'{}' binds a {} as {}",
-                                    m.local_name(b),
-                                    name(f),
-                                    name(m.local_type(b))
-                                ));
-                            }
-                        }
-                        covered[v as usize] = true;
-                    }
-                    None => wildcard = true,
-                }
-                let bt = ty(&arm.body);
-                if result == TypeId::NEVER {
-                    result = bt;
-                } else if bt != TypeId::NEVER && bt != result {
-                    // Arms of different types make a statement-like match of type unit.
-                    result = TypeId::UNIT;
-                }
-            }
-            if !wildcard && covered.iter().any(|c| !c) {
-                let missing: Vec<&str> = covered
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, c)| !**c)
-                    .map(|(i, _)| m.variant_name(e, i as u32))
-                    .collect();
-                return Err(format!("match does not cover {}", missing.join(", ")));
-            }
-            result
-        }
+        ExprKind::Match(scrutinee, arms) => match_type(m, *scrutinee, arms)?,
         ExprKind::Array(elems) => {
-            let Some(first) = elems.first() else {
-                return Err("an array literal cannot be empty; use new array<T>".to_string());
+            let elem = match m.kind(hint) {
+                TypeKind::Array(e) => *e,
+                _ => return fail("an array literal needs an array type".to_string()),
             };
-            for e in elems {
-                expect(e, ty(first), "every array element")?;
+            for &e in elems {
+                expect(m, e, elem)?;
             }
             hint
         }
         ExprKind::NewArray => {
             if !matches!(m.kind(hint), TypeKind::Array(_)) {
-                return Err(format!("new array needs an array type, not {}", name(hint)));
+                return fail(format!(
+                    "new array needs an array type, not `{}`",
+                    m.type_name(hint)
+                ));
             }
             hint
         }
         ExprKind::NewMap => {
             if !matches!(m.kind(hint), TypeKind::Map(..)) {
-                return Err(format!("new map needs a map type, not {}", name(hint)));
+                return fail(format!(
+                    "new map needs a map type, not `{}`",
+                    m.type_name(hint)
+                ));
             }
             hint
         }
         ExprKind::Index(target, index) => {
-            let (key, elem) = index_types(m, ty(target))?;
-            expect(index, key, "the index")?;
+            let (key, elem) = index_types(m, *target)?;
+            expect(m, *index, key)?;
             elem
         }
         ExprKind::Builtin(op, args) => builtin_type(m, *op, args)?,
         ExprKind::Cast(e) => {
-            let from = ty(e);
+            let from = ty(m, *e);
+            if matches!(m.kind(from), TypeKind::Var(_)) {
+                return Err(TypeErr::Open(*e));
+            }
             if !cast_allowed(m, from, hint) {
-                return Err(format!("cannot convert {} to {}", name(from), name(hint)));
+                return fail(format!(
+                    "cannot convert `{}` to `{}`",
+                    m.type_name(from),
+                    m.type_name(hint)
+                ));
             }
             hint
         }
+        ExprKind::Unwrap(e) => match m.kind(ty(m, *e)) {
+            TypeKind::Nullable(inner) => *inner,
+            TypeKind::Never => TypeId::NEVER,
+            _ => {
+                return open_or(m, *e, || {
+                    format!(
+                        "`{}` is not nullable, so there is nothing to unwrap",
+                        m.type_name(ty(m, *e))
+                    )
+                });
+            }
+        },
         ExprKind::Is(e, t) => {
-            expect(e, TypeId::ANY, "the operand of is")?;
+            expect(m, *e, TypeId::ANY)?;
             if !testable(m, *t) {
-                return Err(format!("cannot test whether an any is a {}", name(*t)));
+                return fail(format!(
+                    "cannot test whether an any is a `{}`",
+                    m.type_name(*t)
+                ));
             }
             TypeId::BOOL
         }
         ExprKind::If(cond, then, els) => {
-            expect(cond, TypeId::BOOL, "an if condition")?;
+            expect(m, *cond, TypeId::BOOL)?;
             match els {
                 // Without else, an if is a statement; the branch's value is discarded.
                 None => TypeId::UNIT,
-                Some(e) => {
-                    let (a, b) = (ty(then), ty(e));
-                    if a == TypeId::NEVER {
-                        b
-                    } else if b == TypeId::NEVER || a == b {
-                        a
-                    } else {
-                        TypeId::UNIT
-                    }
-                }
+                // Branches of different types make a statement-like if of type unit.
+                Some(e) => m.join(ty(m, *then), ty(m, *e)).unwrap_or(TypeId::UNIT),
             }
         }
         ExprKind::While(cond, _) => {
-            expect(cond, TypeId::BOOL, "a while condition")?;
+            expect(m, *cond, TypeId::BOOL)?;
             TypeId::UNIT
         }
         ExprKind::Loop(body) => {
@@ -925,76 +1270,186 @@ pub(crate) fn infer(m: &HirModule, kind: &ExprKind, hint: TypeId) -> Result<Type
         }
         ExprKind::Break | ExprKind::Continue | ExprKind::Return(_) => TypeId::NEVER,
         ExprKind::Block(items, tail) => match tail {
-            Some(t) => ty(t),
-            None if items.iter().any(|i| ty(i) == TypeId::NEVER) => TypeId::NEVER,
+            Some(t) => ty(m, *t),
+            None if items.iter().any(|&i| ty(m, i) == TypeId::NEVER) => TypeId::NEVER,
             None => TypeId::UNIT,
         },
     })
 }
 
-fn field_type(m: &HirModule, object: TypeId, field: u32) -> Result<TypeId, String> {
-    match m.kind(object) {
-        TypeKind::Struct(s) => match m.structs[s.index()].fields.get(field as usize) {
-            Some((_, t)) => Ok(*t),
-            None => Err(format!("struct {} has no field {field}", m.struct_name(*s))),
+fn named_field(m: &HirModule, object: ExprId, name: &str) -> Result<u32, TypeErr> {
+    let ot = m.expr_type(object);
+    match m.kind(ot) {
+        TypeKind::Struct(s, _) => match m.struct_field_index(*s, name) {
+            Some(i) => Ok(i),
+            None => Err(TypeErr::At(
+                None,
+                format!("`{}` has no field `{name}`", m.type_name(ot)),
+            )),
+        },
+        TypeKind::Never => Ok(u32::MAX),
+        _ => open_or(m, object, || no_fields(m, ot)),
+    }
+}
+
+fn no_fields(m: &HirModule, t: TypeId) -> String {
+    match m.kind(t) {
+        TypeKind::Nullable(_) => format!(
+            "`{}` may be null; unwrap it (`!`) or check it for null before using its fields",
+            m.type_name(t)
+        ),
+        _ => format!("`{}` is not a struct, so it has no fields", m.type_name(t)),
+    }
+}
+
+fn field_type(m: &mut HirModule, object: ExprId, field: u32) -> Typed {
+    let ot = m.expr_type(object);
+    match m.kind(ot).clone() {
+        TypeKind::Struct(s, args) => match m.structs[s.index()].fields.get(field as usize) {
+            Some(&(_, t)) => Ok(m.subst(t, Item::Struct(s), &args)),
+            None => fail(format!(
+                "struct `{}` has no field {field}",
+                m.struct_name(s)
+            )),
         },
         TypeKind::Never => Ok(TypeId::NEVER),
-        _ => Err(format!("{} has no fields", m.type_name(object))),
+        _ => open_or(m, object, || no_fields(m, ot)),
     }
 }
 
 /// The index and element types of `target[...]`.
-fn index_types(m: &HirModule, target: TypeId) -> Result<(TypeId, TypeId), String> {
-    match m.kind(target) {
+fn index_types(m: &mut HirModule, target: ExprId) -> Result<(TypeId, TypeId), TypeErr> {
+    let t = m.expr_type(target);
+    match m.kind(t) {
         TypeKind::Array(e) => Ok((TypeId::INT, *e)),
         TypeKind::Map(k, v) => Ok((*k, *v)),
         TypeKind::Never => Ok((TypeId::NEVER, TypeId::NEVER)),
-        _ => Err(format!("cannot index a {}", m.type_name(target))),
+        _ => open_or(m, target, || match m.kind(t) {
+            TypeKind::Nullable(_) => format!(
+                "`{}` may be null; unwrap it (`!`) or check it for null before indexing",
+                m.type_name(t)
+            ),
+            _ => format!("cannot index a value of type `{}`", m.type_name(t)),
+        }),
     }
 }
 
-fn binary_type(m: &HirModule, op: BinOp, a: TypeId, b: TypeId) -> Result<TypeId, String> {
-    let t = if a == TypeId::NEVER { b } else { a };
-    if a != b && a != TypeId::NEVER && b != TypeId::NEVER {
-        return Err(format!(
-            "operands of {} must have the same type, found {} and {}",
-            op.symbol(),
-            m.type_name(a),
-            m.type_name(b)
-        ));
+fn binary_type(m: &mut HirModule, op: BinOp, a: ExprId, b: ExprId) -> Typed {
+    let (ta, tb) = (m.expr_type(a), m.expr_type(b));
+    if matches!(op, BinOp::Eq | BinOp::Ne) {
+        // Either side may be the nullable one: `x == null`.
+        let msg = mismatch(m, ta, tb);
+        if !(m.coerce(tb, ta) || m.coerce(ta, tb)) {
+            return Err(TypeErr::At(Some(b), msg));
+        }
+        return Ok(TypeId::BOOL);
     }
-    let ok = match op {
-        BinOp::Add => matches!(
-            t,
-            TypeId::INT | TypeId::FLOAT | TypeId::STRING | TypeId::NEVER
+    let msg = mismatch(m, ta, tb);
+    if ta != TypeId::NEVER && !m.coerce(tb, ta) {
+        return Err(TypeErr::At(Some(b), msg));
+    }
+    let (t, operand) = if ta == TypeId::NEVER {
+        (tb, b)
+    } else {
+        (ta, a)
+    };
+    let ok = match m.kind(t) {
+        TypeKind::Never => true,
+        TypeKind::Int => true,
+        TypeKind::Float => op != BinOp::Rem,
+        TypeKind::String => matches!(
+            op,
+            BinOp::Add | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge
         ),
-        BinOp::Sub | BinOp::Mul | BinOp::Div => {
-            matches!(t, TypeId::INT | TypeId::FLOAT | TypeId::NEVER)
-        }
-        BinOp::Rem => matches!(t, TypeId::INT | TypeId::NEVER),
-        BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => {
-            matches!(
-                t,
-                TypeId::INT | TypeId::FLOAT | TypeId::STRING | TypeId::NEVER
-            )
-        }
-        BinOp::Eq | BinOp::Ne => true,
+        TypeKind::Var(_) => return Err(TypeErr::Open(operand)),
+        _ => false,
     };
     if !ok {
-        return Err(format!(
-            "cannot apply {} to {}",
-            op.symbol(),
-            m.type_name(t)
+        return Err(TypeErr::At(
+            Some(operand),
+            format!(
+                "operator `{}` cannot be applied to `{}`",
+                op.symbol(),
+                m.type_name(t)
+            ),
         ));
     }
-    Ok(match op {
-        BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Rem => t,
-        _ => TypeId::BOOL,
+    Ok(if op.is_comparison() {
+        TypeId::BOOL
+    } else {
+        m.shallow(t)
     })
 }
 
-fn builtin_type(m: &HirModule, op: Builtin, args: &[ExprId]) -> Result<TypeId, String> {
-    let tys: Vec<TypeId> = args.iter().map(|&a| m.expr_type(a)).collect();
+fn match_type(m: &mut HirModule, scrutinee: ExprId, arms: &[ArmId]) -> Typed {
+    let st = m.expr_type(scrutinee);
+    let (e, eargs) = match m.kind(st).clone() {
+        TypeKind::Enum(e, args) => (e, args),
+        TypeKind::Never => return Ok(TypeId::NEVER),
+        _ => {
+            return open_or(m, scrutinee, || {
+                format!("match needs an enum, found `{}`", m.type_name(st))
+            });
+        }
+    };
+    let mut result = TypeId::NEVER;
+    let mut covered = vec![false; m.variant_count(e) as usize];
+    let mut wildcard = false;
+    for &a in arms {
+        let (variant, binds, body) = {
+            let arm = &m.arms[a.index()];
+            (arm.variant, arm.binds.clone(), arm.body)
+        };
+        match variant {
+            Some(v) => {
+                let Some(fields) = m.enums[e.index()]
+                    .variants
+                    .get(v as usize)
+                    .map(|v| v.fields.clone())
+                else {
+                    return fail(format!("enum `{}` has no variant {v}", m.enum_name(e)));
+                };
+                if binds.len() != fields.len() {
+                    return fail(format!(
+                        "variant `{}` has {} fields, the arm binds {}",
+                        m.variant_name(e, v),
+                        fields.len(),
+                        binds.len()
+                    ));
+                }
+                for (&b, &f) in binds.iter().zip(&fields) {
+                    let f = m.subst(f, Item::Enum(e), &eargs);
+                    let lt = m.local_type(b);
+                    let msg = format!(
+                        "`{}` binds a `{}` as `{}`",
+                        m.local_name(b),
+                        m.type_name(f),
+                        m.type_name(lt)
+                    );
+                    if !m.unify(lt, f) {
+                        return fail(msg);
+                    }
+                }
+                covered[v as usize] = true;
+            }
+            None => wildcard = true,
+        }
+        let bt = m.expr_type(body);
+        result = m.join(result, bt).unwrap_or(TypeId::UNIT);
+    }
+    if !wildcard && covered.iter().any(|c| !c) {
+        let missing: Vec<&str> = covered
+            .iter()
+            .enumerate()
+            .filter(|(_, c)| !**c)
+            .map(|(i, _)| m.variant_name(e, i as u32))
+            .collect();
+        return fail(format!("match does not cover {}", missing.join(", ")));
+    }
+    Ok(result)
+}
+
+fn builtin_type(m: &mut HirModule, op: Builtin, args: &[ExprId]) -> Typed {
     let arity = match op {
         Builtin::Clock => 0,
         Builtin::Len
@@ -1002,117 +1457,131 @@ fn builtin_type(m: &HirModule, op: Builtin, args: &[ExprId]) -> Result<TypeId, S
         | Builtin::Keys
         | Builtin::Str
         | Builtin::Print
-        | Builtin::Eprint => 1,
-        Builtin::Exit | Builtin::Panic => 1,
+        | Builtin::Eprint
+        | Builtin::Exit
+        | Builtin::Panic => 1,
         Builtin::Push | Builtin::Has | Builtin::Remove | Builtin::ByteAt => 2,
         Builtin::Substr => 3,
     };
-    if tys.len() != arity {
-        return Err(format!(
-            "{} takes {arity} arguments, {} given",
+    if args.len() != arity {
+        return fail(format!(
+            "`{}` takes {arity} argument{}, found {}",
             op.name(),
-            tys.len()
+            if arity == 1 { "" } else { "s" },
+            args.len()
         ));
     }
-    let bad = |what: &str| Err(format!("{}: {what}", op.name()));
-    let kind = |i: usize| m.kind(tys[i]).clone();
+    let t0 = args
+        .first()
+        .map(|&a| m.expr_type(a))
+        .unwrap_or(TypeId::UNIT);
+    let bad = |m: &HirModule, what: &str| {
+        open_or(m, args[0], || {
+            format!("`{}` {what}, not `{}`", op.name(), m.type_name(t0))
+        })
+    };
     Ok(match op {
-        Builtin::Len => match kind(0) {
+        Builtin::Len => match m.kind(t0) {
             TypeKind::String | TypeKind::Array(_) | TypeKind::Map(..) | TypeKind::Never => {
                 TypeId::INT
             }
-            _ => return bad("needs a string, array or map"),
+            _ => return bad(m, "needs a string, array or map"),
         },
-        Builtin::Push => match kind(0) {
-            TypeKind::Array(e) if fits(tys[1], e) => TypeId::UNIT,
-            TypeKind::Never => TypeId::UNIT,
-            _ => return bad("needs an array and an element of its type"),
-        },
-        Builtin::Pop => match kind(0) {
-            TypeKind::Array(e) => e,
-            TypeKind::Never => TypeId::NEVER,
-            _ => return bad("needs an array"),
-        },
-        Builtin::Has | Builtin::Remove => match kind(0) {
-            TypeKind::Map(k, _) if fits(tys[1], k) => TypeId::BOOL,
-            TypeKind::Never => TypeId::BOOL,
-            _ => return bad("needs a map and a key of its type"),
-        },
-        Builtin::Keys => match kind(0) {
-            TypeKind::Map(k, _) => m
-                .type_map
-                .get(&TypeKind::Array(k))
-                .copied()
-                .ok_or_else(|| "keys: the array type was not interned".to_string())?,
-            _ => return bad("needs a map"),
-        },
-        Builtin::Substr => {
-            if fits(tys[0], TypeId::STRING)
-                && fits(tys[1], TypeId::INT)
-                && fits(tys[2], TypeId::INT)
-            {
-                TypeId::STRING
-            } else {
-                return bad("needs a string, a start and a count");
-            }
-        }
-        Builtin::ByteAt => {
-            if fits(tys[0], TypeId::STRING) && fits(tys[1], TypeId::INT) {
-                TypeId::INT
-            } else {
-                return bad("needs a string and an index");
-            }
-        }
-        Builtin::Str => match tys[0] {
-            TypeId::INT | TypeId::FLOAT | TypeId::BOOL | TypeId::NEVER => TypeId::STRING,
-            _ => return bad("formats an int, a float or a bool"),
-        },
-        Builtin::Print | Builtin::Eprint => {
-            if fits(tys[0], TypeId::STRING) {
+        Builtin::Push | Builtin::Pop => {
+            let elem = match m.kind(t0).clone() {
+                TypeKind::Array(e) => e,
+                TypeKind::Never => TypeId::NEVER,
+                TypeKind::Var(_) => {
+                    let e = m.fresh_var();
+                    let at = m.intern(TypeKind::Array(e));
+                    m.unify(t0, at);
+                    e
+                }
+                _ => return bad(m, "needs an array"),
+            };
+            if op == Builtin::Push {
+                if elem != TypeId::NEVER {
+                    expect(m, args[1], elem)?;
+                }
                 TypeId::UNIT
             } else {
-                return bad("needs a string");
+                elem
             }
+        }
+        Builtin::Has | Builtin::Remove => match m.kind(t0).clone() {
+            TypeKind::Map(k, _) => {
+                expect(m, args[1], k)?;
+                TypeId::BOOL
+            }
+            TypeKind::Never => TypeId::BOOL,
+            _ => return bad(m, "needs a map"),
+        },
+        Builtin::Keys => match m.kind(t0).clone() {
+            TypeKind::Map(k, _) => m.intern(TypeKind::Array(k)),
+            TypeKind::Never => TypeId::NEVER,
+            _ => return bad(m, "needs a map"),
+        },
+        Builtin::Substr => {
+            expect(m, args[0], TypeId::STRING)?;
+            expect(m, args[1], TypeId::INT)?;
+            expect(m, args[2], TypeId::INT)?;
+            TypeId::STRING
+        }
+        Builtin::ByteAt => {
+            expect(m, args[0], TypeId::STRING)?;
+            expect(m, args[1], TypeId::INT)?;
+            TypeId::INT
+        }
+        Builtin::Str => match m.kind(t0) {
+            TypeKind::Int
+            | TypeKind::Float
+            | TypeKind::Bool
+            | TypeKind::String
+            | TypeKind::Never => TypeId::STRING,
+            _ => return bad(m, "formats an int, float, bool or string"),
+        },
+        Builtin::Print | Builtin::Eprint => {
+            expect(m, args[0], TypeId::STRING)?;
+            TypeId::UNIT
         }
         Builtin::Exit => {
-            if fits(tys[0], TypeId::INT) {
-                TypeId::NEVER
-            } else {
-                return bad("needs an int exit status");
-            }
+            expect(m, args[0], TypeId::INT)?;
+            TypeId::NEVER
         }
         Builtin::Panic => {
-            if fits(tys[0], TypeId::STRING) {
-                TypeId::NEVER
-            } else {
-                return bad("needs a string message");
-            }
+            expect(m, args[0], TypeId::STRING)?;
+            TypeId::NEVER
         }
         Builtin::Clock => TypeId::FLOAT,
     })
 }
 
 /// Types an `any` can be tested for and unpacked to.
-fn testable(m: &HirModule, t: TypeId) -> bool {
-    matches!(
-        m.kind(t),
+pub(crate) fn testable(m: &HirModule, t: TypeId) -> bool {
+    match m.kind(t) {
         TypeKind::Unit
-            | TypeKind::Bool
-            | TypeKind::Int
-            | TypeKind::Float
-            | TypeKind::String
-            | TypeKind::Struct(_)
-            | TypeKind::Enum(_)
-    )
+        | TypeKind::Bool
+        | TypeKind::Int
+        | TypeKind::Float
+        | TypeKind::String
+        | TypeKind::Struct(..)
+        | TypeKind::Enum(..) => true,
+        TypeKind::Nullable(inner) => testable(m, *inner),
+        _ => false,
+    }
 }
 
 fn cast_allowed(m: &HirModule, from: TypeId, to: TypeId) -> bool {
-    from == to
-        || from == TypeId::NEVER
-        || (from == TypeId::INT && to == TypeId::FLOAT)
-        || (from == TypeId::FLOAT && to == TypeId::INT)
-        || (to == TypeId::ANY && from != TypeId::NEVER)
-        || (from == TypeId::ANY && testable(m, to))
+    let (fk, tk) = (m.kind(from), m.kind(to));
+    m.same(from, to)
+        || matches!(fk, TypeKind::Never)
+        || matches!(
+            (fk, tk),
+            (TypeKind::Int, TypeKind::Float) | (TypeKind::Float, TypeKind::Int)
+        )
+        || matches!(tk, TypeKind::Any)
+        || (matches!(fk, TypeKind::Any) && testable(m, to))
+        || matches!(tk, TypeKind::Nullable(inner) if m.same(from, *inner))
 }
 
 /// Whether `e` contains a `break` that targets the innermost loop around it (not a nested loop, not
@@ -1136,17 +1605,25 @@ pub(crate) fn contains_break(m: &HirModule, e: ExprId) -> bool {
 pub(crate) fn visit_children(m: &HirModule, e: ExprId, f: &mut dyn FnMut(ExprId)) {
     use ExprKind::*;
     match &m.expr(e).kind {
-        Unit | Bool(_) | Int(_) | Float(_) | Str(_) | Null | Local(_) | Global(_) | Func(_)
+        Unit | Bool(_) | Int(_) | Float(_) | Str(_) | Null | Local(_) | Global(_) | Func(..)
         | Lambda(_) | NewArray | NewMap | Break | Continue => {}
         Let(_, a)
         | SetLocal(_, a)
         | SetGlobal(_, a)
         | Unary(_, a)
         | Field(a, _)
+        | FieldName(a, _)
         | Cast(a)
+        | Unwrap(a)
         | Is(a, _)
         | Loop(a) => f(*a),
-        SetField(a, _, b) | Binary(_, a, b) | And(a, b) | Or(a, b) | Index(a, b) | While(a, b) => {
+        SetField(a, _, b)
+        | SetFieldName(a, _, b)
+        | Binary(_, a, b)
+        | And(a, b)
+        | Or(a, b)
+        | Index(a, b)
+        | While(a, b) => {
             f(*a);
             f(*b);
         }
@@ -1155,7 +1632,7 @@ pub(crate) fn visit_children(m: &HirModule, e: ExprId, f: &mut dyn FnMut(ExprId)
             f(*b);
             f(*c);
         }
-        Call(_, args)
+        Call(_, _, args)
         | CallExtern(_, args)
         | New(_, args)
         | Variant(_, _, args)

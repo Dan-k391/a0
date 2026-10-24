@@ -62,9 +62,16 @@ pub(crate) enum TypeKind {
     Never,
     Array(TypeId),
     Map(TypeId, TypeId),
-    Struct(StructId),
-    Enum(EnumId),
+    /// A struct and its type arguments (none unless the struct is generic).
+    Struct(StructId, Vec<TypeId>),
+    Enum(EnumId, Vec<TypeId>),
     Fn(Vec<TypeId>, TypeId),
+    /// `T?`: a reference type that may also be null.
+    Nullable(TypeId),
+    /// The `index`th type parameter of a generic item.
+    Param(Item, u32),
+    /// An inference variable; `HirModule::vars` says what it is bound to.
+    Var(u32),
 }
 
 /// The kind of a type, for the public, handle-based API.
@@ -83,6 +90,11 @@ pub enum TypeTag {
     Struct,
     Enum,
     Fn,
+    Nullable,
+    /// A type parameter of a generic item.
+    Param,
+    /// A type not inferred yet (only while building).
+    Var,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -190,7 +202,7 @@ pub(crate) enum ExprKind {
     Null,
     Local(LocalId),
     Global(GlobalId),
-    Func(FuncId),
+    Func(FuncId, Vec<TypeId>),
     Let(LocalId, ExprId),
     SetLocal(LocalId, ExprId),
     SetGlobal(GlobalId, ExprId),
@@ -200,12 +212,17 @@ pub(crate) enum ExprKind {
     Binary(BinOp, ExprId, ExprId),
     And(ExprId, ExprId),
     Or(ExprId, ExprId),
-    Call(FuncId, Vec<ExprId>),
+    /// A call, with the type arguments of a generic function (empty otherwise).
+    Call(FuncId, Vec<TypeId>, Vec<ExprId>),
     CallExtern(ExternId, Vec<ExprId>),
     CallValue(ExprId, Vec<ExprId>),
     Lambda(BodyId),
     New(StructId, Vec<ExprId>),
     Field(ExprId, u32),
+    /// A field named before the object's type was known; `finish` turns it into `Field`.
+    FieldName(ExprId, String),
+    /// Likewise for `SetField`.
+    SetFieldName(ExprId, String, ExprId),
     Variant(EnumId, u32, Vec<ExprId>),
     Match(ExprId, Vec<ArmId>),
     Array(Vec<ExprId>),
@@ -214,6 +231,8 @@ pub(crate) enum ExprKind {
     Index(ExprId, ExprId),
     Builtin(Builtin, Vec<ExprId>),
     Cast(ExprId),
+    /// `e!`: the value of a nullable reference, which must not be null.
+    Unwrap(ExprId),
     Is(ExprId, TypeId),
     If(ExprId, ExprId, Option<ExprId>),
     While(ExprId, ExprId),
@@ -239,6 +258,7 @@ pub(crate) struct ArmData {
 
 pub(crate) struct StructDef {
     pub name: String,
+    pub type_params: Vec<String>,
     pub fields: Vec<(String, TypeId)>,
     pub span: Option<Span>,
 }
@@ -250,6 +270,7 @@ pub(crate) struct VariantDef {
 
 pub(crate) struct EnumDef {
     pub name: String,
+    pub type_params: Vec<String>,
     pub variants: Vec<VariantDef>,
     pub span: Option<Span>,
 }
@@ -269,6 +290,7 @@ pub(crate) struct ExternDef {
 
 pub(crate) struct FuncDef {
     pub name: String,
+    pub type_params: Vec<String>,
     pub body: BodyId,
     pub span: Option<Span>,
     /// Names used by locals anywhere in this function or its closures (kept unique).
@@ -288,10 +310,11 @@ pub(crate) struct LocalData {
     pub name: String,
     pub ty: TypeId,
     pub body: BodyId,
+    pub span: Option<Span>,
 }
 
 /// Something a module-level name refers to.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Item {
     Struct(StructId),
     Enum(EnumId),
@@ -314,6 +337,8 @@ pub struct HirModule {
     pub(crate) locals: Vec<LocalData>,
     pub(crate) exprs: Vec<ExprData>,
     pub(crate) arms: Vec<ArmData>,
+    /// What each inference variable is bound to.
+    pub(crate) vars: Vec<Option<TypeId>>,
     /// Declarations in order, for printing.
     pub(crate) items: Vec<Item>,
     pub(crate) type_names: HashMap<String, Item>,
@@ -335,6 +360,7 @@ impl HirModule {
             locals: Vec::new(),
             exprs: Vec::new(),
             arms: Vec::new(),
+            vars: Vec::new(),
             items: Vec::new(),
             type_names: HashMap::new(),
             value_names: HashMap::new(),
@@ -363,8 +389,20 @@ impl HirModule {
         t
     }
 
+    /// The shape of `t`, looking through bound inference variables.
     pub(crate) fn kind(&self, t: TypeId) -> &TypeKind {
-        &self.types[t.index()]
+        &self.types[self.shallow(t).index()]
+    }
+
+    /// `t`, or what it is bound to if it is a bound inference variable.
+    pub(crate) fn shallow(&self, mut t: TypeId) -> TypeId {
+        while let TypeKind::Var(v) = self.types[t.index()] {
+            match self.vars[v as usize] {
+                Some(b) => t = b,
+                None => break,
+            }
+        }
+        t
     }
 
     pub(crate) fn expr(&self, e: ExprId) -> &ExprData {
@@ -419,6 +457,11 @@ impl HirModule {
 
     pub fn local_type(&self, l: LocalId) -> TypeId {
         self.locals[l.index()].ty
+    }
+
+    /// Where a local was declared, if the builder had a span set.
+    pub fn local_span(&self, l: LocalId) -> Option<Span> {
+        self.locals[l.index()].span
     }
 
     pub fn expr_type(&self, e: ExprId) -> TypeId {
@@ -509,9 +552,38 @@ impl HirModule {
             TypeKind::Never => TypeTag::Never,
             TypeKind::Array(_) => TypeTag::Array,
             TypeKind::Map(..) => TypeTag::Map,
-            TypeKind::Struct(_) => TypeTag::Struct,
-            TypeKind::Enum(_) => TypeTag::Enum,
+            TypeKind::Struct(..) => TypeTag::Struct,
+            TypeKind::Enum(..) => TypeTag::Enum,
             TypeKind::Fn(..) => TypeTag::Fn,
+            TypeKind::Nullable(_) => TypeTag::Nullable,
+            TypeKind::Param(..) => TypeTag::Param,
+            TypeKind::Var(_) => TypeTag::Var,
+        }
+    }
+
+    /// The type arguments of a generic struct or enum type (empty for other types).
+    pub fn type_args(&self, t: TypeId) -> &[TypeId] {
+        match self.kind(t) {
+            TypeKind::Struct(_, args) | TypeKind::Enum(_, args) => args,
+            _ => &[],
+        }
+    }
+
+    /// The type a nullable type makes nullable (`T` for `T?`), or `t` itself.
+    pub fn non_null(&self, t: TypeId) -> TypeId {
+        match self.kind(t) {
+            TypeKind::Nullable(inner) => *inner,
+            _ => self.shallow(t),
+        }
+    }
+
+    /// The names of an item's type parameters (empty unless it is generic).
+    pub fn type_params(&self, item: Item) -> &[String] {
+        match item {
+            Item::Struct(s) => &self.structs[s.index()].type_params,
+            Item::Enum(e) => &self.enums[e.index()].type_params,
+            Item::Func(f) => &self.funcs[f.index()].type_params,
+            Item::Global(_) | Item::Extern(_) => &[],
         }
     }
 
@@ -522,10 +594,19 @@ impl HirModule {
             TypeKind::String
                 | TypeKind::Array(_)
                 | TypeKind::Map(..)
-                | TypeKind::Struct(_)
-                | TypeKind::Enum(_)
+                | TypeKind::Struct(..)
+                | TypeKind::Enum(..)
                 | TypeKind::Fn(..)
+                | TypeKind::Nullable(_)
         )
+    }
+
+    fn applied(&self, name: &str, args: &[TypeId]) -> String {
+        if args.is_empty() {
+            return name.to_string();
+        }
+        let args: Vec<String> = args.iter().map(|&a| self.type_name(a)).collect();
+        format!("{name}<{}>", args.join(", "))
     }
 
     /// The type's text form, such as `map<string, array<int>>`.
@@ -540,8 +621,14 @@ impl HirModule {
             TypeKind::Never => "never".to_string(),
             TypeKind::Array(e) => format!("array<{}>", self.type_name(*e)),
             TypeKind::Map(k, v) => format!("map<{}, {}>", self.type_name(*k), self.type_name(*v)),
-            TypeKind::Struct(s) => self.structs[s.index()].name.clone(),
-            TypeKind::Enum(e) => self.enums[e.index()].name.clone(),
+            TypeKind::Struct(s, args) => self.applied(&self.structs[s.index()].name, args),
+            TypeKind::Enum(e, args) => self.applied(&self.enums[e.index()].name, args),
+            TypeKind::Nullable(inner) => match self.kind(*inner) {
+                TypeKind::Fn(..) => format!("({})?", self.type_name(*inner)),
+                _ => format!("{}?", self.type_name(*inner)),
+            },
+            TypeKind::Param(item, i) => self.type_params(*item)[*i as usize].clone(),
+            TypeKind::Var(_) => "_".to_string(),
             TypeKind::Fn(params, ret) => {
                 let ps: Vec<String> = params.iter().map(|&p| self.type_name(p)).collect();
                 if *ret == TypeId::UNIT {

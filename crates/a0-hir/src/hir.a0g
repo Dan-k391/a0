@@ -18,11 +18,11 @@ module = "module" name:STRING ~ "expected the module name as a string" ";" ~ "ex
 item @inline @recover(before "struct" "enum" "global" "extern" "fn")
     = struct_decl | enum_decl | global_decl | extern_decl | fn_decl;
 
-struct_decl = "struct" name:NAME ~ "expected a struct name" "{" ~ "expected '{'"
+struct_decl = "struct" name:NAME ~ "expected a struct name" type_params? "{" ~ "expected '{'"
               (field ("," field)* ","?)? "}" ~ "expected '}'";
 field = name:NAME ":" ~ "expected ':'" type:type ~ "expected a type";
 
-enum_decl = "enum" name:NAME ~ "expected an enum name" "{" ~ "expected '{'"
+enum_decl = "enum" name:NAME ~ "expected an enum name" type_params? "{" ~ "expected '{'"
             (variant ("," variant)* ","?)? "}" ~ "expected '}'";
 variant = name:NAME ("(" type:type ("," type:type)* ")" ~ "expected ')'")?;
 
@@ -33,16 +33,21 @@ extern_decl = "extern" "fn" ~ "expected 'fn'" name:NAME ~ "expected a function n
               "(" ~ "expected '('" (param_type:type ("," param_type:type)*)? ")" ~ "expected ')'"
               ("->" ret:type)? ";" ~ "expected ';'";
 
-fn_decl = "fn" name:NAME ~ "expected a function name" "(" ~ "expected '('"
+fn_decl = "fn" name:NAME ~ "expected a function name" type_params? "(" ~ "expected '('"
           (param ("," param)*)? ")" ~ "expected ')'" ("->" ret:type)?
           body:block ~ "expected a function body";
 param = name:NAME ":" ~ "expected ':'" type:type ~ "expected a type";
+type_params = "<" tparam:NAME ~ "expected a type parameter" ("," tparam:NAME ~ "expected a type parameter")*
+              ">" ~ "expected '>'";
 
-type = "unit" | "bool" | "int" | "float" | "string" | "any" | "never"
+type = base:base_type nullable:"?"?;
+base_type = "unit" | "bool" | "int" | "float" | "string" | "any" | "never"
      | "array" "<" ~ "expected '<'" elem:type ">" ~ "expected '>'"
      | "map" "<" ~ "expected '<'" key:type "," ~ "expected ','" value:type ">" ~ "expected '>'"
      | "fn" "(" ~ "expected '('" (param_type:type ("," param_type:type)*)? ")" ~ "expected ')'" ("->" ret:type)?
-     | NAME;
+     | "(" inner:type ")" ~ "expected ')'"
+     | name:NAME type_args?;
+type_args = "<" targ:type ~ "expected a type" ("," targ:type ~ "expected a type")* ">" ~ "expected '>'";
 
 block = "{" stmt* tail:expr? "}" ~ "expected '}'";
 stmt @inline = let_stmt | expr_stmt | blocklike_stmt;
@@ -64,6 +69,7 @@ expr @inline = @prec primary ~ "expected an expression" {
     postfix "is" ty:type ~ "expected a type" => is;
     prefix "-" "!" => unary;
     postfix "(" args:args? ")" ~ "expected ')'" => call;
+    postfix "!" => unwrap;
     postfix "." name:NAME ~ "expected a field name" => field;
     postfix "[" index:expr "]" ~ "expected ']'" => index;
 };
@@ -80,11 +86,11 @@ literal = "true" | "false" | INT | FLOAT | STRING;
 float_bits = "float_bits" "(" ~ "expected '('" bits:HEX ~ "expected hex bits" ")" ~ "expected ')'";
 null_lit = "null" "<" ~ "expected '<'" type:type ">" ~ "expected '>'";
 new_expr = "new" ~ "expected 'new'" (new_struct | new_collection);
-new_struct = name:NAME "{" ~ "expected '{'" (field_init ("," field_init)* ","?)? "}" ~ "expected '}'";
+new_struct = name:NAME type_args? "{" ~ "expected '{'" (field_init ("," field_init)* ","?)? "}" ~ "expected '}'";
 field_init = name:NAME ":" ~ "expected ':'" value:expr;
 new_collection = type:type;
-array_lit = "[" args:args ~ "expected an element (empty arrays are written new array<T>)" "]" ~ "expected ']'";
-variant_expr = enum:NAME "::" name:NAME ~ "expected a variant name" ("(" args:args? ")" ~ "expected ')'")?;
+array_lit = "[" args:args? "]" ~ "expected ']'";
+variant_expr = enum:NAME type_args? "::" name:NAME ~ "expected a variant name" ("(" args:args? ")" ~ "expected ')'")?;
 lambda = "fn" "(" ~ "expected '('" (param ("," param)*)? ")" ~ "expected ')'" ("->" ret:type)?
          body:block ~ "expected a closure body";
 if_expr = "if" cond:expr ~ "expected a condition" then:block ~ "expected '{'"
@@ -98,4 +104,4 @@ pattern = "_" | variant:NAME ("(" bind:NAME ("," bind:NAME)* ")" ~ "expected ')'
 break_expr = "break";
 continue_expr = "continue";
 return_expr = "return" value:expr?;
-name_expr = NAME;
+name_expr = name:NAME ("::" type_args)?;

@@ -95,10 +95,11 @@ impl Printer<'_> {
                     .iter()
                     .map(|(n, t)| format!("{n}: {}", self.ty(*t)))
                     .collect();
+                let name = format!("{}{}", def.name, params(&def.type_params));
                 if fields.is_empty() {
-                    let _ = writeln!(self.out, "struct {} {{}}", def.name);
+                    let _ = writeln!(self.out, "struct {name} {{}}");
                 } else {
-                    let _ = writeln!(self.out, "struct {} {{ {} }}", def.name, fields.join(", "));
+                    let _ = writeln!(self.out, "struct {name} {{ {} }}", fields.join(", "));
                 }
             }
             Item::Enum(e) => {
@@ -115,7 +116,13 @@ impl Printer<'_> {
                         }
                     })
                     .collect();
-                let _ = writeln!(self.out, "enum {} {{ {} }}", def.name, variants.join(", "));
+                let _ = writeln!(
+                    self.out,
+                    "enum {}{} {{ {} }}",
+                    def.name,
+                    params(&def.type_params),
+                    variants.join(", ")
+                );
             }
             Item::Global(g) => {
                 let _ = writeln!(
@@ -138,7 +145,12 @@ impl Printer<'_> {
             }
             Item::Func(f) => {
                 let body = m.func_body(f);
-                let _ = write!(self.out, "fn {}", m.func_name(f));
+                let _ = write!(
+                    self.out,
+                    "fn {}{}",
+                    m.func_name(f),
+                    params(&m.funcs[f.index()].type_params)
+                );
                 self.signature(body);
                 self.out.push(' ');
                 self.body_root(body, 0);
@@ -242,9 +254,12 @@ impl Printer<'_> {
             ExprKind::Cast(a) => left(*a, AS),
             ExprKind::Is(a, _) => left(*a, IS),
             ExprKind::Field(a, _)
+            | ExprKind::FieldName(a, _)
+            | ExprKind::Unwrap(a)
             | ExprKind::Index(a, _)
             | ExprKind::CallValue(a, _)
             | ExprKind::SetField(a, _, _)
+            | ExprKind::SetFieldName(a, _, _)
             | ExprKind::SetIndex(a, _, _) => left(*a, POSTFIX),
             _ => false,
         }
@@ -270,6 +285,7 @@ impl Printer<'_> {
             ExprKind::SetLocal(..)
             | ExprKind::SetGlobal(..)
             | ExprKind::SetField(..)
+            | ExprKind::SetFieldName(..)
             | ExprKind::SetIndex(..) => ASSIGN,
             ExprKind::Or(..) => OR,
             ExprKind::And(..) => AND,
@@ -284,7 +300,11 @@ impl Printer<'_> {
             {
                 PREFIX
             }
-            ExprKind::CallValue(..) | ExprKind::Field(..) | ExprKind::Index(..) => POSTFIX,
+            ExprKind::CallValue(..)
+            | ExprKind::Field(..)
+            | ExprKind::FieldName(..)
+            | ExprKind::Unwrap(_)
+            | ExprKind::Index(..) => POSTFIX,
             // `return x` swallows everything after it, so it is parenthesized inside operators.
             ExprKind::Return(Some(_)) => ASSIGN,
             _ => ATOM,
@@ -317,11 +337,14 @@ impl Printer<'_> {
             }
             ExprKind::Str(s) => self.out.push_str(&quote(&s)),
             ExprKind::Null => {
-                let _ = write!(self.out, "null<{}>", self.ty(m.expr_type(e)));
+                let _ = write!(self.out, "null<{}>", self.ty(m.non_null(m.expr_type(e))));
             }
             ExprKind::Local(l) => self.out.push_str(m.local_name(l)),
             ExprKind::Global(g) => self.out.push_str(m.global_name(g)),
-            ExprKind::Func(f) => self.out.push_str(m.func_name(f)),
+            ExprKind::Func(f, targs) => {
+                self.out.push_str(m.func_name(f));
+                self.type_args(&targs);
+            }
             ExprKind::Let(..) => self.statement(e, indent),
             ExprKind::SetLocal(l, v) => {
                 let _ = write!(self.out, "{} = ", m.local_name(l));
@@ -334,6 +357,11 @@ impl Printer<'_> {
             ExprKind::SetField(o, f, v) => {
                 self.expr(o, POSTFIX, indent);
                 let _ = write!(self.out, ".{} = ", self.field_name(o, f));
+                self.expr(v, ASSIGN, indent);
+            }
+            ExprKind::SetFieldName(o, name, v) => {
+                self.expr(o, POSTFIX, indent);
+                let _ = write!(self.out, ".{name} = ");
                 self.expr(v, ASSIGN, indent);
             }
             ExprKind::SetIndex(t, i, v) => {
@@ -367,8 +395,9 @@ impl Printer<'_> {
                 self.out.push_str(" || ");
                 self.expr(b, OR + 1, indent);
             }
-            ExprKind::Call(f, args) => {
+            ExprKind::Call(f, targs, args) => {
                 self.out.push_str(m.func_name(f));
+                self.type_args(&targs);
                 self.args(&args, indent);
             }
             ExprKind::CallExtern(x, args) => {
@@ -391,11 +420,12 @@ impl Printer<'_> {
             }
             ExprKind::New(s, fields) => {
                 let def = &m.structs[s.index()];
+                let name = self.ty(m.expr_type(e));
                 if fields.is_empty() {
-                    let _ = write!(self.out, "new {} {{}}", def.name);
+                    let _ = write!(self.out, "new {name} {{}}");
                     return;
                 }
-                let _ = write!(self.out, "new {} {{ ", def.name);
+                let _ = write!(self.out, "new {name} {{ ");
                 for (i, (&v, (name, _))) in fields.iter().zip(&def.fields).enumerate() {
                     if i > 0 {
                         self.out.push_str(", ");
@@ -409,8 +439,21 @@ impl Printer<'_> {
                 self.expr(o, POSTFIX, indent);
                 let _ = write!(self.out, ".{}", self.field_name(o, f));
             }
+            ExprKind::FieldName(o, name) => {
+                self.expr(o, POSTFIX, indent);
+                let _ = write!(self.out, ".{name}");
+            }
+            ExprKind::Unwrap(o) => {
+                self.expr(o, POSTFIX, indent);
+                self.out.push('!');
+            }
             ExprKind::Variant(en, v, args) => {
-                let _ = write!(self.out, "{}::{}", m.enum_name(en), m.variant_name(en, v));
+                let _ = write!(
+                    self.out,
+                    "{}::{}",
+                    self.ty(m.expr_type(e)),
+                    m.variant_name(en, v)
+                );
                 if !args.is_empty() {
                     self.args(&args, indent);
                 }
@@ -420,7 +463,7 @@ impl Printer<'_> {
                 self.expr(s, 0, indent);
                 self.out.push_str(" {");
                 let en = match m.kind(m.expr_type(s)) {
-                    TypeKind::Enum(en) => Some(*en),
+                    TypeKind::Enum(en, _) => Some(*en),
                     _ => None,
                 };
                 for a in arms {
@@ -443,6 +486,10 @@ impl Printer<'_> {
                 }
                 self.newline(indent);
                 self.out.push('}');
+            }
+            // An empty literal's type came from inference; print it explicitly.
+            ExprKind::Array(elems) if elems.is_empty() => {
+                let _ = write!(self.out, "new {}", self.ty(m.expr_type(e)));
             }
             ExprKind::Array(elems) => {
                 self.out.push('[');
@@ -521,12 +568,20 @@ impl Printer<'_> {
 
     fn field_name(&self, object: ExprId, field: u32) -> String {
         match self.m.kind(self.m.expr_type(object)) {
-            TypeKind::Struct(s) => self.m.structs[s.index()]
+            TypeKind::Struct(s, _) => self.m.structs[s.index()]
                 .fields
                 .get(field as usize)
                 .map(|(n, _)| n.clone())
                 .unwrap_or_else(|| format!("field{field}")),
             _ => format!("field{field}"),
+        }
+    }
+
+    /// `::<A, B>` after a generic function's name.
+    fn type_args(&mut self, targs: &[TypeId]) {
+        if !targs.is_empty() {
+            let names: Vec<String> = targs.iter().map(|&t| self.ty(t)).collect();
+            let _ = write!(self.out, "::<{}>", names.join(", "));
         }
     }
 
@@ -539,6 +594,15 @@ impl Printer<'_> {
             self.expr(a, 0, indent);
         }
         self.out.push(')');
+    }
+}
+
+/// `<A, B>` after a generic item's name.
+fn params(names: &[String]) -> String {
+    if names.is_empty() {
+        String::new()
+    } else {
+        format!("<{}>", names.join(", "))
     }
 }
 

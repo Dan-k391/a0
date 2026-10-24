@@ -1,13 +1,16 @@
-//! The HIR checker: the rules that per-node typing cannot see (returns against the enclosing body,
-//! `break` placement, which bodies may use a local, tree shape), plus re-typing every node.
+//! The HIR checker: every node typed again on the finished module, plus the rules that per-node
+//! typing cannot see (returns against the enclosing body, `break` placement, which bodies may use a
+//! local, tree shape).
 
 use a0_diag::{Diagnostic, Diagnostics, Span};
 
-use crate::builder::{fits, infer, visit_children};
+use crate::builder::{TypeErr, infer, visit_children};
 use crate::model::*;
 
-/// Checks a whole module.
-pub fn check(m: &HirModule) -> Diagnostics {
+/// Checks a whole module. Typing nodes again may intern types, hence `&mut`.
+pub fn check(m: &mut HirModule) -> Diagnostics {
+    let mut diags = retype(m);
+    let m = &*m;
     let mut c = Checker {
         m,
         diags: Diagnostics::new(),
@@ -39,7 +42,53 @@ pub fn check(m: &HirModule) -> Diagnostics {
             ));
         }
     }
-    c.diags
+    diags.extend(c.diags);
+    diags
+}
+
+/// Types every node reachable from a function again. A node typed `never` because of an earlier
+/// error, or one whose type could not be inferred (already reported), is skipped.
+fn retype(m: &mut HirModule) -> Diagnostics {
+    let mut nodes = Vec::new();
+    for f in 0..m.funcs.len() {
+        reachable(m, m.funcs[f].body, &mut nodes);
+    }
+    let mut diags = Diagnostics::new();
+    for e in nodes {
+        let (kind, ty) = (m.exprs[e.index()].kind.clone(), m.exprs[e.index()].ty);
+        if ty == TypeId::NEVER || !m.is_resolved(ty) {
+            continue;
+        }
+        let (at, message) = match infer(m, &kind, ty) {
+            Ok(t) if m.same(t, ty) => continue,
+            Ok(t) => (
+                e,
+                format!(
+                    "expression typed {} should be {}",
+                    m.type_name(ty),
+                    m.type_name(t)
+                ),
+            ),
+            Err(TypeErr::At(at, msg)) => (at.unwrap_or(e), msg),
+            Err(TypeErr::Open(_)) => continue,
+        };
+        let span = m.exprs[at.index()].span;
+        diags.push(Diagnostic::error("hir.check", &message).with_span_opt(span));
+    }
+    diags
+}
+
+fn reachable(m: &HirModule, body: BodyId, out: &mut Vec<ExprId>) {
+    fn walk(m: &HirModule, e: ExprId, out: &mut Vec<ExprId>) {
+        out.push(e);
+        if let ExprKind::Lambda(b) = m.expr(e).kind {
+            reachable(m, b, out);
+        }
+        visit_children(m, e, &mut |c| walk(m, c, out));
+    }
+    if let Some(root) = m.body_root(body) {
+        walk(m, root, out);
+    }
 }
 
 /// Checks that the module has an entry point: `fn main() -> int` or `fn main()`.
@@ -86,7 +135,7 @@ impl Checker<'_> {
         };
         let ret = m.body_ret(body);
         let rt = m.expr_type(root);
-        if ret != TypeId::UNIT && !fits(rt, ret) {
+        if ret != TypeId::UNIT && m.is_resolved(rt) && !m.fits(rt, ret) {
             let msg = format!(
                 "the body evaluates to {} but must return {}",
                 m.type_name(rt),
@@ -119,21 +168,6 @@ impl Checker<'_> {
         if matches!(data.kind, ExprKind::Let(..)) && !item {
             self.error(e, "let can only be a statement of a block");
         }
-        // Re-type the node; a node typed `never` because of an earlier error is not reported again.
-        if data.ty != TypeId::NEVER {
-            match infer(m, &data.kind, data.ty) {
-                Ok(t) if t == data.ty => {}
-                Ok(t) => {
-                    let msg = format!(
-                        "expression typed {} should be {}",
-                        m.type_name(data.ty),
-                        m.type_name(t)
-                    );
-                    self.error(e, &msg);
-                }
-                Err(msg) => self.error(e, &msg),
-            }
-        }
         match &data.kind {
             ExprKind::Local(l) | ExprKind::SetLocal(l, _) => {
                 if !self.visible(*l, body) {
@@ -153,23 +187,12 @@ impl Checker<'_> {
                     self.error(e, &msg);
                 }
             }
-            ExprKind::Return(v) => {
-                let ret = m.body_ret(body);
-                match v {
-                    Some(v) if ret != TypeId::UNIT && !fits(m.expr_type(*v), ret) => {
-                        let msg = format!(
-                            "return {} from a body returning {}",
-                            m.type_name(m.expr_type(*v)),
-                            m.type_name(ret)
-                        );
-                        self.error(e, &msg);
-                    }
-                    None if ret != TypeId::UNIT => {
-                        let msg = format!("return needs a value of type {}", m.type_name(ret));
-                        self.error(e, &msg);
-                    }
-                    _ => {}
-                }
+            ExprKind::Return(None) if m.body_ret(body) != TypeId::UNIT => {
+                let msg = format!(
+                    "this function must return a value of type `{}`",
+                    m.type_name(m.body_ret(body))
+                );
+                self.error(e, &msg);
             }
             ExprKind::Break | ExprKind::Continue if loops == 0 => {
                 self.error(e, "break or continue outside a loop");

@@ -44,7 +44,7 @@ fn corpus_round_trips_through_text() {
 fn canonical_text_is_stable() {
     let text = r#"module "m";
 
-struct P { x: int, next: P }
+struct P { x: int, next: P? }
 
 enum E { A(int), B }
 
@@ -91,15 +91,15 @@ fn type_errors_are_reported_with_locations() {
     let cases: &[(&str, &str)] = &[
         (
             "fn main() -> int { 1 + \"x\" }",
-            "operands of + must have the same type, found int and string",
+            "mismatched types: expected `int`, found `string`",
         ),
         (
             "fn main() -> int { \"x\" }",
-            "the body evaluates to string but must return int",
+            "this body evaluates to `string` but must return `int`",
         ),
         (
             "struct P { x: int }\nfn main() -> int { let p = new P { x: 1 }; p.y }",
-            "has no field 'y'",
+            "`P` has no field `y`",
         ),
         (
             "enum E { A, B }\nfn main() -> int { match E::A { A => 1 } }",
@@ -111,29 +111,60 @@ fn type_errors_are_reported_with_locations() {
         ),
         (
             "fn f() -> int { return \"s\"; }\nfn main() -> int { 0 }",
-            "return string from a body returning int",
+            "mismatched types: expected `int`, found `string`",
         ),
         (
             "fn main() -> int { let x = 1; x(2) }",
-            "cannot call a value of type int",
+            "`int` is not a function",
         ),
         (
             "fn main() -> int { let a = [1, 2]; a[\"x\"] }",
-            "the index must be int, found string",
+            "mismatched types: expected `int`, found `string`",
         ),
         (
             "fn main() -> int { let v = 1 as any; v as array<int>; 0 }",
-            "cannot convert any to array<int>",
+            "cannot convert `any` to `array<int>`",
         ),
         (
             "fn main() -> int { 1 is int; 0 }",
-            "the operand of is must be any, found int",
+            "mismatched types: expected `any`, found `int`",
         ),
         (
             "fn main() -> int { let m = new map<float, int>; 0 }",
             "map keys must be int, bool or string",
         ),
-        ("fn main() -> int { push(1, 2); 0 }", "push: needs an array"),
+        (
+            "fn main() -> int { push(1, 2); 0 }",
+            "`push` needs an array, not `int`",
+        ),
+        (
+            "struct P { x: int }\nfn main() -> int { let p = null<P>; p.x }",
+            "`P?` may be null; unwrap it (`!`) or check it for null before using its fields",
+        ),
+        (
+            "struct P { x: int }\nfn main() -> int { let p: P = null<P>; 0 }",
+            "mismatched types: expected `P`, found `P?`",
+        ),
+        (
+            "struct P { x: int }\nglobal g: P;\nfn main() -> int { 0 }",
+            "global 'g' starts as null, so its type must be nullable (`P?`)",
+        ),
+        (
+            "fn main() -> int { let n = 1; n! }",
+            "`int` is not nullable",
+        ),
+        (
+            "fn main() -> int { let xs = new array<int>; xs[0] }\nfn f() { let ys = []; }",
+            "cannot infer the type `array<_>`",
+        ),
+        (
+            "fn id<T>(x: T) -> T { x + x }\nfn main() -> int { id(1) }",
+            "operator `+` cannot be applied to `T`",
+        ),
+        (
+            "fn id<T>(x: T) -> T { x }\nfn main() -> int { id(\"s\") }",
+            "this body evaluates to `string` but must return `int`",
+        ),
         (
             "extern fn f(string);\nfn main() -> int { 0 }",
             "externs take int, float, bool or unit",

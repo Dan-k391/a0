@@ -52,8 +52,8 @@ fn main() -> int {
   print("adder " + str(add5(10)) + "\n");
 
   let fact = null<fn(int) -> int>;
-  fact = fn(n: int) -> int { if n <= 1 { 1 } else { n * fact(n - 1) } };
-  print("fact " + str(fact(5)) + "\n");
+  fact = fn(n: int) -> int { if n <= 1 { 1 } else { n * fact!(n - 1) } };
+  print("fact " + str(fact!(5)) + "\n");
 
   let total = 0;
   let outer = fn() {

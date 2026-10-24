@@ -39,13 +39,13 @@ fn describe(v: any) -> string {
   }
 }
 
-global things: array<any>;
+global things: array<any>?;
 
 fn main() -> int {
   things = [1.5 as any, "hi" as any, 7 as any, () as any, true as any, new Box { v: 1 } as any, Opt::Some(2.0 as any) as any];
   let i = 0;
-  while i < len(things) {
-    print(describe(things[i]) + "\n");
+  while i < len(things!) {
+    print(describe(things![i]) + "\n");
     i = i + 1;
   }
   let a = "x" + "y";

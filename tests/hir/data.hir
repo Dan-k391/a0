@@ -12,7 +12,7 @@
 module "data";
 
 struct Point { x: int, y: int }
-struct Node { value: int, next: Node }
+struct Node { value: int, next: Node? }
 enum Shape { Circle(float), Rect(float, float), Empty }
 
 fn area(s: Shape) -> float {
@@ -55,9 +55,9 @@ fn main() -> int {
   let text = "list";
   let sep = " ";
   while list != null<Node> {
-    text = text + sep + str(list.value);
+    text = text + sep + str(list!.value);
     sep = " -> ";
-    list = list.next;
+    list = list!.next;
   }
   print(text + "\n");
 
