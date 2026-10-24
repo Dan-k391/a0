@@ -90,4 +90,5 @@ layer, decision D17). A new crate goes into the table above and into `[workspace
 ## Skills
 
 Step-by-step workflows live in `.claude/skills/`:
-`add-ir-instruction`, `add-runtime-function`, `add-example-language`, `differential-tests`.
+`add-ir-instruction`, `add-hir-feature`, `add-runtime-function`, `add-example-language`,
+`differential-tests`.

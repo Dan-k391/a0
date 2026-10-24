@@ -27,8 +27,9 @@ The runtime is C, compiled once into a static library that the interpreter calls
      or an `extern "C"` declaration).
    - `tests/programs/<name>.a0ir` calling it via `extern func @a0_<name>(...)`, so both backends
      run it.
-6. If the HIR lowering uses it, declare it where the lowering declares runtime externs, and update
-   `docs/hir.md` if it changes the HIR's semantics.
+6. If the HIR lowering uses it, declare it in `Runtime::declare` in `crates/a0-hir/src/lower.rs`,
+   classify it in `may_gc` there if it allocates, and update `docs/hir.md` if it changes the HIR's
+   semantics.
 
 ## Checks that must pass
 
