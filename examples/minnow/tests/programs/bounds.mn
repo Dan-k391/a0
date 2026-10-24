@@ -1,0 +1,9 @@
+// Indexing past the end of an array stops the program.
+fn main() {
+  let xs = [1, 2, 3];
+  print(xs[1]);
+  print(xs[3]);
+}
+// expect: 2
+// expect-stderr: a0: panic: index out of bounds
+// expect-exit: 101

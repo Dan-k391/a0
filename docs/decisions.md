@@ -160,3 +160,21 @@ against the source, or messages in the language's own format, because Lox must p
 exactly. Like the `a0` CLI, the driver is a Rust convenience in the tools layer, not part of the
 C-bindable library API (D2): it takes plain `fn` pointers and returns `ExitCode`. A C host would call
 the library crates directly.
+
+## D21. Static types in `a0-sema`: interned types, nominal structs, unification
+
+`a0_sema::Types` holds a language's types as handles. Named types (`int`), arrays and functions are
+interned structurally; every struct declaration is a distinct type. Type variables stand for types
+not known yet and are bound by unification (with an occurs check), which is all the inference a
+small language needs (`let xs = []; push(xs, 1);`), without committing a language to a full
+Hindley-Milner system: there is no generalization, so no polymorphism. `expect` gives every
+language the same mismatch message. Frontends use a fresh variable as the type of an erroneous
+expression, so one mistake does not cascade. The API is handle based with a fieldless `TypeTag` and
+accessors, per D2. Types stay separate from HIR types: the toolkit is part of the frontend layer,
+which must not depend on an IR, and a language's types need not map one to one onto the HIR's.
+
+## D22. Minnow is statement-oriented and writes struct literals with `new`
+
+Minnow, the typed example language, has statements (`let`, `if`, `while`, `for`, `return`) and
+expressions, like most languages people write compilers for, rather than the HIR's expression
+blocks. Struct literals are `new P { ... }`: with `P { ... }`, `if p { ... }` would be ambiguous.

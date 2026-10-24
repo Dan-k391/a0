@@ -1,6 +1,6 @@
 ---
 name: differential-tests
-description: Run and debug A0's differential tests, which require the interpreter and native executables to produce identical stdout, stderr and exit status (IR programs, Kaleidoscope, the Lox suite, GC stress). Use when a backend test fails or when adding a regression test.
+description: Run and debug A0's differential tests, which require the interpreter and native executables to produce identical stdout, stderr and exit status (IR and HIR programs, Kaleidoscope, Minnow, the Lox suite, GC stress). Use when a backend test fails or when adding a regression test.
 ---
 
 # Run and debug the differential tests
@@ -9,14 +9,16 @@ description: Run and debug A0's differential tests, which require the interprete
 
 | Suite | Harness | Modes |
 |---|---|---|
-| IR programs `tests/programs/*.a0ir` | `crates/a0/tests/programs.rs` | `a0 run`, `a0 build` + run |
+| IR and HIR programs `tests/programs/*.a0ir`, `tests/hir/*.hir` | `crates/a0/tests/programs.rs` | `a0 run`, `a0 build` + run, `a0 run` + `A0_GC_STRESS=1` |
 | Objects for every target | `crates/a0-native/tests/objects.rs` | object inspection only |
 | Kaleidoscope `examples/kaleidoscope/tests/programs/*.k` | `examples/kaleidoscope/tests/kaleidoscope.rs` | interpreted, native |
+| Minnow `examples/minnow/tests/programs/*.mn` | `examples/minnow/tests/minnow.rs` | interpreted, native, interpreted + `A0_GC_STRESS=1` |
 | Lox official suite | `examples/lox/tests/suite.rs` | interpreted, native, interpreted + `A0_GC_STRESS=1` |
 
 ```
 cargo test -p a0 --test programs
 cargo test -p kaleidoscope
+cargo test -p minnow
 cargo test -p lox --test suite -- --nocapture          # prints the pass counts
 cargo test -p lox --test suite suite_native -- --exact # one mode
 ```
@@ -25,7 +27,9 @@ cargo test -p lox --test suite suite_native -- --exact # one mode
 
 - IR programs: `; expect-stdout: <line>`, `; expect-stderr: <line>`, `; expect-exit: <code>`
   (default 0; stderr must match exactly, empty if none declared).
+- HIR programs: the same, after `//`.
 - Kaleidoscope: `# expect: <line>`.
+- Minnow: `// expect: <line>`, `// expect-stderr: <line>`, `// expect-exit: <code>`.
 - Lox: the book's comments (`// expect: `, `// Error ...`, `// [line N] Error ...`,
   `// expect runtime error: `), checked exactly like `tool/bin/test.dart`.
 

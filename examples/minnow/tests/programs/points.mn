@@ -1,0 +1,23 @@
+// Structs, arrays, a closure that updates a captured variable.
+struct Point { x: float, y: float }
+
+fn scale(p: Point, k: float) -> Point {
+  return new Point { x: p.x * k, y: p.y * k };
+}
+
+fn main() {
+  let points: [Point] = [];
+  for i in [1, 2, 3] {
+    push(points, scale(new Point { x: 1.0, y: 2.0 }, i as float));
+  }
+  let total = 0.0;
+  let add = fn(p: Point) { total = total + p.x + p.y; };
+  for p in points { add(p); }
+  print(total);
+  print(len(points));
+  points[0].x = 0.5;
+  print(points[0].x + points[1].y);
+}
+// expect: 18
+// expect: 3
+// expect: 4.5

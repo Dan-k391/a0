@@ -1,0 +1,75 @@
+// Minnow: a small statically typed language with structs, arrays and closures.
+grammar minnow;
+
+skip /[ \t\r\n]+/;
+skip /\/\/[^\n]*/;
+token FLOAT /[0-9]+\.[0-9]+/;
+token INT /[0-9]+/;
+token STRING /"([^"\\\n]|\\.)*"/;
+token NAME /[A-Za-z_][A-Za-z0-9_]*/;
+error "unterminated string" /"([^"\\\n]|\\.)*/;
+unknown "unexpected character";
+
+program = (!EOF item)* EOF;
+
+item @inline @recover(before "struct" "fn") = struct_decl | fn_decl;
+
+struct_decl = "struct" name:NAME ~ "expected a struct name" "{" ~ "expected '{'"
+              (field ("," field)* ","?)? "}" ~ "expected '}'";
+field = name:NAME ~ "expected a field name" ":" ~ "expected ':'" type:type ~ "expected a type";
+
+fn_decl = "fn" name:NAME ~ "expected a function name" "(" ~ "expected '('"
+          (param ("," param)*)? ")" ~ "expected ')'" ("->" ret:type ~ "expected a type")?
+          body:block ~ "expected '{'";
+param = name:NAME ~ "expected a parameter name" ":" ~ "expected ':'" type:type ~ "expected a type";
+
+type = array_type | fn_type | named_type;
+array_type = "[" elem:type ~ "expected a type" "]" ~ "expected ']'";
+fn_type = "fn" "(" ~ "expected '('" (param_type:type ("," param_type:type)*)? ")" ~ "expected ')'"
+          ("->" ret:type ~ "expected a type")?;
+named_type = name:NAME;
+
+block = "{" (!"}" !EOF stmt)* "}" ~ "expected '}'";
+
+stmt @inline @recover(after ";" before "let" "if" "while" "for" "return" "break" "continue")
+    = let_stmt | if_stmt | while_stmt | for_stmt | return_stmt | break_stmt | continue_stmt
+    | block | expr_stmt;
+
+let_stmt = "let" name:NAME ~ "expected a variable name" (":" type:type ~ "expected a type")?
+           "=" ~ "expected '='" value:expr ";" ~ "expected ';'";
+if_stmt = "if" cond:expr ~ "expected a condition" then:block ~ "expected '{'"
+          ("else" (else:if_stmt | else:block) ~ "expected '{' or 'if'")?;
+while_stmt = "while" cond:expr ~ "expected a condition" body:block ~ "expected '{'";
+for_stmt = "for" name:NAME ~ "expected a variable name" "in" ~ "expected 'in'"
+           iterable:expr ~ "expected an array" body:block ~ "expected '{'";
+return_stmt = "return" value:expr? ";" ~ "expected ';'";
+break_stmt = "break" ";" ~ "expected ';'";
+continue_stmt = "continue" ";" ~ "expected ';'";
+expr_stmt = expr:expr ("=" value:expr ~ "expected an expression")? ";" ~ "expected ';'";
+
+expr @inline = @prec primary ~ "expected an expression" {
+    left "||" => logical;
+    left "&&" => logical;
+    left "==" "!=" => binary;
+    left "<" "<=" ">" ">=" => binary;
+    left "+" "-" => binary;
+    left "*" "/" "%" => binary;
+    postfix "as" type:type ~ "expected a type" => cast;
+    prefix "-" "!" => unary;
+    postfix "(" args:args? ")" ~ "expected ')'" => call;
+    postfix "." name:NAME ~ "expected a field name" => get;
+    postfix "[" index:expr ~ "expected an index" "]" ~ "expected ']'" => index;
+};
+
+args = arg:expr ("," arg:expr)*;
+
+primary = literal | array_lit | new_expr | closure | paren | name_expr;
+literal = "true" | "false" | INT | FLOAT | STRING;
+array_lit = "[" args:args? "]" ~ "expected ']'";
+new_expr = "new" name:NAME ~ "expected a struct name" "{" ~ "expected '{'"
+           (field_init ("," field_init)* ","?)? "}" ~ "expected '}'";
+field_init = name:NAME ~ "expected a field name" ":" ~ "expected ':'" value:expr;
+closure = "fn" "(" ~ "expected '('" (param ("," param)*)? ")" ~ "expected ')'"
+          ("->" ret:type ~ "expected a type")? body:block ~ "expected '{'";
+paren = "(" inner:expr ")" ~ "expected ')'";
+name_expr = NAME;

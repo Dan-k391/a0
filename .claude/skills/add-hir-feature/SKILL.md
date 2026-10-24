@@ -37,7 +37,7 @@ identically interpreted, natively and under `A0_GC_STRESS=1`.
 
 ```
 cargo test -p a0-hir -p a0
-cargo test -p lox --test suite     # if Lox's prelude or lowering paths it uses changed
+cargo test -p lox -p minnow        # both languages are built on the HIR
 cargo clippy --workspace --all-targets
 cargo fmt --all
 ```

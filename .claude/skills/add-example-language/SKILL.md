@@ -16,7 +16,9 @@ output, and report errors with source locations.
 2. `examples/foo/foo.a0g` - the grammar (`docs/grammar.md`). Try it with
    `a0 parse examples/foo/foo.a0g sample.foo` before writing the compiler.
 3. `examples/foo/src/lib.rs` - `compile(text, SourceId) -> Result<HirModule, Diagnostics>`; load
-   the grammar with `include_str!`; resolve names with `a0_sema::Scopes`; emit HIR with
+   the grammar with `include_str!`; resolve names with `a0_sema::Scopes`; for static types, check
+   with `a0_sema::Types` (interned types, structs, inference by unification, mismatch
+   diagnostics; see `examples/minnow`); emit HIR with
    `a0_hir::HirBuilder` (`docs/hir.md`), or core IR with `a0_ir::Builder` if the language needs
    nothing the HIR offers. Runtime support written in HIR goes in a `prelude.hir` parsed with
    `a0_hir::parse` (see `examples/lox`). Return builder failures as diagnostics, never panic on user
@@ -45,6 +47,9 @@ output, and report errors with source locations.
 
 - Kaleidoscope: grammar in `kaleidoscope.a0g`, lowering in `src/lib.rs`; add a program to
   `tests/programs/*.k` with `# expect:` lines.
+- Minnow: grammar `minnow.a0g`, names and types in `src/check.rs` (on `a0_sema::Scopes` and
+  `a0_sema::Types`), HIR generation in `src/emit.rs`; programs in `tests/programs/*.mn` with
+  `// expect:` lines, error cases in `tests/minnow.rs`. It is the template for a typed language.
 - Lox: grammar `lox.a0g`, checks and resolver in `src/analyze.rs`, HIR generation in `src/emit.rs`,
   runtime semantics in HIR in `prelude.hir` (prefer changing the prelude over emitting more code).
   The official suite (`tests/suite.rs`) must stay fully green in all three modes.

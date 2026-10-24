@@ -1,0 +1,13 @@
+[package]
+name = "minnow"
+description = "Minnow, a small statically typed language built on A0"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+a0-diag.workspace = true
+a0-syntax.workspace = true
+a0-sema.workspace = true
+a0-hir.workspace = true
+a0-driver.workspace = true

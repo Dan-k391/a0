@@ -1,0 +1,42 @@
+// Closures capture variables by reference; each loop iteration has its own variables.
+fn counter() -> fn() -> int {
+  let n = 0;
+  return fn() -> int {
+    n = n + 1;
+    return n;
+  };
+}
+
+fn main() {
+  let c = counter();
+  c();
+  c();
+  print(c());
+  let d = counter();
+  print(d());
+
+  let fs: [fn() -> int] = [];
+  for i in [10, 20, 30] {
+    let j = i * 2;
+    push(fs, fn() -> int { return i + j; });
+  }
+  for f in fs { print(f()); }
+
+  let total = 0;
+  let add = fn(k: int) { total = total + k; };
+  add(5);
+  add(6);
+  print(total);
+
+  let make_adder = fn(k: int) -> fn(int) -> int {
+    return fn(x: int) -> int { return x + k; };
+  };
+  print(make_adder(100)(23));
+}
+// expect: 3
+// expect: 1
+// expect: 30
+// expect: 60
+// expect: 90
+// expect: 11
+// expect: 123

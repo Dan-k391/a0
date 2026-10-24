@@ -273,6 +273,56 @@ One entry per milestone: what was done, what changed along the way, and open que
 
 - None.
 
+## M8. CI on Linux, macOS and Windows
+
+**Done**
+
+- `.github/workflows/ci.yml` builds the workspace and runs every test on x86-64 Linux, aarch64 Linux,
+  aarch64 macOS and x86-64 Windows, including the native executables each system's linker produces
+  and the Lox suite in all three modes. A separate job runs rustfmt and clippy with warnings as
+  errors. Only GitHub's own actions are used; Rust comes from the runners' rustup.
+- The first run passed everywhere. That settles the M2 question: linking on Linux and macOS, and
+  aarch64 code generation, now run in CI rather than only being validated structurally.
+
+**Changed**
+
+- Found before CI could: the runtime did not compile with MSVC in release builds (`floor`, `ceil` and
+  `log2` are intrinsics at `/O2`), and the test harnesses could hang forever on a collector bug; both
+  are fixed (M6).
+
+**Open questions**
+
+- None. aarch64-windows stays out of scope.
+
+## M9. Static types and a typed example language
+
+**Done**
+
+- `a0_sema::Types` (D21): interned named, array and function types; nominal structs with fields;
+  type variables with unification and an occurs check; `resolve`, `same`, `is_complete`, `display`
+  in source syntax, and `expect`, which reports every mismatch in one form
+  ("mismatched types: expected `int`, found `string`").
+- `examples/minnow` (D22): `int`, `float`, `bool`, `string`, arrays, structs, closures that capture by
+  reference, `for` over arrays, and `print`/`str`/`len`/`push`/`pop`. The checker resolves names and
+  types on `Scopes` and `Types`, infers the element type of `[]` from later uses, and keeps errors
+  from cascading. The emitter produces statically typed HIR (no `any`), and the `minnow` command is
+  an `a0-driver` language. 75 lines of grammar and about 1400 of Rust.
+- Tests: six programs (recursion, higher-order functions, closures in loops, sorting, nested
+  arrays, strings, a tree of structs for GC pressure, an out-of-bounds panic) run interpreted,
+  native and under GC stress; 26 compile errors are checked with their line and column; the emitted
+  HIR round-trips through the HIR text format.
+
+**Changed**
+
+- Nothing below the frontend needed to change for a statically typed language: the HIR already had
+  every construct Minnow uses.
+
+**Open questions**
+
+1. Generics. The toolkit's unification could support let-polymorphism (generalizing at `let`) or
+   explicit generic functions; the HIR has no generics, so they would be monomorphized by the
+   frontend. Which, if either, is wanted?
+
 ## Overall open questions
 
 These need a decision from you:
@@ -280,7 +330,9 @@ These need a decision from you:
 1. **C-bindable APIs** (M1, D2): is the interpretation in D2 the intended line?
 2. **Lox speed on the HIR** (M6): close the remaining gap to the hand-written runtime (an inlining
    hint, interned strings, fixed-arity calls), or leave it until a language needs the speed?
+3. **Generics** (M9): let-polymorphism in the toolkit, explicit generic functions monomorphized by
+   frontends, or neither for now?
 
 Settled since earlier milestones: aarch64-windows is out of scope; the collector lives in `a0rt`
-(D16); linking on x86-64 Linux was verified under WSL (every test, including native executables and
-the Lox suite), and macOS is covered once CI runs.
+(D16); linking on Linux and macOS is tested in CI on every push (M8); a reusable language driver
+exists (M7).
