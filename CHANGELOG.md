@@ -6,6 +6,11 @@ APIs. `docs/milestones.md` has the details of each step, with measurements.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-25
+
+Easy for everyone: a language can be started in minutes, in Rust, in Python or in a grammar alone,
+and tried in a browser with nothing installed. Milestone M20 in `docs/milestones.md`.
+
 ### Added
 
 - **`a0 new <name>`** creates a language project: grammar, compiler, driver, tests of its programs
@@ -24,6 +29,14 @@ APIs. `docs/milestones.md` has the details of each step, with measurements.
   `a0_diagnostics_render` and `a0_hir_text`.
 - The VS Code extension expands `${workspaceFolder}` in commands and their `args` (which replace
   `lsp`), and colors keywords, strings, numbers and comments of every language.
+
+### Changed
+
+- The runtime's structures declare the pointers generated code reads with `A0_WORD_PTR`, 64-bit on
+  every target (unchanged layout on 64-bit hosts); every function in the interpreter's symbol table
+  needs its prototype in `a0rt.h`.
+- The C API's library files are `a0_capi.lib` and `liba0_capi.a`, without a hash, now that the
+  crate is also a shared library.
 
 ## [0.2.0] - 2026-10-25
 
@@ -145,6 +158,7 @@ three example languages, editor support and a C API.
   IR, the HIR, editors and the C API; design decisions and milestone summaries.
 - **CI** on x86-64 and aarch64 Linux, aarch64 macOS and x86-64 Windows, with rustfmt and clippy.
 
-[Unreleased]: https://github.com/Dan-k391/a0/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/Dan-k391/a0/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/Dan-k391/a0/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/Dan-k391/a0/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/Dan-k391/a0/releases/tag/v0.1.0

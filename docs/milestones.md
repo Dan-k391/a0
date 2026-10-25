@@ -748,6 +748,54 @@ One entry per milestone: what was done, what changed along the way, and open que
   and go-to-definition cannot point into it.
 - No default methods, generic interfaces, or `finally`.
 
+## M20. v0.3: easy for everyone
+
+**Done**
+
+- One command creates a working language project (D54): `a0 new mylang` writes a grammar, a
+  compiler to HIR by name, the driver (`run`, `build`, `hir`, `ir`, `lsp`, `explain`), tests of its
+  programs interpreted and native and of its language server, an example, VS Code settings and a
+  README (599 lines in all). `cargo test` passes in the new project; a test builds one and runs
+  its tests on every CI platform, so the template cannot rot.
+- A language with no host code (D55): grammar rules give their nodes HIR forms (`@hir(let)`, or a
+  rule named `function`, `block`, `binary`, ...), `a0_hir::dsl` builds HIR from the tree by those
+  forms, and `a0 lang <grammar> run|build|hir|ir|lsp` runs the language with both backends and a
+  language server. Calc (`examples/calc`, a 54-line grammar) and Lispy (`examples/lispy`, 41
+  lines, the same forms in parentheses) are tested interpreted, native, under GC stress and
+  unoptimized; the VS Code extension starts their server with `args`.
+- Languages in Python (D56, `docs/python.md`): the package `a0` (`bindings/python`, 755 lines)
+  binds the C API with ctypes, from a table of the builders' C signatures that a test checks
+  against `a0.h`, and gives a Python language the driver's commands. Pebble, a typed language with
+  arrays and `for`, has a 233-line compiler in Python; its programs run interpreted and native from
+  `cargo test` on every platform. The C API is also a shared library and gained
+  `a0_diagnostics_render` and `a0_hir_text`.
+- A browser playground (D57, `docs/playground.md`), published from `main` to
+  https://dan-k391.github.io/a0/: a grammar, a program, and their output, syntax tree, HIR and IR,
+  with errors as `a0` renders them; a program that never ends can be stopped, and a link carries
+  the grammar and program. The engine (`crates/a0-playground`) is A0 built for wasm32-wasip1
+  (1.4 MB, 450 KB compressed): the runtime keeps 64-bit slots for the pointers generated code
+  reads and calls C through generated wrappers in WebAssembly, and the page brings its own WASI
+  calls (114 lines). CI builds it with wasi-sdk and tests it with Node.
+
+**Changed**
+
+- Runtime: `A0Type`, `A0Array` and the collector's header declare their pointers with
+  `A0_WORD_PTR` (the layout is unchanged on 64-bit targets); `A0Type.itable` is a `void *`.
+  Every function in the symbol table needs its prototype in `a0rt.h`.
+- The interpreter runs on the calling thread in WebAssembly, where calls nest at most 1000 deep.
+- `a0_driver::lsp::session_with_args` starts a server with other arguments than `lsp`.
+- The C API's library files lost their hash (`a0_capi.lib`, `liba0_capi.a`), since the crate is
+  also a cdylib.
+
+**Open questions**
+
+- A Python language has no language server: the driver is not bound to C (D20); a compile
+  callback would be enough.
+- The playground's engine is built on Linux or macOS only (wasi-sdk for Windows is 600 MB); its
+  WebAssembly is not optimized further (no wasm-opt).
+- The `@hir` forms have numbers as floats only and no types, modules or collections of a
+  language's own; past them a language is a compiler, which `a0 new` starts.
+
 ## Overall open questions
 
 None at the moment.

@@ -135,7 +135,7 @@ By hand:
    exit codes.
 
 A0 is not published on crates.io; depend on it from git (`a0-hir = { git =
-"https://github.com/Dan-k391/a0", tag = "v0.2.0" }`) or work inside this repository.
+"https://github.com/Dan-k391/a0", tag = "v0.3.0" }`) or work inside this repository.
 
 ## Documentation
 
@@ -215,5 +215,6 @@ x86-64 and aarch64 Linux, aarch64 macOS and x86-64 Windows.
 
 ## Status
 
-Version 0.2.0 (`CHANGELOG.md`). Not yet: cross-compiled executables (object files for other
-targets work), wasm, bindings other than C, a debugger, aarch64 Windows. A0 is MIT-licensed.
+Version 0.3.0 (`CHANGELOG.md`). Not yet: cross-compiled executables (object files for other
+targets work), compiling languages to WebAssembly (A0 itself runs there, in the playground), a
+debugger, aarch64 Windows. A0 is MIT-licensed.
