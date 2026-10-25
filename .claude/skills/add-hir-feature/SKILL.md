@@ -40,7 +40,13 @@ identically interpreted, natively and under `A0_GC_STRESS=1`.
 9. Tests:
    - a program in `tests/hir/<name>.hir` with `// expect-stdout:` lines (runs in all six modes:
      interpreted, native, GC stress, each with and without the optimizer);
-   - typing errors in `crates/a0-hir/tests/hir.rs` (`type_errors_are_reported_with_locations`);
+   - typing errors in `crates/a0-hir/tests/hir.rs` (`type_errors_are_reported_with_locations`),
+     each with its code: a new kind of error gets a code and explanation in `a0_diag::codes` and a
+     row in `docs/diagnostics.md`, a short message with a primary label, related labels where an
+     expectation comes from, and `Term`s instead of HIR syntax (build it as a `Problem` in
+     `builder.rs`);
+   - a new runtime failure: its message with the values involved, and a program in `tests/hir`
+     that expects the message and the stack trace;
    - the round-trip test covers the new syntax automatically once a corpus file uses it.
 
 ## Checks that must pass

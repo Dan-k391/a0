@@ -23,8 +23,13 @@ grammar ──a0-syntax──▶ syntax tree ──your compiler──▶ HIR �
   system linker, on Linux (x86-64, aarch64), macOS (aarch64, x86-64) and Windows (x86-64). Same
   output, errors and exit codes, checked on every test program.
 - **A precise garbage collector** and an **optimizer**, on by default, with no work in the frontend.
-- **A command-line driver** (`run`, `build`, `ir`, `hir`) and **a language server** (`lsp`) for
-  diagnostics, highlighting, outline, go-to-definition and hover, with a VS Code extension.
+- **Diagnostics as good as rustc's**, from the builder: codes with explanations, related locations
+  (where an expected type comes from, the earlier declaration), "did you mean" fixes, warnings, in
+  the language's words; and runtime errors with the values involved and a stack trace of source
+  functions, inlined ones included.
+- **A command-line driver** (`run`, `build`, `ir`, `hir`, `explain`) and **a language server**
+  (`lsp`) for diagnostics with quick fixes, highlighting, outline, go-to-definition and hover, with
+  a VS Code extension.
 - **A C API**, for hosts that are not written in Rust: a C program can build HIR with the same
   builder, run it and compile it.
 
@@ -158,8 +163,9 @@ cargo test
 ```
 
 `cargo test` runs everything: every IR, HIR, Kaleidoscope and Minnow program and the Lox suite
-through both backends and under GC stress, optimized and not; the compile-error tests; the language
-servers; the C API from a C program; and the tutorial's listings and commands. CI runs the same on
+through both backends and under GC stress, optimized and not; generated random programs, which must
+agree in all those modes; snapshots of each language's rendered diagnostics and runtime errors; the
+language servers; the C API from a C program; and the tutorial's listings and commands. CI runs the same on
 x86-64 and aarch64 Linux, aarch64 macOS and x86-64 Windows.
 
 ## Status

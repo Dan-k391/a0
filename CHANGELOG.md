@@ -6,6 +6,42 @@ APIs. `docs/milestones.md` has the details of each step, with measurements.
 
 ## [Unreleased]
 
+### Added
+
+- **Runtime errors** report what failed with its values (`index out of bounds: the length is 3 but
+  the index is 3`), then the stack of source-level functions, inlined ones included, identically in
+  the interpreter and native code, optimized or not, at no cost to programs that do not fail.
+- **Diagnostics rendered like rustc's**: related labels in one snippet, multi-line spans, fixes as
+  corrected code, colors on terminals (`NO_COLOR`, `CLICOLOR_FORCE`).
+- **Error codes** with explanations (`lang explain E2001`, `a0 explain`); a language can hide them
+  or map them to its own (`Codes`).
+- **Related locations** in the builder's errors: where an expected type comes from, the earlier
+  declaration, the called function, the variants a `match` misses.
+- **"Did you mean" suggestions** for unknown names, functions, types, fields and variants, as fixes
+  the language server offers as quick fixes; a language reports its own errors with codes, labels,
+  notes and fixes (`report_code` and the `report_*` functions, also in C).
+- **Warnings** a language turns on: unused variables and unreachable code (`enable_warning`).
+- `set_term` lets a language name the concepts messages use; `docs/diagnostics.md`.
+- Snapshot tests of every example language's rendered output (`tests/diagnostics`,
+  `a0_driver::snapshots`), and a random HIR program generator whose programs must agree in all six
+  test modes.
+- An ignored test that reports the Lox suite's compile time with and without the optimizer.
+
+### Changed
+
+- Inlining is bounded by the size of a callee after its own inlining and by how much a function may
+  grow, so chains of helpers compile quickly.
+- Runtime errors print `panic: ...` and a stack trace instead of `a0: panic: ...` and
+  `a0: trap: ...`. Runtime functions that can fail take a location and a frame pointer
+  (`REPORTS_LOCATION`).
+- Every diagnostic has a code (`E1001`, ...) instead of a layer name (`hir.type`); a language's own
+  errors from `report` have none.
+
+### Fixed
+
+- In the HIR text format, a `match` inside an `if let` whose type depended on the binding failed with
+  "match needs an enum".
+
 ## [0.1.0] - 2026-10-24
 
 The first release: a framework for building languages, from a grammar to native executables, with

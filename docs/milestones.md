@@ -600,6 +600,90 @@ One entry per milestone: what was done, what changed along the way, and open que
 
 - None.
 
+## M18. Diagnostics as good as rustc's, at compile time and at run time
+
+**Done**
+
+- Rendering (D39): every label in a file shares one snippet, primary `^^^` and related `---`, with
+  labels that do not fit hanging below on connectors; spans over several lines get a margin track;
+  gaps are elided, other files show under `:::`, long lines are cut around the span; a short fix of
+  the primary span becomes its label, others show as the corrected line. ANSI colors on terminals
+  (`NO_COLOR`, `CLICOLOR_FORCE`), enabled on Windows consoles without a dependency.
+- Codes (D40): 33 errors and 2 warnings in `a0_diag::codes`, numbered by kind and explained by
+  `lang explain` and `a0 explain`; a test keeps `docs/diagnostics.md`'s table in step. A language
+  shows A0's codes, none, or its own (`Codes::Own`).
+- Messages (D41): a short message, a primary label, and related locations from what the builder
+  already knows: the declaration an expected type comes from (variable, parameter, field, result),
+  the first of two declarations, a called function's declaration, the variants a `match` misses.
+  Concepts come from `Term`s (`set_term`), the unit type shows as `()`, an untyped `null` as
+  `null`; nothing says `unit` or `_?`.
+- Suggestions (D42): unknown names, functions, types, fields and variants get the closest declared
+  one; it is a fix where the builder knows the name's span (`set_name_span`, or the current span
+  when it is exactly the name). The language server publishes codes and related information and
+  offers fixes as quick fixes (`textDocument/codeAction`). A language reports its own errors with
+  codes, labels, notes and fixes (`report_code`, `report_label`, ...), also from C.
+- Warnings (D43): unused variables (with a fix that adds `_`) and unreachable code, turned on per
+  language (Minnow: both), found for programs without errors, kept in the module, printed by the
+  driver and shown by the language server.
+- Snapshots (D44): 18 programs in the three languages' `tests/diagnostics` whose full output must
+  match a checked-in file, natively too; reviewing them improved several messages.
+- Runtime errors (D45): the message with its values, then the stack of source functions, inlined
+  ones included, identical in the interpreter and native code, optimized or not:
+
+  ```text
+  panic: index out of bounds: the length is 3 but the index is 3
+      at at (runtime_index.mn:4:10)
+      at last (runtime_index.mn:8:10)
+      at main (runtime_index.mn:14:9)
+  ```
+
+  The IR carries spans, inline sites and trace names; both backends give the runtime the same
+  location table; failing runtime functions take the location and frame pointer; native code walks
+  the frame pointer chain through generated frames using a table from return addresses to calls.
+  Core IR programs get traces too (`at main (trap.a0ir:6:3)`). Native Lox benchmarks run as fast as
+  before (geometric mean ×1.00, interleaved, best of five; the first version was ×1.036 until
+  message formatting left the fast paths), interpreted ones within noise.
+- The optimizer's inlining is bounded (D37): callees first, a callee measured after its own
+  inlining (at most 120 nodes), a body growing to at most 4000 nodes or twice its size. A chain of
+  40 helpers that each call the previous one twice (`tests/hir/inline_chain.hir`) compiles in 0.2 s;
+  before, it did not finish. Compile time of the Lox suite (189 programs that compile, release
+  build, best of three, no linking; `cargo test --release -p lox --test suite compile_time --
+  --ignored --nocapture`):
+
+  | | front end | lowering | Cranelift | total | IR lines |
+  |---|---|---|---|---|---|
+  | `A0_OPT=0` | 0.72 s | 0.21 s | 1.41 s | 2.34 s | 1 045 158 |
+  | optimized | 0.72 s | 0.60 s | 1.86 s | 3.18 s | 1 465 539 |
+
+  The optimizer adds 36% to compile time, a third of it its own work and the rest Cranelift
+  compiling the 40% more IR that inlining makes. The old inliner took the same time on the suite
+  (3.09 s).
+- Random programs (D38): a seeded generator of well-typed, terminating HIR programs (inlined
+  helpers, `any`, closures over assigned locals, loops, recursion, runtime errors), each run in six
+  modes that must agree, stack traces included; 24 per test run, 300 more by hand. Its first run
+  found that the text format typed an `if let` binding only after its body, so a `match` there
+  could not find its enum.
+
+  | Lines (grammar + Rust) | M17 | M18 |
+  |---|---|---|
+  | Kaleidoscope | 579 | 580 (`codes` in its driver) |
+  | Minnow | 762 | 794 (declarations at their names, name spans, codes and labels on its own errors, warnings) |
+  | Lox (with the prelude) | 1675 | 1675 |
+
+**Changed**
+
+- Runtime errors print `panic: <message>` and a trace instead of `a0: panic:` and `a0: trap:`.
+- `HirBuilder::report` gives an error without a code; `report_code` gives one. Declarations are
+  attributed to their names in Minnow and the text format, so labels point at names.
+- Programs with errors get no warnings, as with rustc.
+
+**Open questions**
+
+- Kaleidoscope's own errors (redefinition, operators) have no codes or labels yet; adding them would
+  change the tutorial's listings.
+- A frontend that knows the span of every name could pass it to every by-name call; the span
+  heuristic (D42) has been enough for the three languages.
+
 ## Overall open questions
 
 None at the moment.

@@ -26,21 +26,29 @@ output, and report errors with source locations.
    `a0_hir::HirBuilder` (`docs/hir.md`), or core IR with `a0_ir::Builder` if the language needs
    nothing the HIR offers. Runtime support written in HIR goes in a `prelude.hir` parsed with
    `a0_hir::parse` (see `examples/lox`). Return builder failures as diagnostics, never panic on user
-   input.
+   input. For rustc-quality messages (`docs/diagnostics.md`): `set_span` to the node before building
+   it, attribute declarations to their names, `set_param_span` after `set_signature`,
+   `set_name_span` before a by-name call whose span is not just the name, `set_type_syntax` and
+   `set_term` for the language's words, `enable_warning` for the warnings it wants, and report its
+   own errors with `report_code` (A0's code for the same kind of problem) plus `report_label` for
+   related places.
 4. `examples/foo/runtime/foo.c` (optional) - C support code; export a NULL-terminated
    `const A0Symbol foo_symbols[]` table. `build.rs` calls
    `a0_build::runtime_library("foo_rt", &["runtime/foo.c"])`; `lib.rs` exposes `runtime_library()`
    (for linking) and `host_symbols()` (for the interpreter). See `examples/kaleidoscope`.
 5. `examples/foo/src/main.rs` - an `a0_driver::Language` (name, compile function, exit codes, the
    grammar text for the language server, and for a C runtime its host symbols and libraries) and
-   `.main()`. The driver provides `run`, `build`, `ir`, `hir` and `lsp`, renders diagnostics and maps
-   failures to the exit codes. Do not write a driver by hand. Errors in the language's own format
+   `.main()`. The driver provides `run`, `build`, `ir`, `hir`, `lsp` and `explain`, renders
+   diagnostics (`codes`: A0's, hidden, or the language's own) and maps failures to the exit codes. Do not write a driver by hand. Errors in the language's own format
    (`CompileError::Messages`) carry spans so editors can place them.
 6. `examples/foo/tests/` - programs with expected output, run both interpreted and as native
    executables (copy the harness in `examples/kaleidoscope/tests/kaleidoscope.rs`), plus
-   diagnostic tests that check message text and `file:line:col`, and `tests/lsp.rs`, which runs
+   diagnostic tests that check message text and `file:line:col`, `tests/diagnostics/` with
+   snapshots of full rendered output (compile errors, warnings, runtime errors; copy
+   `examples/minnow/tests/diagnostics.rs`, bless with `A0_BLESS=1`), and `tests/lsp.rs`, which runs
    the language server on a small program with `a0_driver::lsp::session` (copy
-   `examples/minnow/tests/lsp.rs`) and checks the outline, a definition, a hover and a diagnostic.
+   `examples/minnow/tests/lsp.rs`) and checks the outline, a definition, a hover, a diagnostic and a
+   quick fix.
 7. `examples/foo/README.md` - what the language is, the file map, deliberate differences.
 
 ## Files to update
