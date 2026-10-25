@@ -395,6 +395,17 @@ impl Term {
     }
 }
 
+/// Warnings a language can turn on ([`crate::HirBuilder::enable_warning`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[repr(u32)]
+pub enum Warning {
+    /// A variable whose value is never read. Names that start with `_` are exempt, and so are
+    /// parameters.
+    UnusedVariable,
+    /// Code after a `return`, `break`, `continue` or anything else that never finishes.
+    UnreachableCode,
+}
+
 /// Something a module-level name refers to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Item {
@@ -426,6 +437,8 @@ pub struct HirModule {
     pub(crate) type_syntax: Vec<(TypeTag, String)>,
     /// What diagnostics call some concepts, in the language's own words.
     pub(crate) terms: Vec<(Term, String)>,
+    /// The warnings found when the module was finished.
+    pub(crate) warnings: a0_diag::Diagnostics,
     /// Casts out of `any` that the optimizer proved cannot fail (an `is` test of the same value
     /// guards them); lowering skips their check.
     pub(crate) unchecked_casts: HashSet<ExprId>,
@@ -453,6 +466,7 @@ impl HirModule {
             vars: Vec::new(),
             type_syntax: Vec::new(),
             terms: Vec::new(),
+            warnings: a0_diag::Diagnostics::new(),
             unchecked_casts: HashSet::new(),
             items: Vec::new(),
             type_names: HashMap::new(),
@@ -504,6 +518,12 @@ impl HirModule {
     }
 
     // ---------------------------------------------------------------- public read API
+
+    /// The warnings the builder found (those the language turned on); a driver shows them
+    /// before running the program.
+    pub fn warnings(&self) -> &a0_diag::Diagnostics {
+        &self.warnings
+    }
 
     pub fn name(&self) -> &str {
         &self.name

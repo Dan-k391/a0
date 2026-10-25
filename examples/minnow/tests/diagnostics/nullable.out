@@ -1,0 +1,18 @@
+$ minnow run nullable.mn
+--- stderr
+error[E2007]: this value of type `Node?` may be `null`
+ --> nullable.mn:5:12
+  |
+5 |   return n.next.value;
+  |            ^^^^ may be `null`
+  |
+  = help: check that it is not `null` with `if let`, or unwrap it with `!`
+
+error[E2006]: `int` is not nullable
+  --> nullable.mn:10:18
+   |
+10 |   let v: int = n.value!;
+   |                  ^^^^^ cannot be `null`
+   |
+   = help: remove the `!`
+--- exit 1

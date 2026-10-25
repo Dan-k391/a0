@@ -1,0 +1,5 @@
+$ lox run runtime_error.lox
+--- stderr
+Operands must be two numbers or two strings.
+[line 2]
+--- exit 70

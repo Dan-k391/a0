@@ -1,0 +1,4 @@
+$ lox run compile_error.lox
+--- stderr
+[line 3] Error at '=': Expect expression.
+--- exit 65

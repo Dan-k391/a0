@@ -1,0 +1,10 @@
+$ kaleidoscope run arguments.k
+--- stderr
+error[E2002]: this function takes 2 arguments but 1 argument was supplied
+ --> arguments.k:3:1
+  |
+2 | def add(a b) a + b;
+  |     -------- declared here
+3 | add(1);
+  | ^^^^^^ expected 2 arguments
+--- exit 1

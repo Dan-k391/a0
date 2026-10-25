@@ -473,10 +473,19 @@ impl Server<'_> {
                 ("message", message.into()),
             ])
         };
-        match compiled {
-            Ok(Ok(Program::Hir(m))) => hir = Some(m),
-            Ok(Ok(Program::Ir(_))) => {}
-            Ok(Err(CompileError::Diagnostics(ds))) => {
+        let (ds, messages) = match compiled {
+            Ok(Ok(Program::Hir(m))) => {
+                let warnings = m.warnings().clone();
+                hir = Some(m);
+                (Some(warnings), None)
+            }
+            Ok(Ok(Program::Ir(_))) => (None, None),
+            Ok(Err(CompileError::Diagnostics(ds))) => (Some(ds), None),
+            Ok(Err(CompileError::Messages(ms))) => (None, Some(Ok(ms))),
+            Err(panic) => (None, Some(Err(panic))),
+        };
+        if let Some(ds) = ds {
+            {
                 for d in self.lang.codes.apply(&ds).as_slice() {
                     let span = match d.span {
                         Some(s) if s.source == source => Some((s.start, s.end)),
@@ -521,12 +530,15 @@ impl Server<'_> {
                     diagnostics.push(json);
                 }
             }
-            Ok(Err(CompileError::Messages(ms))) => {
+        }
+        match messages {
+            None => {}
+            Some(Ok(ms)) => {
                 for m in ms {
                     diagnostics.push(diagnostic(m.span.map(|s| (s.start, s.end)), 1, &m.text));
                 }
             }
-            Err(panic) => {
+            Some(Err(panic)) => {
                 let what = panic
                     .downcast_ref::<String>()
                     .map(String::as_str)

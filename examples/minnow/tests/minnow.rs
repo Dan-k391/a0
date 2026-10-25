@@ -250,7 +250,7 @@ fn compile_errors_are_reported_with_locations() {
         ),
         (
             "fn main() { let a = 1; let a = 2; }",
-            "1:28: `a` is already defined in this scope: defined again here",
+            "1:28: `a` is already declared in this scope: declared again here",
         ),
         (
             "fn main() { let n = \"a\" as int; }",
@@ -335,7 +335,7 @@ fn compile_errors_are_reported_with_locations() {
         ),
         (
             "enum E { A } fn main() { let e = E::Z; }",
-            "1:34: `E` has no variant `Z`",
+            "1:37: `E` has no variant `Z`",
         ),
     ];
     let mut failures = Vec::new();

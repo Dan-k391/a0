@@ -1,0 +1,5 @@
+$ lox run undefined.lox
+--- stderr
+Undefined variable 'missing'.
+[line 2]
+--- exit 70

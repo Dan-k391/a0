@@ -167,7 +167,13 @@ mod tests {
         let docs = std::fs::read_to_string(path).unwrap();
         let rows: Vec<String> = docs
             .lines()
-            .filter(|l| l.starts_with("| E") || l.starts_with("| W"))
+            .filter(|l| {
+                // Rows of the table of codes: `| E2001 | ...` or `| W0001 | ...`.
+                let code = l.get(2..7).unwrap_or("");
+                l.starts_with("| ")
+                    && code.starts_with(['E', 'W'])
+                    && code[1..].bytes().all(|b| b.is_ascii_digit())
+            })
             .map(str::to_string)
             .collect();
         let want: Vec<String> = ALL

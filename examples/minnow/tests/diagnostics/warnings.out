@@ -1,0 +1,19 @@
+$ minnow run warnings.mn
+--- stdout
+42
+--- stderr
+warning[W0001]: unused variable: `doubled`
+ --> warnings.mn:3:7
+  |
+3 |   let doubled = n * 2;
+  |       ^^^^^^^ help: if this is intentional, start its name with an underscore: `_doubled`
+
+warning[W0002]: unreachable code
+ --> warnings.mn:5:3
+  |
+4 |   return n;
+  |   --------- any code following this expression is unreachable
+5 |   print("never");
+  |   ^^^^^^^^^^^^^^ unreachable
+
+--- exit 0

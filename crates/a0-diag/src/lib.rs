@@ -238,6 +238,14 @@ impl Diagnostic {
         self
     }
 
+    /// Points at a related location, if there is one.
+    pub fn with_label_opt(self, span: Option<Span>, message: &str) -> Diagnostic {
+        match span {
+            Some(s) => self.with_label(s, message),
+            None => self,
+        }
+    }
+
     /// Points at a related location.
     pub fn with_label(mut self, span: Span, message: &str) -> Diagnostic {
         self.labels.push(Label {

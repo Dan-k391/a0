@@ -1,0 +1,3 @@
+// Lox reports compile errors in jlox's format.
+var a = 1;
+a + = 2;

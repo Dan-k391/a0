@@ -184,6 +184,9 @@ A0Hir *a0_hir_parse(const char *text, size_t len, A0Diagnostics **diags);
 /* Lowers (and optimizes) a HIR module with a `main` to core IR. */
 A0Module *a0_hir_lower(const A0Hir *h, A0Diagnostics **diags);
 void a0_hir_free(A0Hir *h);
+/* Sets *warnings to the warnings found when the module was built (a0_hir_enable_warning), or to
+ * NULL if there are none. */
+void a0_hir_warnings(const A0Hir *h, A0Diagnostics **warnings);
 
 /* ---- Building HIR (docs/hir.md, "Building HIR from a frontend") --------------------------- *
  *
@@ -252,6 +255,9 @@ void a0_hir_set_type_syntax(A0HirBuilder *b, const char *tag, size_t tag_len, co
  * and continue. */
 void a0_hir_set_term(A0HirBuilder *b, const char *term, size_t term_len, const char *text,
                      size_t text_len);
+/* Turns a warning on: "unused_variable" or "unreachable_code". A finished module's warnings are
+ * read with a0_hir_warnings. */
+void a0_hir_enable_warning(A0HirBuilder *b, const char *warning, size_t len);
 /* Where the name is in the next node built by name, so that a misspelled name gets a fix. */
 void a0_hir_set_name_span(A0HirBuilder *b, uint32_t start, uint32_t end);
 /* Where parameter `index` of `body` is declared, for messages about arguments. */

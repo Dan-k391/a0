@@ -24,6 +24,7 @@
 
 pub mod json;
 pub mod lsp;
+pub mod snapshots;
 
 use std::io::{BufRead, Write};
 use std::path::Path;
@@ -234,6 +235,13 @@ impl Language {
                 return ExitCode::from(self.exit_codes.compile);
             }
         };
+        if let Program::Hir(m) = &program
+            && !m.warnings().is_empty()
+        {
+            let w = self.codes.apply(m.warnings());
+            eprint!("{}", w.render_with(&sources, &RenderOptions::stderr()));
+            eprintln!();
+        }
         let module = match program {
             Program::Hir(m) if inv.command == Command::Hir => {
                 print!("{m}");

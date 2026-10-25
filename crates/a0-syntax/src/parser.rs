@@ -8,6 +8,7 @@
 
 use std::sync::Arc;
 
+use a0_diag::codes as code;
 use a0_diag::{Diagnostic, Diagnostics, SourceId, Span};
 
 use crate::grammar::{Assoc, Expr, ExprId, FieldId, Grammar, KindId, LexAction, RuleId};
@@ -54,7 +55,7 @@ impl Grammar {
                             }
                         }
                         LexAction::Error(msg) => diags.push(
-                            Diagnostic::error("syntax.lexical", msg)
+                            Diagnostic::error(code::INVALID_TOKEN, msg)
                                 .with_span(Span::new(source, pos as u32, end as u32)),
                         ),
                     }
@@ -63,7 +64,7 @@ impl Grammar {
                 None => {
                     let len = text[pos..].chars().next().map(char::len_utf8).unwrap_or(1);
                     diags.push(
-                        Diagnostic::error("syntax.lexical", &self.unknown_message)
+                        Diagnostic::error(code::INVALID_TOKEN, &self.unknown_message)
                             .with_span(Span::new(source, pos as u32, (pos + len) as u32)),
                     );
                     pos += len;
@@ -277,7 +278,7 @@ impl<'g> Parser<'g> {
             format!("'{}'", &self.text[tok.start as usize..tok.end as usize])
         };
         let diag = match self.expected.iter().find_map(|e| e.message) {
-            Some(m) => Diagnostic::error("syntax.error", m),
+            Some(m) => Diagnostic::error(code::SYNTAX, m),
             None => {
                 let mut labels: Vec<String> = Vec::new();
                 for e in &self.expected {
@@ -296,7 +297,7 @@ impl<'g> Parser<'g> {
                         format!("expected {} or {last}, found {found}", labels.join(", "))
                     }
                 };
-                Diagnostic::error("syntax.expected", &msg)
+                Diagnostic::error(code::SYNTAX, &msg)
             }
         };
         self.diags.push(diag.with_span(span));

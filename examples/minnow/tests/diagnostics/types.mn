@@ -1,0 +1,10 @@
+// A value of the wrong type points at where the expected type comes from.
+fn scale(factor: int, label: string) -> int {
+  return factor * len(label);
+}
+
+fn main() {
+  let count: int = "three";
+  print(scale(2, 3));
+  print(scale(1));
+}

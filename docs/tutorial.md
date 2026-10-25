@@ -164,7 +164,7 @@ $ a0 parse kaleidoscope.a0g add.k
 (program (external 'extern' proto=(prototype name='printd' '(' params=(params param='x') ')')) ';' (definition 'def' proto=(prototype name='add' '(' params=(params param='a' param='b') ')') body=(expr operand=(variable 'a') op='+' operand=(variable 'b'))) ';' (toplevel expr=(expr operand=(call callee='printd' '(' args=(args arg=(expr operand=(call callee='add' '(' args=(args arg=(expr operand=(number '1')) ',' arg=(expr operand=(number '2'))) ')') op='*' operand=(number '3'))) ')'))) ';')
 $ a0 parse kaleidoscope.a0g broken.k
 (program (error 'def' 'add' '(' 'a' 'b' 'a' '+' 'b' ';'))
-error[syntax.error]: expected ')' in prototype
+error[E0001]: expected ')' in prototype
  --> broken.k:1:15
   |
 1 | def add(a b a + b;

@@ -177,11 +177,12 @@ impl HirBuilder {
         let p = match similar_name(name, candidates) {
             Some(close) => {
                 let kind = self.kind_of_name(&close);
-                p.similar(&kind, Some(close))
+                p.similar(&kind, name, Some(close))
             }
             None => p.label("not found in this scope"),
         };
-        self.diags.push(p.diagnostic(self.span, span));
+        // At the name itself when the frontend said where it is (a call's callee).
+        self.diags.push(p.diagnostic(span.or(self.span), span));
     }
 
     /// What a name in scope is, as in "a variable".
@@ -445,7 +446,11 @@ impl HirBuilder {
                     )
                     .label(format!("unknown {field}"))
                     .at(decl, format!("`{sname}` declared here"))
-                    .similar(&format!("a {field}"), similar_name(name, &fields));
+                    .similar(
+                        &format!("a {field}"),
+                        name,
+                        similar_name(name, &fields),
+                    );
                     self.problem(&p);
                     ok = false;
                 }
@@ -532,8 +537,8 @@ impl HirBuilder {
             "the {variant}s of `{ename}` are {}",
             list.join(", ")
         ))
-        .similar(&format!("a {variant}"), similar_name(name, &names));
-        self.diags.push(p.diagnostic(self.span, span));
+        .similar(&format!("a {variant}"), name, similar_name(name, &names));
+        self.diags.push(p.diagnostic(span.or(self.span), span));
     }
 
     /// How diagnostics write types of this kind, in the language's syntax: `{}` stands for the

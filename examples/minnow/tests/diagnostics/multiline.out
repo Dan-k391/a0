@@ -1,0 +1,15 @@
+$ minnow run multiline.mn
+--- stderr
+error[E1007]: missing field `debug` in `Config`
+ --> multiline.mn:5:11
+  |
+2 |   struct Config { name: string, size: int, debug: bool }
+  |          ------ `Config` declared here
+...
+5 |     let c = new Config {
+  |  ___________^
+6 | |     name: "demo",
+7 | |     size: 3,
+8 | |   };
+  | |___^ missing `debug`
+--- exit 1

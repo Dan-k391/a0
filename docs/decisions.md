@@ -465,3 +465,26 @@ the current span when it is exactly as long as the name, or one the frontend giv
 `set_name_span`; otherwise it is a help line. A heuristic on spans, rather than requiring every
 by-name call to take a name span, keeps the by-name API unchanged and is right for every frontend
 that attributes a name node to its name, which is what the example languages do.
+
+## D43. Warnings are opt-in per language and wait for a program without errors
+
+What deserves a warning depends on the language: Lox's output is prescribed by the book's suite,
+and a scripting language may want unused variables. So the builder finds warnings only when a
+language turns them on (`enable_warning`), starting with the two most useful and least
+controversial: unused variables (not parameters, not names starting with `_`, which callbacks and
+intentional discards use) and unreachable code (once per block, pointing at what diverged). They
+are found at `finish` and only for a program without errors, as rustc does, since an error makes
+code look unused (a misspelled name leaves the real one unread). A finished module carries its
+warnings, so the driver can print them before running or building, the language server can show
+them, and a C host can read them, without changing what `finish` returns.
+
+## D44. Rendered diagnostics are snapshot-tested per language
+
+Substring checks of messages say nothing about what a user sees: labels, snippets, alignment,
+fixes. Each example language has `tests/diagnostics/` with programs and a `.out` file holding
+exactly what `lang run` prints (stdout, stderr, exit status), checked by
+`a0_driver::snapshots::check`, which also builds each program that compiles and requires the
+executable to print what the interpreter printed. Programs run with their directory as the working
+directory, so paths in diagnostics are as written. `A0_BLESS=1` rewrites the files, as the tutorial
+test does; the diff is the review. The helper lives in the driver, beside `lsp::session`, because
+every language's tests use it.

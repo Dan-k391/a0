@@ -118,6 +118,28 @@ The builder needs to know where things are. A frontend that does these gets ever
 The C API binds all of these (`a0_hir_set_name_span`, `a0_hir_set_term`, `a0_hir_report_code`, ...)
 and `a0_diagnostics_code` reads a diagnostic's code.
 
+## Warnings
+
+A language turns warnings on with `enable_warning`; none is on by default, since what is worth a
+warning depends on the language (Minnow turns both on; Lox, whose output the book prescribes, none).
+
+| Warning | Code | What it finds |
+|---|---|---|
+| `Warning::UnusedVariable` | W0001 | a variable whose value is never read; parameters and names that start with `_` are exempt, and the fix prefixes the name with `_` |
+| `Warning::UnreachableCode` | W0002 | code after something that never finishes (`return`, `break`, `continue`, a call that never returns), once per block, pointing at what made it unreachable |
+
+Warnings are found when a module without errors is finished, as rustc does: an error often makes
+code look unused. The module keeps them (`HirModule::warnings`); the driver prints them before it
+runs or builds the program, and the language server shows them. `a0_hir_enable_warning` and
+`a0_hir_warnings` do the same from C.
+
+## Snapshots
+
+Each example language has `tests/diagnostics/`: programs with errors, warnings and runtime errors,
+and next to each a `.out` file with exactly what `lang run` prints, diagnostics rendered in full
+(`a0_driver::snapshots::check`). Programs that compile are also built natively, and the executable
+must print what the interpreter prints. `A0_BLESS=1` rewrites the `.out` files; read the diff.
+
 ## In editors
 
 The language server publishes each diagnostic with its code, its message, primary label, notes and

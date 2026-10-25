@@ -1,0 +1,8 @@
+$ kaleidoscope run syntax.k
+--- stderr
+error[E0001]: expected ')'
+ --> syntax.k:2:16
+  |
+2 | def f(x) (x + 1;
+  |                ^
+--- exit 1

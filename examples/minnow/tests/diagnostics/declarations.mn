@@ -1,0 +1,15 @@
+// A second declaration points at the first.
+fn area() -> int { return 1; }
+
+struct Shape {
+  width: int,
+  width: int,
+}
+
+fn area() -> int { return 2; }
+
+fn main() {
+  let n = 1;
+  let n = 2;
+  print(n);
+}

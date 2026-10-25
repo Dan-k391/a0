@@ -25,8 +25,9 @@ pub(crate) struct Problem {
     pub labels: Vec<(Option<Span>, String)>,
     pub notes: Vec<String>,
     pub helps: Vec<String>,
-    /// A declared name close to a misspelled one: what it is ("a field") and the name.
-    pub similar: Option<(String, String)>,
+    /// A declared name close to a misspelled one: what it is ("a field"), the name, and the
+    /// misspelled name.
+    pub similar: Option<(String, String, String)>,
 }
 
 impl Problem {
@@ -70,13 +71,19 @@ impl Problem {
         self
     }
 
-    /// Suggests `name`, a declared `what` ("a field") close to the misspelled one, if there is one.
-    pub(crate) fn similar(mut self: Box<Self>, what: &str, name: Option<String>) -> Box<Self> {
-        self.similar = name.map(|n| (what.to_string(), n));
+    /// Suggests `name`, a declared `what` ("a field") close to `misspelled`, if there is one.
+    pub(crate) fn similar(
+        mut self: Box<Self>,
+        what: &str,
+        misspelled: &str,
+        name: Option<String>,
+    ) -> Box<Self> {
+        self.similar = name.map(|n| (what.to_string(), n, misspelled.to_string()));
         self
     }
 
-    /// The diagnostic, at `span`; `name` is where the misspelled name is, for a suggested fix.
+    /// The diagnostic, at `span`; `name` is where the misspelled name is, for a suggested fix (when
+    /// it is not given, `span` if it is exactly as long as the name).
     pub(crate) fn diagnostic(&self, span: Option<Span>, name: Option<Span>) -> Diagnostic {
         let mut d = Diagnostic::error(self.code, &self.message)
             .with_span_opt(span)
@@ -92,8 +99,9 @@ impl Problem {
         for h in &self.helps {
             d = d.with_help(h);
         }
-        if let Some((what, n)) = &self.similar {
+        if let Some((what, n, misspelled)) = &self.similar {
             let message = format!("{what} with a similar name exists");
+            let name = name.or(span.filter(|s| s.len() as usize == misspelled.len()));
             d = match name {
                 Some(at) => d.with_fix(&message, at, n),
                 None => d.with_help(&format!("{message}: `{n}`")),
@@ -190,6 +198,8 @@ pub struct HirBuilder {
     name_spans: HashMap<ExprId, Span>,
     /// Nodes whose typing rule needed a type that was still open, with their hints.
     deferred: Vec<(ExprId, TypeId)>,
+    /// The warnings the language turned on.
+    warnings: Vec<Warning>,
     // State of the name-based helpers in `frontend.rs`.
     /// Locals by name.
     pub(crate) names: Scopes,
@@ -215,6 +225,7 @@ impl HirBuilder {
             name_span: None,
             name_spans: HashMap::new(),
             deferred: Vec::new(),
+            warnings: Vec::new(),
             names: Scopes::new(),
             shadow_scopes: Vec::new(),
             body_stack: Vec::new(),
@@ -261,6 +272,14 @@ impl HirBuilder {
         self.problem(&Problem::new("hir.builder", message));
     }
 
+    /// Turns a warning on. Warnings are found when a module without errors is finished, and kept in
+    /// it ([`HirModule::warnings`]).
+    pub fn enable_warning(&mut self, warning: Warning) {
+        if !self.warnings.contains(&warning) {
+            self.warnings.push(warning);
+        }
+    }
+
     /// What diagnostics call `term`, in the language's words.
     pub fn set_term(&mut self, term: Term, text: &str) {
         self.m.terms.retain(|(t, _)| *t != term);
@@ -281,6 +300,7 @@ impl HirBuilder {
         self.report_unresolved();
         self.resolve_all();
         self.report_value_nullables();
+        let warnings = self.find_warnings();
         let mut diags = self.diags;
         diags.extend(check(&mut self.m));
         // Each combination of type arguments the program uses must make valid types.
@@ -289,11 +309,90 @@ impl HirBuilder {
         {
             diags.extend(d);
         }
+        // As rustc does, warnings wait until the program has no errors: an error often makes code
+        // look unused or unreachable.
         if diags.has_errors() {
             Err(diags)
         } else {
+            self.m.warnings = warnings;
             Ok(self.m)
         }
+    }
+
+    fn find_warnings(&self) -> Diagnostics {
+        let mut out = Diagnostics::new();
+        if self.warnings.contains(&Warning::UnusedVariable) {
+            self.unused_variables(&mut out);
+        }
+        if self.warnings.contains(&Warning::UnreachableCode) {
+            for body in &self.m.bodies {
+                if let Some(root) = body.root {
+                    self.unreachable(root, &mut out);
+                }
+            }
+        }
+        out
+    }
+
+    /// Locals whose value nothing reads; parameters and names starting with `_` are left alone.
+    fn unused_variables(&self, out: &mut Diagnostics) {
+        let m = &self.m;
+        let mut read = vec![false; m.locals.len()];
+        for e in &m.exprs {
+            if let ExprKind::Local(l) = e.kind {
+                read[l.index()] = true;
+            }
+        }
+        let params: HashSet<LocalId> = m.bodies.iter().flat_map(|b| b.params.clone()).collect();
+        for (i, local) in m.locals.iter().enumerate() {
+            let name = &local.source_name;
+            if read[i] || params.contains(&LocalId(i as u32)) || name.starts_with('_') {
+                continue;
+            }
+            let Some(span) = local.span else {
+                continue;
+            };
+            let message = format!("unused {}: `{name}`", m.term(Term::Variable));
+            let mut d = Diagnostic::warning(code::UNUSED_VARIABLE, &message).with_span(span);
+            let help = "if this is intentional, start its name with an underscore";
+            d = if span.len() as usize == name.len() {
+                d.with_fix(help, span, &format!("_{name}"))
+            } else {
+                d.with_help(&format!("{help}: `_{name}`"))
+            };
+            out.push(d);
+        }
+    }
+
+    /// Code after something that never finishes, once per block and not inside code already
+    /// reported.
+    fn unreachable(&self, e: ExprId, out: &mut Diagnostics) {
+        let m = &self.m;
+        if let ExprKind::Block(items, tail) = &m.exprs[e.index()].kind {
+            let rest: Vec<ExprId> = items.iter().copied().chain(*tail).collect();
+            for (i, &item) in rest.iter().enumerate() {
+                self.unreachable(item, out);
+                let Some(&next) = rest.get(i + 1) else {
+                    break;
+                };
+                if m.exprs[item.index()].ty != TypeId::NEVER {
+                    continue;
+                }
+                if let Some(span) = m.exprs[next.index()].span {
+                    let d = Diagnostic::warning(code::UNREACHABLE, "unreachable code")
+                        .with_span(span)
+                        .with_primary_label("unreachable")
+                        .with_label_opt(
+                            m.exprs[item.index()].span,
+                            "any code following this expression is unreachable",
+                        );
+                    out.push(d);
+                }
+                return;
+            }
+            return;
+        }
+        visit_children(m, e, &mut |c| self.unreachable(c, out));
     }
 
     /// Types the deferred nodes again until no more can be typed.
@@ -1806,7 +1905,11 @@ fn named_field(m: &HirModule, object: ExprId, name: &str) -> Result<u32, TypeErr
                     format!("no {field} `{name}` on type {}", m.quote_type(ot)),
                 )
                 .label(format!("unknown {field}"))
-                .similar(&format!("a {field}"), a0_diag::similar_name(name, &fields));
+                .similar(
+                    &format!("a {field}"),
+                    name,
+                    a0_diag::similar_name(name, &fields),
+                );
                 if !fields.is_empty() {
                     let list: Vec<String> = fields.iter().map(|f| format!("`{f}`")).collect();
                     p = p.note(format!(

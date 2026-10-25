@@ -464,3 +464,35 @@ fn casts_guarded_by_a_type_test_are_not_checked_again() {
     let optimized = get_of(&assigned, true);
     assert!(optimized.contains("a0_any_cast_failed"), "{optimized}");
 }
+
+#[test]
+fn warnings_are_found_only_when_turned_on() {
+    let text = "module \"m\";\nfn f(unused_param: int) -> int {\n  let x = 1;\n  let _quiet = 2;\n  return 3;\n  4\n}\nfn main() -> int { f(0) }\n";
+    let finish = |warnings: &[Warning]| {
+        let mut b = HirBuilder::from_module(parse_ok(text));
+        for &w in warnings {
+            b.enable_warning(w);
+        }
+        let m = b.finish().unwrap();
+        m.warnings()
+            .as_slice()
+            .iter()
+            .map(|d| format!("{} {}", d.code, d.message))
+            .collect::<Vec<_>>()
+    };
+    assert!(finish(&[]).is_empty());
+    assert_eq!(
+        finish(&[Warning::UnusedVariable]),
+        ["W0001 unused variable: `x`"]
+    );
+    assert_eq!(
+        finish(&[Warning::UnreachableCode]),
+        ["W0002 unreachable code"]
+    );
+    // A program with errors shows only its errors.
+    let mut b = HirBuilder::from_module(parse_ok(text));
+    b.enable_warning(Warning::UnusedVariable);
+    b.report("an error of the language's own");
+    let errors = b.finish().unwrap_err();
+    assert!(errors.as_slice().iter().all(|d| d.is_error()), "{errors:?}");
+}

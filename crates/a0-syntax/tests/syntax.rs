@@ -33,7 +33,7 @@ fn jlox_errors(g: &Grammar, source: &str) -> Vec<String> {
         .iter()
         .map(|d| {
             let span = d.span.unwrap();
-            if d.code == "syntax.lexical" {
+            if d.code == a0_diag::codes::INVALID_TOKEN {
                 format!("[line {}] Error: {}", sm.line(id, span.end), d.message)
             } else if span.start as usize == source.len() {
                 format!(

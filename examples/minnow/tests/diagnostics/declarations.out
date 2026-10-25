@@ -1,0 +1,27 @@
+$ minnow run declarations.mn
+--- stderr
+error[E1005]: the field `width` of `Shape` is declared twice
+ --> declarations.mn:6:3
+  |
+5 |   width: int,
+  |   ----- first declared here
+6 |   width: int,
+  |   ^^^^^ declared again here
+
+error[E1005]: `area` is declared twice
+ --> declarations.mn:9:4
+  |
+2 | fn area() -> int { return 1; }
+  |    ---- first declared here
+...
+9 | fn area() -> int { return 2; }
+  |    ^^^^ declared again here
+
+error[E1005]: `n` is already declared in this scope
+  --> declarations.mn:13:7
+   |
+12 |   let n = 1;
+   |       - first declared here
+13 |   let n = 2;
+   |       ^ declared again here
+--- exit 1

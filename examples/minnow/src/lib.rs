@@ -23,6 +23,7 @@ use a0_diag::codes as code;
 use a0_diag::{Diagnostics, SourceId};
 use a0_hir::{
     BinOp, BodyId, Builtin, ExprId, HirBuilder, HirModule, Item, LocalId, TypeId, TypeTag, UnOp,
+    Warning,
 };
 use a0_syntax::{Grammar, NodeId, SyntaxTree};
 
@@ -48,6 +49,8 @@ pub fn compile(text: &str, source: SourceId) -> Result<HirModule, Diagnostics> {
         b: HirBuilder::new("minnow"),
     };
     c.b.set_type_syntax(TypeTag::Array, "[{}]");
+    c.b.enable_warning(Warning::UnusedVariable);
+    c.b.enable_warning(Warning::UnreachableCode);
     c.program();
     let m = c.b.finish()?;
     let entry = a0_hir::check_entry(&m);
@@ -280,12 +283,12 @@ impl<'a> Compiler<'a> {
                 let name = self.field(node, "name");
                 self.at(name);
                 if self.b.is_declared_in_scope(self.text(name)) {
-                    let msg = format!("`{}` is already defined in this scope", self.text(name));
+                    let msg = format!("`{}` is already declared in this scope", self.text(name));
                     self.b.report_code(code::DUPLICATE, &msg);
-                    self.b.report_primary_label("defined again here");
+                    self.b.report_primary_label("declared again here");
                     let first = self.b.lookup_local(self.text(name));
                     if let Some(span) = first.and_then(|l| self.b.module().local_span(l)) {
-                        self.b.report_label(span, "first defined here");
+                        self.b.report_label(span, "first declared here");
                     }
                 }
                 self.b.let_named(self.text(name), ty, value)

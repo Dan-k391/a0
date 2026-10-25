@@ -1,0 +1,32 @@
+$ minnow run names.mn
+--- stderr
+error[E1003]: no field `yy` on type `Point`
+ --> names.mn:5:18
+  |
+5 |   return p.x + p.yy;
+  |                  ^^ unknown field
+  |
+  = note: the fields of `Point` are `x`, `y`
+help: a field with a similar name exists
+  |
+5 |   return p.x + p.y;
+  |                  ~
+
+error[E1001]: unknown name `totl`
+  --> names.mn:10:9
+   |
+10 |   print(totl);
+   |         ^^^^ help: a variable with a similar name exists: `total`
+
+error[E1001]: unknown function `distanse`
+  --> names.mn:11:9
+   |
+11 |   print(distanse(new Point { x: 1, y: 2 }));
+   |         ^^^^^^^^ help: a function with a similar name exists: `distance`
+
+error[E1002]: unknown type `Pont`
+  --> names.mn:12:10
+   |
+12 |   let q: Pont = new Point { x: 0, y: 0 };
+   |          ^^^^ help: a struct with a similar name exists: `Point`
+--- exit 1

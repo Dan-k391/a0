@@ -985,3 +985,10 @@ pub unsafe extern "C" fn a0_hir_lower(
 pub unsafe extern "C" fn a0_hir_free(h: *mut A0Hir) {
     unsafe { free(h) }
 }
+
+/// Sets `*warnings` to the module's warnings, or to NULL if it has none.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn a0_hir_warnings(h: *const A0Hir, warnings: *mut *mut A0Diagnostics) {
+    let found = unsafe { h.as_ref() }.map(|h| h.0.warnings().clone());
+    unsafe { report(warnings, found.filter(|w| !w.is_empty())) }
+}

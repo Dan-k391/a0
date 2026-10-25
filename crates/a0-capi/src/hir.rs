@@ -11,7 +11,7 @@ use std::ptr;
 use a0_diag::{Diagnostic, Diagnostics, Span};
 use a0_hir::{
     ArmId, BinOp, BodyId, Builtin, EnumId, ExprId, ExternId, FuncId, GlobalId, HirBuilder, Item,
-    LocalId, StructId, Term, TypeId, TypeTag, UnOp,
+    LocalId, StructId, Term, TypeId, TypeTag, UnOp, Warning,
 };
 
 use crate::{A0Diagnostics, A0Hir, NONE, SOURCE, error, free, give, items, report, text};
@@ -457,6 +457,29 @@ pub unsafe extern "C" fn a0_hir_set_term(
                 }
             };
             h.b.set_term(term, &words);
+            Some(())
+        })
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn a0_hir_enable_warning(
+    b: *mut A0HirBuilder,
+    warning: *const c_char,
+    len: usize,
+) {
+    let warning = unsafe { text(warning, len) };
+    unsafe {
+        with_unit(b, |h| {
+            let w = match warning.as_ref() {
+                "unused_variable" => Warning::UnusedVariable,
+                "unreachable_code" => Warning::UnreachableCode,
+                other => {
+                    h.fail(format!("'{other}' is not a warning"));
+                    return None;
+                }
+            };
+            h.b.enable_warning(w);
             Some(())
         })
     }

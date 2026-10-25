@@ -1,0 +1,8 @@
+$ kaleidoscope run undefined.k
+--- stderr
+error[E1001]: unknown name `heigth`
+ --> undefined.k:2:32
+  |
+2 | def area(width height) width * heigth;
+  |                                ^^^^^^ help: a variable with a similar name exists: `height`
+--- exit 1

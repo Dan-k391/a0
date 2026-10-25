@@ -1,0 +1,8 @@
+$ minnow run syntax.mn
+--- stderr
+error[E0001]: expected ')'
+ --> syntax.mn:3:17
+  |
+3 |   let x = (1 + 2;
+  |                 ^
+--- exit 1

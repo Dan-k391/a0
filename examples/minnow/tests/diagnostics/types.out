@@ -1,0 +1,28 @@
+$ minnow run types.mn
+--- stderr
+error[E2001]: mismatched types
+ --> types.mn:7:20
+  |
+7 |   let count: int = "three";
+  |       -----        ^^^^^^^ expected `int`, found `string`
+  |       |
+  |       expected due to this
+
+error[E2001]: mismatched types
+ --> types.mn:8:18
+  |
+2 | fn scale(factor: int, label: string) -> int {
+  |                       ----- parameter declared here
+...
+8 |   print(scale(2, 3));
+  |                  ^ expected `string`, found `int`
+
+error[E2002]: this function takes 2 arguments but 1 argument was supplied
+ --> types.mn:9:9
+  |
+2 | fn scale(factor: int, label: string) -> int {
+  |    ----- declared here
+...
+9 |   print(scale(1));
+  |         ^^^^^^^^ expected 2 arguments
+--- exit 1

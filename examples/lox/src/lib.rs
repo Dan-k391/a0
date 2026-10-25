@@ -90,7 +90,7 @@ pub fn compile_hir(text: &str) -> Result<HirModule, Vec<CompileError>> {
         .iter()
         .map(|d| {
             let span = d.span.expect("syntax diagnostics have spans");
-            let place = if d.code == "syntax.lexical" {
+            let place = if d.code == a0_diag::codes::INVALID_TOKEN {
                 ErrorPlace::Lexical
             } else if span.start as usize == text.len() {
                 ErrorPlace::End

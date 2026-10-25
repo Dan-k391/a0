@@ -175,3 +175,18 @@ fn related_locations_are_related_information() {
         "{d}"
     );
 }
+
+#[test]
+fn warnings_are_diagnostics_too() {
+    let messages = run("fn main() {\n  let x = 1;\n}\n", &[]);
+    let d = &messages
+        .iter()
+        .find(|m| m.get("method").as_str() == Some("textDocument/publishDiagnostics"))
+        .unwrap()
+        .get("params")
+        .get("diagnostics")
+        .as_array()[0];
+    assert_eq!(d.get("severity").as_u32(), Some(2), "{d}");
+    assert_eq!(d.get("code").as_str(), Some("W0001"));
+    assert_eq!(start(d), (1, 6));
+}

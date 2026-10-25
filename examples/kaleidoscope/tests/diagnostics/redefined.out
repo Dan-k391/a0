@@ -1,0 +1,8 @@
+$ kaleidoscope run redefined.k
+--- stderr
+error: function 'f' cannot be redefined
+ --> redefined.k:3:5
+  |
+3 | def f(y) y;
+  |     ^^^^
+--- exit 1

@@ -85,8 +85,12 @@ layer, decision D17). A new crate goes into the table above and into `[workspace
 - HIR text must round-trip: `print(parse(print(m))) == print(m)` is tested for every corpus file.
 - Example languages test interpreted and native output (`examples/*/tests`), all three under GC
   stress too, optimized and not. The Lox suite must stay at all 241 passing in all six modes.
-- Each example language has `tests/lsp.rs`: its server's outline, definitions, hovers and
-  diagnostics on a small program, through `a0_driver::lsp::session`.
+- Each example language has `tests/lsp.rs`: its server's outline, definitions, hovers,
+  diagnostics and quick fixes on a small program, through `a0_driver::lsp::session`.
+- Each example language has `tests/diagnostics/`: programs whose full output (rendered
+  diagnostics, runtime errors) must match their `.out` files, natively too
+  (`a0_driver::snapshots::check`; `A0_BLESS=1` rewrites them). A new kind of diagnostic or runtime
+  error gets a snapshot.
 - `docs/tutorial.md` is checked against Kaleidoscope (`examples/kaleidoscope/tests/tutorial.rs`):
   listings are `ANCHOR` regions of the code, together they must show all of it, and its commands
   are run. After changing Kaleidoscope, run `A0_BLESS=1 cargo test -p kaleidoscope --test tutorial`
