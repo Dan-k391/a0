@@ -261,6 +261,16 @@ pub(crate) struct ExprData {
     pub span: Option<Span>,
 }
 
+/// A call the optimizer inlined: code copied from the callee's body names `callee` in stack traces,
+/// followed by the function around the call, at `call`.
+#[derive(Clone)]
+pub(crate) struct InlineSite {
+    pub callee: FuncId,
+    pub call: Option<Span>,
+    /// The site the function around the call was itself inlined at.
+    pub parent: Option<u32>,
+}
+
 #[derive(Clone)]
 pub(crate) struct ArmData {
     /// The variant matched, or `None` for `_`.
@@ -439,6 +449,9 @@ pub struct HirModule {
     pub(crate) terms: Vec<(Term, String)>,
     /// The warnings found when the module was finished.
     pub(crate) warnings: a0_diag::Diagnostics,
+    /// The calls the optimizer inlined, and the site each copied expression came from.
+    pub(crate) inline_sites: Vec<InlineSite>,
+    pub(crate) inline_of: HashMap<ExprId, u32>,
     /// Casts out of `any` that the optimizer proved cannot fail (an `is` test of the same value
     /// guards them); lowering skips their check.
     pub(crate) unchecked_casts: HashSet<ExprId>,
@@ -467,6 +480,8 @@ impl HirModule {
             type_syntax: Vec::new(),
             terms: Vec::new(),
             warnings: a0_diag::Diagnostics::new(),
+            inline_sites: Vec::new(),
+            inline_of: HashMap::new(),
             unchecked_casts: HashSet::new(),
             items: Vec::new(),
             type_names: HashMap::new(),

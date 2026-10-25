@@ -53,7 +53,7 @@ int64_t a0_any_is_type(uint64_t value, const A0Type *type) {
 
 static const char *type_name(uint64_t w) {
     if (A0_ANY_IS_FLOAT(w)) return "float";
-    if (w == A0_ANY_UNIT) return "unit";
+    if (w == A0_ANY_UNIT) return "()";
     if (w == A0_ANY_TRUE || w == A0_ANY_FALSE) return "bool";
     if (is_inline_int(w)) return "int";
     const A0Type *t = ref_type(w);
@@ -61,15 +61,16 @@ static const char *type_name(uint64_t w) {
     return t->family->name;
 }
 
-void a0_any_cast_failed(uint64_t value, const uint8_t *expected, int64_t len) {
+void a0_any_cast_failed(uint64_t value, const uint8_t *expected, int64_t len, uint64_t loc,
+                        void *frame) {
     char message[256];
-    snprintf(message, sizeof message, "expected %.*s, found %s", (int)len, (const char *)expected,
+    snprintf(message, sizeof message, "expected %.*s, found `%s`", (int)len, (const char *)expected,
              type_name(value));
-    a0_panic(message);
+    a0_rt_fail(message, loc, frame);
 }
 
-int64_t a0_any_to_int(uint64_t value) {
-    if (!a0_any_is_int(value)) a0_any_cast_failed(value, (const uint8_t *)"int", 3);
+int64_t a0_any_to_int(uint64_t value, uint64_t loc, void *frame) {
+    if (!a0_any_is_int(value)) a0_any_cast_failed(value, (const uint8_t *)"`int`", 5, loc, frame);
     /* Shift the 48-bit payload to the top and back to sign-extend it. */
     if (is_inline_int(value)) return (int64_t)(value << 16) >> 16;
     return ((A0BoxedInt *)A0_ANY_PTR(value))->value;

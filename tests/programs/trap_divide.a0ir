@@ -1,6 +1,8 @@
 ; Integer division by zero traps with the same message in every backend.
 ; expect-stdout: before
-; expect-stderr: a0: trap: integer division by zero
+; expect-stderr: panic: integer division by zero
+; expect-stderr:     at divide (tests/programs/trap_divide.a0ir:14:3)
+; expect-stderr:     at main (tests/programs/trap_divide.a0ir:24:3)
 ; expect-exit: 101
 module "trap"
 

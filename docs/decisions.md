@@ -488,3 +488,26 @@ executable to print what the interpreter printed. Programs run with their direct
 directory, so paths in diagnostics are as written. `A0_BLESS=1` rewrites the files, as the tutorial
 test does; the diff is the review. The helper lives in the driver, beside `lsp::session`, because
 every language's tests use it.
+
+## D45. Runtime errors find their stack from tables, not from work at every call
+
+A runtime error must say where it happened, with the values involved, and show the stack of
+source-level functions, inlined ones included, the same in both backends, while programs that do
+not fail must not get slower. So nothing is recorded at calls. The IR knows each instruction's span
+and the call it was inlined at (HIR inlining records it), and both backends build the same table of
+locations from it (`a0_ir::Locations`). Only the runtime functions that can fail
+(`REPORTS_LOCATION`) take the failing operation's location and the caller's frame pointer as two
+hidden arguments, and traps pass them from their cold blocks. Native code keeps frame pointers and
+emits, from Cranelift's source locations, a table from each call's return address to its location,
+so the runtime walks the frame pointer chain and stops at the first return address outside
+generated code: C frames, whose frame pointers MSVC does not keep, are never read. The interpreter,
+which has no native frames, keeps the location of each active call in a thread-local stack and hands
+it to the runtime through a callback; the C runtime formats both. We rejected a shadow stack of call
+sites (a store at every call), unwinding through DWARF or Windows unwind tables (Cranelift does not
+emit them into objects, and it would mean `gimli` and per-OS code), and `backtrace`-style symbol
+lookup (it knows machine functions, not inlined source functions or columns). The Lox benchmarks
+run as fast as before natively (geometric mean ×1.00 over ten benchmarks, interleaved, best of
+five) and interpreted. A first version was 3.6% slower: the failing functions formatted their
+messages in place, and the stack buffer this gave them (with MSVC's stack checks) cost every call;
+formatting now happens in separate cold functions. A stack overflow prints no trace, as Rust does:
+it would repeat one call thousands of times, and its depth differs between the backends.

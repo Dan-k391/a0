@@ -5,5 +5,6 @@ fn main() {
   print(xs[3]);
 }
 // expect: 2
-// expect-stderr: a0: panic: index out of bounds
+// expect-stderr: panic: index out of bounds: the length is 3 but the index is 3
+// expect-stderr:     at main (bounds.mn:5:9)
 // expect-exit: 101

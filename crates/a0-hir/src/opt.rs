@@ -78,10 +78,15 @@ impl Opt<'_> {
         &self.m.exprs[e.index()].kind
     }
 
+    /// A new node, from the same place as `span_of` (its span and, if it was inlined, its site).
     fn node(&mut self, kind: ExprKind, ty: TypeId, span_of: ExprId) -> ExprId {
         let span = self.m.exprs[span_of.index()].span;
         self.m.exprs.push(ExprData { kind, ty, span });
-        ExprId(self.m.exprs.len() as u32 - 1)
+        let id = ExprId(self.m.exprs.len() as u32 - 1);
+        if let Some(&site) = self.m.inline_of.get(&span_of) {
+            self.m.inline_of.insert(id, site);
+        }
+        id
     }
 
     fn children(&self, e: ExprId) -> Vec<ExprId> {
@@ -316,13 +321,20 @@ impl Opt<'_> {
         *budget -= size;
         let params = self.m.body_params(callee).to_vec();
         let ret = self.m.body_ret(callee);
+        // Stack traces show the copy as `f`, called from here.
+        self.m.inline_sites.push(InlineSite {
+            callee: f,
+            call: self.m.exprs[e.index()].span,
+            parent: self.m.inline_of.get(&e).copied(),
+        });
+        let site = self.m.inline_sites.len() as u32 - 1;
         let mut locals = HashMap::new();
         let mut items = Vec::new();
         for (&p, &a) in params.iter().zip(&args) {
             let l = self.copy_local(p, body, &mut locals);
             items.push(self.node(ExprKind::Let(l, a), TypeId::UNIT, a));
         }
-        let copy = self.copy(root, body, &mut locals);
+        let copy = self.copy(root, body, &mut locals, site, &mut HashMap::new());
         let value = self.strip_returns(copy, ret);
         let e_ty = self.ty(e);
         self.m.exprs[e.index()].kind = ExprKind::Block(items, Some(value));
@@ -354,28 +366,61 @@ impl Opt<'_> {
         id
     }
 
-    /// A copy of the tree `e` from an inlined function, its locals moved into `body`.
-    fn copy(&mut self, e: ExprId, body: BodyId, locals: &mut HashMap<LocalId, LocalId>) -> ExprId {
+    /// Where code inlined into the callee at `inner` comes from once the callee is inlined at
+    /// `site`: the same call, now inside the copy (`sites` remembers the copies' sites).
+    fn reroot(&mut self, inner: u32, site: u32, sites: &mut HashMap<u32, u32>) -> u32 {
+        if let Some(&s) = sites.get(&inner) {
+            return s;
+        }
+        let old = self.m.inline_sites[inner as usize].clone();
+        let parent = match old.parent {
+            None => site,
+            Some(p) => self.reroot(p, site, sites),
+        };
+        self.m.inline_sites.push(InlineSite {
+            callee: old.callee,
+            call: old.call,
+            parent: Some(parent),
+        });
+        let id = self.m.inline_sites.len() as u32 - 1;
+        sites.insert(inner, id);
+        id
+    }
+
+    /// A copy of the tree `e` from a function inlined at `site`, its locals moved into `body`.
+    fn copy(
+        &mut self,
+        e: ExprId,
+        body: BodyId,
+        locals: &mut HashMap<LocalId, LocalId>,
+        site: u32,
+        sites: &mut HashMap<u32, u32>,
+    ) -> ExprId {
         let data = &self.m.exprs[e.index()];
         let (kind, ty, span) = (data.kind.clone(), data.ty, data.span);
+        let from = match self.m.inline_of.get(&e).copied() {
+            None => site,
+            Some(inner) => self.reroot(inner, site, sites),
+        };
         let kind = match kind {
             ExprKind::Local(l) => ExprKind::Local(locals[&l]),
             ExprKind::SetLocal(l, v) => {
-                let v = self.copy(v, body, locals);
+                let v = self.copy(v, body, locals, site, sites);
                 ExprKind::SetLocal(locals[&l], v)
             }
             ExprKind::Let(l, init) => {
-                let init = self.copy(init, body, locals);
+                let init = self.copy(init, body, locals, site, sites);
                 ExprKind::Let(self.copy_local(l, body, locals), init)
             }
             ExprKind::IfLet(l, v, t, f) => {
-                let v = self.copy(v, body, locals);
+                let v = self.copy(v, body, locals, site, sites);
                 let l = self.copy_local(l, body, locals);
-                let t = self.copy(t, body, locals);
-                ExprKind::IfLet(l, v, t, f.map(|f| self.copy(f, body, locals)))
+                let t = self.copy(t, body, locals, site, sites);
+                let f = f.map(|f| self.copy(f, body, locals, site, sites));
+                ExprKind::IfLet(l, v, t, f)
             }
             ExprKind::Match(s, arms) => {
-                let s = self.copy(s, body, locals);
+                let s = self.copy(s, body, locals, site, sites);
                 let mut out = Vec::new();
                 for a in arms {
                     let arm = self.m.arms[a.index()].clone();
@@ -384,7 +429,7 @@ impl Opt<'_> {
                         .iter()
                         .map(|&b| self.copy_local(b, body, locals))
                         .collect();
-                    let arm_body = self.copy(arm.body, body, locals);
+                    let arm_body = self.copy(arm.body, body, locals, site, sites);
                     self.m.arms.push(ArmData {
                         variant: arm.variant,
                         binds,
@@ -394,10 +439,12 @@ impl Opt<'_> {
                 }
                 ExprKind::Match(s, out)
             }
-            other => map_children(&other, &mut |c| self.copy(c, body, locals)),
+            other => map_children(&other, &mut |c| self.copy(c, body, locals, site, sites)),
         };
         self.m.exprs.push(ExprData { kind, ty, span });
-        ExprId(self.m.exprs.len() as u32 - 1)
+        let id = ExprId(self.m.exprs.len() as u32 - 1);
+        self.m.inline_of.insert(id, from);
+        id
     }
 
     // ---------------------------------------------------------------- simplification

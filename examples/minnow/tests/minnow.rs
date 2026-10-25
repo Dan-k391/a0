@@ -103,8 +103,12 @@ fn check_all(mode: &str, run_one: &dyn Fn(&Path) -> Output) {
 
 fn interpreted(mode: &str, opt: &str, stress: bool) {
     check_all(mode, &|f| {
+        // Run where the program is, so that stack traces name it as its expectations do.
         let mut cmd = Command::new(env!("CARGO_BIN_EXE_minnow"));
-        cmd.arg("run").arg(f).env("A0_OPT", opt);
+        cmd.current_dir(f.parent().unwrap())
+            .arg("run")
+            .arg(f.file_name().unwrap())
+            .env("A0_OPT", opt);
         if stress {
             cmd.env("A0_GC_STRESS", "1");
         }
@@ -122,8 +126,9 @@ fn native(mode: &str, opt: &str) {
             std::env::consts::EXE_SUFFIX
         ));
         let build = run(Command::new(env!("CARGO_BIN_EXE_minnow"))
+            .current_dir(f.parent().unwrap())
             .arg("build")
-            .arg(f)
+            .arg(f.file_name().unwrap())
             .arg("-o")
             .arg(&exe)
             .env("A0_OPT", opt));

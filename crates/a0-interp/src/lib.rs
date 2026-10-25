@@ -72,9 +72,47 @@ pub struct Trap {
     /// One of the `a0_runtime::trap` codes, or 0 for an interpreter-specific panic.
     pub code: i32,
     pub message: String,
+    /// The locations of the active frames when it happened, innermost first (ids in the program's
+    /// location table; see [`Trap::trace`]).
+    pub frames: Vec<u32>,
+}
+
+thread_local! {
+    /// The location of the active call in each interpreted frame, outermost first, for the
+    /// runtime's stack traces.
+    static CALLS: std::cell::RefCell<Vec<u32>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// The interpreter's frames, as the runtime asks for them when a runtime function fails.
+unsafe extern "C" fn frames(out: *mut u32, max: usize) -> usize {
+    CALLS.with(|calls| {
+        let calls = calls.borrow();
+        let n = calls.len().min(max);
+        for (i, &loc) in calls.iter().rev().take(n).enumerate() {
+            // SAFETY: the runtime passes a buffer of `max` entries.
+            unsafe { *out.add(i) = loc };
+        }
+        n
+    })
 }
 
 impl Trap {
+    /// The trap at `loc`, with the frames active now.
+    fn at(mut self, loc: u32) -> Trap {
+        // A stack overflow's trace would be the same call thousands of times.
+        if self.code != trap::STACK_OVERFLOW {
+            self.frames = std::iter::once(loc)
+                .chain(CALLS.with(|c| c.borrow().iter().rev().copied().collect::<Vec<_>>()))
+                .collect();
+        }
+        self
+    }
+
+    /// The stack trace, as the runtime prints it (empty without one).
+    pub fn trace(&self) -> String {
+        a0_runtime::trace_text(&self.frames)
+    }
+
     fn new(code: i32) -> Trap {
         let message = match code {
             trap::UNREACHABLE => "unreachable code was reached",
@@ -86,21 +124,21 @@ impl Trap {
         Trap {
             code,
             message: message.to_string(),
+            frames: Vec::new(),
         }
     }
 
     fn panic(message: String) -> Trap {
-        Trap { code: 0, message }
+        Trap {
+            code: 0,
+            message,
+            frames: Vec::new(),
+        }
     }
 
     /// Reports the trap the same way native code does and exits the process.
     pub fn report_and_exit(&self) -> ! {
-        if self.code != 0 {
-            a0_runtime::trap(self.code)
-        }
-        a0_runtime::flush();
-        eprintln!("a0: panic: {}", self.message);
-        std::process::exit(a0_runtime::PANIC_EXIT_CODE)
+        a0_runtime::fail_frames(&self.message, &self.frames)
     }
 }
 
@@ -124,6 +162,8 @@ enum Op {
         dst: Slot,
         a: Slot,
         b: Slot,
+        /// Where a division by zero traps.
+        loc: u32,
     },
     FloatBin {
         op: Opcode,
@@ -184,12 +224,14 @@ enum Op {
         func: u32,
         args: Box<[Slot]>,
         dst: Option<Slot>,
+        loc: u32,
     },
     CallIndirect {
         sig: Rc<Shape>,
         callee: Slot,
         args: Box<[Slot]>,
         dst: Option<Slot>,
+        loc: u32,
     },
     Copy {
         dst: Slot,
@@ -206,7 +248,7 @@ enum Op {
     Break,
     Continue,
     Return(Option<Slot>),
-    Unreachable,
+    Unreachable(u32),
 }
 
 /// A call signature as the interpreter needs it.
@@ -252,6 +294,8 @@ enum FuncKind {
         address: usize,
         mask: u32,
         ret_kind: i32,
+        /// It is one of the runtime's functions that take a location and a frame pointer.
+        reports: bool,
     },
     /// An extern that is never called or referenced; calling it is a bug in the verifier's sense.
     Unresolved,
@@ -284,6 +328,8 @@ pub struct Interpreter {
     stack: Vec<u64>,
     depth: u32,
     max_depth: u32,
+    /// The location table, in the runtime's format.
+    debug: Vec<u8>,
 }
 
 impl Interpreter {
@@ -360,6 +406,7 @@ impl Interpreter {
                                 address,
                                 mask,
                                 ret_kind,
+                                reports: a0_runtime::reports_location(&name),
                             },
                             Err(why) => {
                                 diags.push(
@@ -394,15 +441,22 @@ impl Interpreter {
                 },
             }
         };
+        let locations = a0_ir::Locations::build(&module);
         let mut codes = Vec::new();
         for f in 0..module.func_count() {
             let f = FuncId(f);
             codes.push(
                 module
                     .func_body(f)
-                    .map(|_| compile_function(&module, f, &addr_of)),
+                    .map(|_| compile_function(&module, f, &addr_of, &locations)),
             );
         }
+        let entries: Vec<a0_runtime::debug::Entry> = locations
+            .entries
+            .iter()
+            .map(|l| (l.func.as_str(), l.file.as_str(), l.line, l.col, l.parent))
+            .collect();
+        let debug = a0_runtime::debug::encode(&entries);
         for (info, code) in funcs.iter_mut().zip(codes) {
             if let Some(code) = code {
                 info.kind = FuncKind::Defined(Rc::new(code));
@@ -417,6 +471,7 @@ impl Interpreter {
             stack: Vec::with_capacity(1 << 16),
             depth: 0,
             max_depth: DEFAULT_MAX_DEPTH,
+            debug,
         })
     }
 
@@ -437,6 +492,11 @@ impl Interpreter {
         }
         let main = self.module.lookup_func("main").unwrap();
         a0_runtime::init(args);
+        // The runtime prints traces from the table until the process ends, after this
+        // interpreter is gone.
+        let table: &'static [u8] = Box::leak(self.debug.clone().into_boxed_slice());
+        // SAFETY: the table lives until the process ends.
+        unsafe { a0_runtime::set_debug(table, frames) };
         let result = self.call(main, &[])?;
         Ok(result.unwrap_or(0) as i32)
     }
@@ -456,13 +516,20 @@ impl Interpreter {
         let base = self.stack.len();
         self.stack.extend_from_slice(args);
         let slots: Vec<Slot> = (0..args.len() as u32).collect();
-        let r = self.call_func(f.0, base, &slots);
+        let r = self.call_func(f.0, base, &slots, 0);
         self.stack.truncate(base);
         let v = r?;
         Ok(shape.ret.map(|_| v))
     }
 
-    fn call_func(&mut self, f: u32, caller_base: usize, args: &[Slot]) -> Result<u64, Trap> {
+    /// Calls function `f` from a call at location `loc`.
+    fn call_func(
+        &mut self,
+        f: u32,
+        caller_base: usize,
+        args: &[Slot],
+        loc: u32,
+    ) -> Result<u64, Trap> {
         match &self.funcs[f as usize].kind {
             FuncKind::Defined(code) => {
                 let code = code.clone();
@@ -475,7 +542,9 @@ impl Interpreter {
                 for (&param, &arg) in code.params.iter().zip(args) {
                     self.stack[base + param as usize] = self.stack[caller_base + arg as usize];
                 }
+                CALLS.with(|c| c.borrow_mut().push(loc));
                 let flow = self.exec(&code.ops, base);
+                CALLS.with(|c| c.borrow_mut().pop());
                 self.stack.truncate(base);
                 self.depth -= 1;
                 match flow? {
@@ -487,9 +556,11 @@ impl Interpreter {
                 address,
                 mask,
                 ret_kind,
+                reports,
             } => {
                 let ret = self.funcs[f as usize].shape.ret;
-                self.native_call(address, mask, ret_kind, ret, caller_base, args)
+                let extra = if reports { Some(loc) } else { None };
+                self.native_call(address, mask, ret_kind, ret, caller_base, args, extra)
             }
             FuncKind::Unresolved => Err(Trap::panic(format!(
                 "call to unresolved external function @{}",
@@ -498,6 +569,9 @@ impl Interpreter {
         }
     }
 
+    /// Calls a C function; `report` is the location to pass a runtime function that takes one
+    /// (with a null frame pointer: the runtime asks the interpreter for its frames).
+    #[allow(clippy::too_many_arguments)]
     fn native_call(
         &mut self,
         address: usize,
@@ -506,13 +580,20 @@ impl Interpreter {
         ret: Option<Type>,
         base: usize,
         args: &[Slot],
+        report: Option<u32>,
     ) -> Result<u64, Trap> {
         let mut buf = [0u64; a0_runtime::FFI_MAX_ARGS];
         for (i, &a) in args.iter().enumerate() {
             buf[i] = self.stack[base + a as usize];
         }
+        let mut n = args.len();
+        if let Some(loc) = report {
+            buf[n] = loc as u64;
+            buf[n + 1] = 0;
+            n += 2;
+        }
         // SAFETY: the address came from a symbol table entry whose signature the IR declares.
-        let raw = unsafe { a0_runtime::ffi_call(address, &buf[..args.len()], mask, ret_kind) };
+        let raw = unsafe { a0_runtime::ffi_call(address, &buf[..n], mask, ret_kind) };
         match raw {
             Some(v) => Ok(ret.map(|t| normalize(t, v)).unwrap_or(0)),
             None => Err(Trap::panic("unsupported C call shape".to_string())),
@@ -525,6 +606,7 @@ impl Interpreter {
         callee: u64,
         base: usize,
         args: &[Slot],
+        loc: u32,
     ) -> Result<u64, Trap> {
         let token_base = self.tokens.as_ptr() as u64;
         if callee >= token_base && callee < token_base + self.tokens.len() as u64 {
@@ -536,7 +618,7 @@ impl Interpreter {
                     self.funcs[f as usize].name
                 )));
             }
-            return self.call_func(f, base, args);
+            return self.call_func(f, base, args, loc);
         }
         if callee == 0 {
             return Err(Trap::panic(
@@ -545,7 +627,7 @@ impl Interpreter {
         }
         match sig.ffi() {
             Ok((mask, ret_kind)) => {
-                self.native_call(callee as usize, mask, ret_kind, sig.ret, base, args)
+                self.native_call(callee as usize, mask, ret_kind, sig.ret, base, args, None)
             }
             Err(why) => Err(Trap::panic(format!(
                 "the interpreter cannot call a C function pointer with {why}"
@@ -571,8 +653,16 @@ impl Interpreter {
                     let v = self.get(base, src);
                     self.put(base, dst, v)
                 }
-                &Op::IntBin { op, ty, dst, a, b } => {
-                    let v = int_binary(op, ty, self.get(base, a), self.get(base, b))?;
+                &Op::IntBin {
+                    op,
+                    ty,
+                    dst,
+                    a,
+                    b,
+                    loc,
+                } => {
+                    let v = int_binary(op, ty, self.get(base, a), self.get(base, b))
+                        .map_err(|t| t.at(loc))?;
                     self.put(base, dst, v)
                 }
                 &Op::FloatBin { op, ty, dst, a, b } => {
@@ -629,8 +719,13 @@ impl Interpreter {
                     let v = self.get(base, p).wrapping_add(self.get(base, off));
                     self.put(base, dst, v)
                 }
-                Op::Call { func, args, dst } => {
-                    let v = self.call_func(*func, base, args)?;
+                Op::Call {
+                    func,
+                    args,
+                    dst,
+                    loc,
+                } => {
+                    let v = self.call_func(*func, base, args, *loc)?;
                     if let Some(d) = *dst {
                         self.put(base, d, v)
                     }
@@ -640,9 +735,10 @@ impl Interpreter {
                     callee,
                     args,
                     dst,
+                    loc,
                 } => {
                     let target = self.get(base, *callee);
-                    let v = self.call_indirect(sig, target, base, args)?;
+                    let v = self.call_indirect(sig, target, base, args, *loc)?;
                     if let Some(d) = *dst {
                         self.put(base, d, v)
                     }
@@ -669,7 +765,7 @@ impl Interpreter {
                 &Op::Return(v) => {
                     return Ok(Flow::Return(v.map(|s| self.get(base, s)).unwrap_or(0)));
                 }
-                Op::Unreachable => return Err(Trap::new(trap::UNREACHABLE)),
+                &Op::Unreachable(loc) => return Err(Trap::new(trap::UNREACHABLE).at(loc)),
             }
         }
         Ok(Flow::Next)
@@ -683,14 +779,21 @@ struct FuncCompiler<'a> {
     slots: HashMap<Value, Slot>,
     vars: HashMap<a0_ir::Var, Slot>,
     addr_of: &'a dyn Fn(a0_ir::Symbol) -> u64,
+    locations: &'a a0_ir::Locations,
 }
 
-fn compile_function(m: &Module, f: FuncId, addr_of: &dyn Fn(a0_ir::Symbol) -> u64) -> Code {
+fn compile_function(
+    m: &Module,
+    f: FuncId,
+    addr_of: &dyn Fn(a0_ir::Symbol) -> u64,
+    locations: &a0_ir::Locations,
+) -> Code {
     let mut c = FuncCompiler {
         m,
         slots: HashMap::new(),
         vars: HashMap::new(),
         addr_of,
+        locations,
     };
     let mut next = 0u32;
     let mut params = Vec::new();
@@ -761,6 +864,7 @@ impl FuncCompiler<'_> {
                 dst: dst.unwrap(),
                 a: a(0),
                 b: a(1),
+                loc: self.locations.of(i),
             },
             op if op.is_float_binary() => Op::FloatBin {
                 op,
@@ -821,6 +925,7 @@ impl FuncCompiler<'_> {
                 func: m.inst_callee(i).0,
                 args: args.iter().map(|&v| self.s(v)).collect(),
                 dst,
+                loc: self.locations.of(i),
             },
             Opcode::CallIndirect => {
                 let sig = m.inst_sig(i);
@@ -832,6 +937,7 @@ impl FuncCompiler<'_> {
                     callee: a(0),
                     args: args[1..].iter().map(|&v| self.s(v)).collect(),
                     dst,
+                    loc: self.locations.of(i),
                 }
             }
             Opcode::Get => Op::Copy {
@@ -856,7 +962,7 @@ impl FuncCompiler<'_> {
             Opcode::Break => Op::Break,
             Opcode::Continue => Op::Continue,
             Opcode::Return => Op::Return(args.first().map(|&v| self.s(v))),
-            Opcode::Unreachable => Op::Unreachable,
+            Opcode::Unreachable => Op::Unreachable(self.locations.of(i)),
             _ => unreachable!("verified IR has no other opcodes"),
         }
     }

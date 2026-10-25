@@ -1,0 +1,9 @@
+$ minnow run runtime_index.mn
+--- stdout
+3
+--- stderr
+panic: index out of bounds: the length is 3 but the index is 3
+    at at (runtime_index.mn:4:10)
+    at last (runtime_index.mn:8:10)
+    at main (runtime_index.mn:14:9)
+--- exit 101

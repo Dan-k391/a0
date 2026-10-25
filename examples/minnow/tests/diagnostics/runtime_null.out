@@ -1,0 +1,9 @@
+$ minnow run runtime_null.mn
+--- stdout
+1
+--- stderr
+panic: unwrapped a `null` value with `!`
+    at main::{closure} (runtime_null.mn:11:45)
+    at each (runtime_null.mn:5:10)
+    at main (runtime_null.mn:11:9)
+--- exit 101

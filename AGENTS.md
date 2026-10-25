@@ -60,7 +60,9 @@ layer, decision D17). A new crate goes into the table above and into `[workspace
   likely. Words come from `Term`s and types from `display_type`/`quote_type`, never the HIR's own
   spellings. Misuse by a language's code keeps a descriptive code (`hir.builder`).
 - **Interpreter and native code must behave identically**: same output, same stderr, same exit code.
-  Traps and panics go through the C runtime (`a0_rt_trap`, exit 101).
+  Traps and panics go through the C runtime (`a0_rt_fail`, exit 101), which prints the message and
+  the stack trace from the program's location table; runtime functions that can fail take the
+  location and frame pointer (`REPORTS_LOCATION`, `docs/ir.md`).
 - No new dependencies without a reason recorded in `docs/decisions.md`. Never a code generator other
   than Cranelift and never our own linker. The one optimizer of our own is the HIR optimizer (D27):
   keep it small, on by default, behavior-preserving, and leave per-function optimization to
@@ -103,7 +105,7 @@ layer, decision D17). A new crate goes into the table above and into `[workspace
 
 | When you change | Update |
 |---|---|
-| IR instructions, types, text format, builder | `docs/ir.md` |
+| IR instructions, types, text format, builder, locations and traces | `docs/ir.md` |
 | HIR types, expressions, builtins, text format, lowering | `docs/hir.md` (and `hir.a0g` + `print.rs` together) |
 | Grammar DSL (including `@def`/`@scope`) | `docs/grammar.md` |
 | The language server or the editor extension | `docs/editors.md` |

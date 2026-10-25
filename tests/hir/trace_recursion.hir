@@ -1,0 +1,22 @@
+// Deep recursion through one call shows that call once, with how many more times it repeats.
+// expect-stderr: panic: key not found: "missing"
+// expect-stderr:     at find (tests/hir/trace_recursion.hir:13:12)
+// expect-stderr:     at find (tests/hir/trace_recursion.hir:15:3)
+// expect-stderr:     ... the frame above repeats 29 more times
+// expect-stderr:     at main (tests/hir/trace_recursion.hir:21:3)
+// expect-exit: 101
+module "trace_recursion";
+
+fn find(m: map<string, int>, depth: int) -> int {
+  if depth == 0 {
+    // The key is not there: the failure names it.
+    return m["missing"];
+  }
+  find(m, depth - 1) + 1
+}
+
+fn main() -> int {
+  let m = new map<string, int>;
+  m["present"] = 1;
+  find(m, 30)
+}

@@ -53,24 +53,17 @@ static const char *trap_reason(int32_t code) {
     }
 }
 
-void a0_rt_trap(int32_t code) {
-    fflush(stdout);
-    fprintf(stderr, "a0: trap: %s\n", trap_reason(code));
-    a0_rt_exit(A0_PANIC_EXIT_CODE);
+void a0_rt_trap(int32_t code, uint64_t loc, void *frame) {
+    /* A stack overflow's trace would be the same call thousands of times, and how deep the stack
+     * got differs between the interpreter and native code. */
+    if (code == A0_TRAP_STACK_OVERFLOW) a0_rt_fail_frames(trap_reason(code), NULL, 0);
+    a0_rt_fail(trap_reason(code), loc, frame);
 }
 
-void a0_panic(const char *message) {
-    fflush(stdout);
-    fprintf(stderr, "a0: panic: %s\n", message);
-    a0_rt_exit(A0_PANIC_EXIT_CODE);
-}
+void a0_panic(const char *message) { a0_rt_fail_frames(message, NULL, 0); }
 
-void a0_panic_bytes(const uint8_t *message, int64_t len) {
-    fflush(stdout);
-    fputs("a0: panic: ", stderr);
-    fwrite(message, 1, (size_t)len, stderr);
-    fputc('\n', stderr);
-    a0_rt_exit(A0_PANIC_EXIT_CODE);
+void a0_panic_bytes(const uint8_t *message, int64_t len, uint64_t loc, void *frame) {
+    a0_rt_fail_bytes(message, len, loc, frame);
 }
 
 /* ---- Output ------------------------------------------------------------------------------- */

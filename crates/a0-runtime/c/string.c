@@ -65,9 +65,19 @@ int64_t a0_string_compare(A0String *a, A0String *b) {
     return a->len < b->len ? -1 : a->len > b->len ? 1 : 0;
 }
 
-A0String *a0_string_substr(A0String *s, int64_t start, int64_t count) {
+static A0_COLD A0_NORETURN void out_of_range(int64_t start, int64_t count, int64_t len, uint64_t loc,
+                                              void *frame) {
+    char message[160];
+    snprintf(message, sizeof message, "substring out of range: %lld bytes from %lld, but the length is %lld",
+             (long long)count, (long long)start, (long long)len);
+    a0_rt_fail(message, loc, frame);
+}
+
+A0String *a0_string_substr(A0String *s, int64_t start, int64_t count, uint64_t loc, void *frame) {
     check(s);
-    if (start < 0 || count < 0 || start > s->len || count > s->len - start) a0_panic("substring out of range");
+    if (start < 0 || count < 0 || start > s->len || count > s->len - start) {
+        out_of_range(start, count, s->len, loc, frame);
+    }
     /* `s` is rooted by the caller; copy out of it after allocating. */
     A0String *r = (A0String *)a0_gc_alloc(&a0_builtin_string, sizeof(A0String) + (size_t)count + 1);
     r->len = count;
@@ -76,9 +86,9 @@ A0String *a0_string_substr(A0String *s, int64_t start, int64_t count) {
     return r;
 }
 
-int64_t a0_string_byte_at(A0String *s, int64_t index) {
+int64_t a0_string_byte_at(A0String *s, int64_t index, uint64_t loc, void *frame) {
     check(s);
-    if (index < 0 || index >= s->len) a0_panic("index out of bounds");
+    if (index < 0 || index >= s->len) a0_rt_out_of_bounds(s->len, index, loc, frame);
     return s->bytes[index];
 }
 
@@ -109,7 +119,7 @@ void a0_string_eprint(A0String *s) {
     if (s->len > 0) fwrite(s->bytes, 1, (size_t)s->len, stderr);
 }
 
-void a0_string_panic(A0String *message) {
+void a0_string_panic(A0String *message, uint64_t loc, void *frame) {
     check(message);
-    a0_panic_bytes(message->bytes, message->len);
+    a0_rt_fail_bytes(message->bytes, message->len, loc, frame);
 }

@@ -15,7 +15,15 @@ The runtime is C, compiled once into a static library that the interpreter calls
 2. `crates/a0-runtime/c/<area>.c` - the implementation. A new `.c` file must be added to the
    `cc::Build` file list in `crates/a0-runtime/build.rs`.
    - Write output with stdio; flush stdout before writing to stderr; exit through `a0_rt_exit`
-     (it flushes) or `a0_rt_trap`/`a0_panic` (exit status 101).
+     (it flushes).
+   - A function generated code calls that can fail takes `uint64_t loc, void *frame` after its own
+     parameters and fails through `a0_rt_fail(message, loc, frame)` (or `a0_rt_out_of_bounds`), so
+     the failure prints where it happened and the stack trace. Add its name to
+     `REPORTS_LOCATION` in `crates/a0-runtime/src/lib.rs`: the backends then pass the two arguments,
+     and the IR declares the function without them. Put message formatting (a `char` buffer and
+     `snprintf`) in a separate `A0_COLD` function, so the fast path needs no stack buffer (it made
+     map access 7% slower when it did). `a0_panic` is for failures of the runtime itself, with no
+     location.
    - If it allocates GC objects, every GC reference it holds across another allocation must be a
      root (see the GC section of `include/a0rt.h`).
 3. `crates/a0-runtime/c/symbols.c` - add `SYM(a0_<name>)` so the interpreter can resolve it.

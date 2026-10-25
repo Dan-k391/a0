@@ -386,6 +386,10 @@ entity!(
     /// An ordered list of instructions: a function body or a nested `if`/`loop` region.
     Region
 );
+entity!(
+    /// A place where a source-level function was inlined, for stack traces.
+    InlineId
+);
 
 /// What kind of item a [`Symbol`] names.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]

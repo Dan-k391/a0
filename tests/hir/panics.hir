@@ -1,6 +1,7 @@
 // Unwrapping a null reference panics with the runtime's message, after flushing earlier output.
 // expect-stdout: before
-// expect-stderr: a0: panic: null reference
+// expect-stderr: panic: unwrapped a `null` value with `!`
+// expect-stderr:     at main (tests/hir/panics.hir:13:3)
 // expect-exit: 101
 module "panics";
 

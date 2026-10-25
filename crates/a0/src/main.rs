@@ -107,13 +107,17 @@ fn load_hir(path: &str, sources: &mut SourceMap) -> Result<a0_hir::HirModule, Ex
 
 /// Reads, parses and verifies an IR file (lowering HIR first), printing diagnostics on failure.
 fn load(path: &str, sources: &mut SourceMap) -> Result<Module, ExitCode> {
-    if is_hir(path) {
+    let mut m = if is_hir(path) {
         let hir = load_hir(path, sources)?;
-        return a0_hir::lower(&hir).map_err(|d| report(sources, &d));
-    }
-    let text = read(path)?;
-    let id = sources.add(path, &text);
-    a0_ir::parse_and_verify(&text, id).map_err(|d| report(sources, &d))
+        a0_hir::lower(&hir).map_err(|d| report(sources, &d))?
+    } else {
+        let text = read(path)?;
+        let id = sources.add(path, &text);
+        a0_ir::parse_and_verify(&text, id).map_err(|d| report(sources, &d))?
+    };
+    // Runtime errors say where in the file they happened.
+    m.set_sources(sources.clone());
+    Ok(m)
 }
 
 fn report(sources: &SourceMap, diags: &Diagnostics) -> ExitCode {

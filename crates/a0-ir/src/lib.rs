@@ -24,6 +24,7 @@
 //! ```
 
 mod builder;
+mod debug;
 mod module;
 mod parse;
 mod print;
@@ -31,7 +32,8 @@ mod types;
 mod verify;
 
 pub use builder::Builder;
-pub use module::{Item, Module, region_terminates};
+pub use debug::{Location, Locations};
+pub use module::{InlineSite, Item, Module, region_terminates};
 pub use parse::{parse, parse_and_verify};
 pub use print::{insts_in_text_order, is_bare_ident, print_module, quote_string};
 pub use types::*;

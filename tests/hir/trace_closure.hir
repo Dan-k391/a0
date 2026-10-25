@@ -1,0 +1,16 @@
+// A closure's frame names the function it is in; a failed conversion names both types.
+// expect-stderr: panic: expected `int`, found `string`
+// expect-stderr:     at main::{closure} (tests/hir/trace_closure.hir:14:36)
+// expect-stderr:     at apply (tests/hir/trace_closure.hir:10:3)
+// expect-stderr:     at main (tests/hir/trace_closure.hir:15:3)
+// expect-exit: 101
+module "trace_closure";
+
+fn apply(f: fn(any) -> int, v: any) -> int {
+  f(v)
+}
+
+fn main() -> int {
+  let unpack = fn(v: any) -> int { v as int };
+  apply(unpack, "text" as any)
+}

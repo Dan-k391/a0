@@ -51,6 +51,9 @@ fn make_isa(target: Target, optimize: bool) -> Result<OwnedTargetIsa, Diagnostic
         "opt_level",
         if optimize { "speed" } else { "none" },
     )?;
+    // Runtime errors find their stack by walking the frame pointer chain (a0rt.h, "Traps and
+    // panics").
+    set(&mut flags, "preserve_frame_pointers", "true")?;
     set(
         &mut flags,
         "is_pic",
@@ -154,11 +157,16 @@ fn compile_object_inner(
         }
     };
 
-    // Declare every function and global first so bodies can refer to any of them.
+    // Declare every function and global first so bodies can refer to any of them. Runtime functions
+    // that can fail take the failing call's location and frame pointer after their own parameters.
     let mut func_ids = Vec::new();
     for f in 0..m.func_count() {
         let f = FuncId(f);
-        let sig = signature(&obj, m.func_params(f), m.func_ret(f), target);
+        let mut params = m.func_params(f).to_vec();
+        if m.func_is_extern(f) && a0_runtime::reports_location(m.func_name(f)) {
+            params.extend([Type::I64, Type::Ptr]);
+        }
+        let sig = signature(&obj, &params, m.func_ret(f), target);
         let linkage = if m.func_is_extern(f) {
             Linkage::Import
         } else {
@@ -176,6 +184,9 @@ fn compile_object_inner(
         data_ids.push(id);
     }
     let rt = RuntimeFuncs::declare(&mut obj, target)?;
+    let locations = a0_ir::Locations::build(m);
+    // Per defined function: its id, code size and the ranges of its calls with their locations.
+    let mut code_ranges: Vec<CallRanges> = Vec::new();
 
     let frontend_config = obj.target_config();
     let mut ctx = obj.make_context();
@@ -201,15 +212,18 @@ fn compile_object_inner(
                 values: HashMap::new(),
                 vars: HashMap::new(),
                 func_refs: HashMap::new(),
-                trap_blocks: HashMap::new(),
+                trap_sites: Vec::new(),
                 loops: Vec::new(),
+                locations: &locations,
             };
             lower.function();
             lower.b.finalize(frontend_config);
         }
         define(&mut obj, func_ids[f.index()], &mut ctx, m.func_name(f))?;
+        code_ranges.push(call_ranges(&ctx, func_ids[f.index()]));
         obj.clear_context(&mut ctx);
     }
+    let tables = emit_debug_tables(&mut obj, &locations, &code_ranges)?;
 
     if opts.entry_point {
         let main = m.lookup_func("main").unwrap();
@@ -220,6 +234,7 @@ fn compile_object_inner(
             func_ids[main.index()],
             &rt,
             target,
+            tables,
         )?;
     }
 
@@ -227,6 +242,111 @@ fn compile_object_inner(
     product
         .emit()
         .map_err(|e| backend_error(format!("cannot write the object file: {e}")))
+}
+
+/// A compiled function, its code size, and the code ranges of its calls with their locations:
+/// `(start, end, location)`, offsets from the function's start.
+type CallRanges = (cranelift_module::FuncId, u32, Vec<(u32, u32, u32)>);
+
+/// The ranges of the calls in a compiled function, whose locations were set as source locations
+/// while lowering.
+fn call_ranges(ctx: &Context, id: cranelift_module::FuncId) -> CallRanges {
+    let Some(code) = ctx.compiled_code() else {
+        return (id, 0, Vec::new());
+    };
+    let base = ctx.func.params.base_srcloc();
+    let mut ranges = Vec::new();
+    for r in code.buffer.get_srclocs_sorted() {
+        let loc = if r.loc.is_rel() {
+            r.loc.as_rel().expand(base)
+        } else {
+            r.loc.as_abs()
+        };
+        if !loc.is_default() && r.end > r.start {
+            ranges.push((r.start, r.end, loc.bits()));
+        }
+    }
+    (id, code.code_info().total_size, ranges)
+}
+
+/// Emits the tables runtime errors print traces from (`A0LocationTable` and `A0CodeTable` in
+/// `a0rt.h`) and returns their data ids.
+fn emit_debug_tables(
+    obj: &mut ObjectModule,
+    locations: &a0_ir::Locations,
+    code: &[CallRanges],
+) -> Result<(DataId, DataId), Diagnostics> {
+    // Tables that hold addresses are writable data: position-independent executables cannot have
+    // absolute addresses in read-only data.
+    fn data(
+        obj: &mut ObjectModule,
+        name: &str,
+        desc: &DataDescription,
+    ) -> Result<DataId, Diagnostics> {
+        let writable = name == "a0.debug.functions" || name == "a0.debug.code";
+        let id = obj
+            .declare_data(name, Linkage::Local, writable, false)
+            .map_err(|e| backend_error(format!("cannot declare {name}: {e}")))?;
+        obj.define_data(id, desc)
+            .map_err(|e| backend_error(format!("cannot define {name}: {e}")))?;
+        Ok(id)
+    }
+    let entries: Vec<a0_runtime::debug::Entry> = locations
+        .entries
+        .iter()
+        .map(|l| (l.func.as_str(), l.file.as_str(), l.line, l.col, l.parent))
+        .collect();
+    let mut desc = DataDescription::new();
+    desc.define(a0_runtime::debug::encode(&entries).into_boxed_slice());
+    desc.set_align(8);
+    let locations_id = data(obj, "a0.debug.locations", &desc)?;
+
+    let mut ranges = Vec::new();
+    let mut funcs = Vec::new();
+    for (id, size, rs) in code {
+        funcs.push((*id, *size, (ranges.len() / 12) as u32, rs.len() as u32));
+        for &(start, end, loc) in rs {
+            ranges.extend([start, end, loc].iter().flat_map(|w| w.to_le_bytes()));
+        }
+    }
+    let mut desc = DataDescription::new();
+    desc.define(
+        if ranges.is_empty() {
+            vec![0; 12]
+        } else {
+            ranges
+        }
+        .into_boxed_slice(),
+    );
+    desc.set_align(4);
+    let ranges_id = data(obj, "a0.debug.ranges", &desc)?;
+
+    // A0CodeFunction: the start address, then size, first range, range count and padding.
+    let mut bytes = vec![0u8; funcs.len().max(1) * 24];
+    let mut desc = DataDescription::new();
+    for (i, &(id, size, first, count)) in funcs.iter().enumerate() {
+        let at = i * 24;
+        for (k, w) in [size, first, count].into_iter().enumerate() {
+            bytes[at + 8 + 4 * k..at + 12 + 4 * k].copy_from_slice(&w.to_le_bytes());
+        }
+        let f = obj.declare_func_in_data(id, &mut desc);
+        desc.write_function_addr(at as u32, f);
+    }
+    desc.define(bytes.into_boxed_slice());
+    desc.set_align(8);
+    let functions_id = data(obj, "a0.debug.functions", &desc)?;
+
+    let mut desc = DataDescription::new();
+    let mut header = vec![0u8; 24];
+    header[..8].copy_from_slice(&(funcs.len() as u64).to_le_bytes());
+    desc.define(header.into_boxed_slice());
+    desc.set_align(8);
+    let functions = obj.declare_data_in_data(functions_id, &mut desc);
+    desc.write_data_addr(8, functions, 0);
+    let ranges = obj.declare_data_in_data(ranges_id, &mut desc);
+    desc.write_data_addr(16, ranges, 0);
+    let code_id = data(obj, "a0.debug.code", &desc)?;
+    Ok((locations_id, code_id))
 }
 
 fn define(
@@ -312,6 +432,7 @@ struct RuntimeFuncs {
     trap: cranelift_module::FuncId,
     init: cranelift_module::FuncId,
     exit: cranelift_module::FuncId,
+    set_debug: cranelift_module::FuncId,
 }
 
 impl RuntimeFuncs {
@@ -322,14 +443,16 @@ impl RuntimeFuncs {
                 .map_err(|e| backend_error(format!("cannot declare runtime function {name}: {e}")))
         };
         Ok(RuntimeFuncs {
-            trap: decl("a0_rt_trap", &[Type::I32])?,
+            trap: decl("a0_rt_trap", &[Type::I32, Type::I64, Type::Ptr])?,
             init: decl("a0_rt_init", &[Type::I32, Type::Ptr])?,
             exit: decl("a0_rt_exit", &[Type::I32])?,
+            set_debug: decl("a0_rt_set_debug", &[Type::Ptr, Type::Ptr])?,
         })
     }
 }
 
-/// `int main(int argc, char **argv) { a0_rt_init(argc, argv); a0_rt_exit(a0.main()); }`
+/// `int main(int argc, char **argv) { a0_rt_init(argc, argv); a0_rt_set_debug(...);
+/// a0_rt_exit(a0.main()); }`
 fn emit_c_main(
     obj: &mut ObjectModule,
     ctx: &mut Context,
@@ -337,6 +460,7 @@ fn emit_c_main(
     user_main: cranelift_module::FuncId,
     rt: &RuntimeFuncs,
     target: Target,
+    (locations, code): (DataId, DataId),
 ) -> Result<(), Diagnostics> {
     let sig = signature(obj, &[Type::I32, Type::Ptr], Some(Type::I32), target);
     let id = obj
@@ -354,6 +478,13 @@ fn emit_c_main(
         let argv = b.block_params(entry)[1];
         let init = obj.declare_func_in_func(rt.init, b.func);
         b.ins().call(init, &[argc, argv]);
+        let ptr = clif_type(Type::Ptr, target);
+        let locations = obj.declare_data_in_func(locations, b.func);
+        let locations = b.ins().symbol_value(ptr, locations);
+        let code = obj.declare_data_in_func(code, b.func);
+        let code = b.ins().symbol_value(ptr, code);
+        let set_debug = obj.declare_func_in_func(rt.set_debug, b.func);
+        b.ins().call(set_debug, &[locations, code]);
         let um = obj.declare_func_in_func(user_main, b.func);
         let call = b.ins().call(um, &[]);
         let code = b.inst_results(call)[0];
@@ -386,8 +517,10 @@ struct Lower<'a> {
     values: HashMap<a0_ir::Value, ir::Value>,
     vars: HashMap<a0_ir::Var, Variable>,
     func_refs: HashMap<cranelift_module::FuncId, ir::FuncRef>,
-    trap_blocks: HashMap<i32, ir::Block>,
+    /// Cold blocks that report a trap: (block, trap code, location).
+    trap_sites: Vec<(ir::Block, i32, u32)>,
     loops: Vec<LoopBlocks>,
+    locations: &'a a0_ir::Locations,
 }
 
 impl Lower<'_> {
@@ -456,26 +589,20 @@ impl Lower<'_> {
         true
     }
 
-    /// A block that reports trap `code` through the runtime. Shared by all checks in the function and
-    /// filled in by `finish_trap_blocks` once the body is done.
-    fn trap_block(&mut self, code: i32) -> ir::Block {
-        if let Some(&b) = self.trap_blocks.get(&code) {
-            return b;
-        }
+    /// A cold block that reports trap `code` at `loc` through the runtime, filled in by
+    /// `finish_trap_blocks` once the body is done.
+    fn trap_block(&mut self, code: i32, loc: u32) -> ir::Block {
         let block = self.b.create_block();
         self.b.set_cold_block(block);
-        self.trap_blocks.insert(code, block);
+        self.trap_sites.push((block, code, loc));
         block
     }
 
     fn finish_trap_blocks(&mut self) {
-        let mut blocks: Vec<(i32, ir::Block)> =
-            self.trap_blocks.iter().map(|(&c, &b)| (c, b)).collect();
-        blocks.sort();
-        for (code, block) in blocks {
+        for (block, code, loc) in std::mem::take(&mut self.trap_sites) {
             self.b.switch_to_block(block);
             self.b.seal_block(block);
-            self.terminate_with_trap(code);
+            self.terminate_with_trap(code, loc);
         }
     }
 
@@ -490,20 +617,34 @@ impl Lower<'_> {
         self.b.ins().iconst(ty, masked)
     }
 
-    /// Branches to the trap block for `code` when `cond` is nonzero.
-    fn trap_if(&mut self, cond: ir::Value, code: i32) {
-        let trap = self.trap_block(code);
+    /// Branches to a block that reports trap `code` at `loc` when `cond` is nonzero.
+    fn trap_if(&mut self, cond: ir::Value, code: i32, loc: u32) {
+        let trap = self.trap_block(code, loc);
         let cont = self.b.create_block();
         self.b.ins().brif(cond, trap, &[], cont, &[]);
         self.b.seal_block(cont);
         self.b.switch_to_block(cont);
     }
 
-    fn terminate_with_trap(&mut self, code: i32) {
+    fn terminate_with_trap(&mut self, code: i32, loc: u32) {
         let trap = self.func_ref(self.rt.trap);
         let c = self.iconst(types::I32, code as i64);
-        self.b.ins().call(trap, &[c]);
+        let l = self.iconst(types::I64, loc as i64);
+        let fp = self.b.ins().get_frame_pointer(self.ptr);
+        self.b.ins().call(trap, &[c, l, fp]);
         self.b.ins().trap(TrapCode::unwrap_user(1));
+    }
+
+    /// Marks the code built next as the call at `inst`, so that a return address in it finds the
+    /// call's location (or clears the mark).
+    fn mark_call(&mut self, inst: Option<Inst>) {
+        let loc = inst.map_or(0, |i| self.locations.of(i));
+        let srcloc = if loc == 0 {
+            ir::SourceLoc::default()
+        } else {
+            ir::SourceLoc::new(loc)
+        };
+        self.b.set_srcloc(srcloc);
     }
 
     /// An `i1` lives in an `i8`; arithmetic on it must wrap to one bit.
@@ -581,14 +722,15 @@ impl Lower<'_> {
                 let ty = self.ty(arg_ty(0));
                 let zero = self.iconst(ty, 0);
                 let is_zero = self.b.ins().icmp(condcodes::IntCC::Equal, b, zero);
-                self.trap_if(is_zero, a0_runtime::trap::DIVIDE_BY_ZERO);
+                let loc = self.locations.of(inst);
+                self.trap_if(is_zero, a0_runtime::trap::DIVIDE_BY_ZERO, loc);
                 if op == Opcode::Sdiv {
                     let min = self.iconst(ty, i64::MIN >> (64 - ty.bits()));
                     let neg1 = self.iconst(ty, -1);
                     let a_min = self.b.ins().icmp(condcodes::IntCC::Equal, a, min);
                     let b_neg1 = self.b.ins().icmp(condcodes::IntCC::Equal, b, neg1);
                     let both = self.b.ins().band(a_min, b_neg1);
-                    self.trap_if(both, a0_runtime::trap::INTEGER_OVERFLOW);
+                    self.trap_if(both, a0_runtime::trap::INTEGER_OVERFLOW, loc);
                 }
                 let v = match op {
                     Opcode::Sdiv => self.b.ins().sdiv(a, b),
@@ -708,7 +850,15 @@ impl Lower<'_> {
             Opcode::Call => {
                 let callee = m.inst_callee(inst);
                 let fr = self.func_ref(self.func_ids[callee.index()]);
+                let mut args = args;
+                if m.func_is_extern(callee) && a0_runtime::reports_location(m.func_name(callee)) {
+                    let loc = self.iconst(types::I64, self.locations.of(inst) as i64);
+                    let fp = self.b.ins().get_frame_pointer(self.ptr);
+                    args.extend([loc, fp]);
+                }
+                self.mark_call(Some(inst));
                 let call = self.b.ins().call(fr, &args);
+                self.mark_call(None);
                 if let Some(&r) = self.b.inst_results(call).first() {
                     self.set(inst, r);
                 }
@@ -722,7 +872,9 @@ impl Lower<'_> {
                     self.target,
                 );
                 let sig_ref = self.b.import_signature(sig);
+                self.mark_call(Some(inst));
                 let call = self.b.ins().call_indirect(sig_ref, args[0], &args[1..]);
+                self.mark_call(None);
                 if let Some(&r) = self.b.inst_results(call).first() {
                     self.set(inst, r);
                 }
@@ -755,7 +907,8 @@ impl Lower<'_> {
                 return false;
             }
             Opcode::Unreachable => {
-                self.terminate_with_trap(a0_runtime::trap::UNREACHABLE);
+                let loc = self.locations.of(inst);
+                self.terminate_with_trap(a0_runtime::trap::UNREACHABLE, loc);
                 return false;
             }
             _ => unreachable!("verified IR has no other opcodes"),

@@ -146,6 +146,31 @@ is built (a frame size emitted in a prologue).
 Misuse (an `else_` without an `if_`, building outside a function, ...) is recorded as a diagnostic and
 reported by `finish`, rather than panicking, so the API stays safe to expose over C.
 
+## Locations and stack traces
+
+Runtime errors say where they happened and how the program got there, in both backends, with the
+same text (`docs/diagnostics.md`). The IR carries what that needs; none of it is in the text format.
+
+- Every instruction has a span (set with `set_span`; the text parser sets it to the instruction's
+  text) and an inline site (`set_inline`): `add_inline_site(callee, call, parent)` records that a
+  source-level function was inlined at `call`, inside code itself inlined at `parent`, and
+  instructions copied from it name it.
+- Every function has a trace name, its IR name by default: `set_trace_name` gives the source name,
+  `hide_from_traces` leaves out entry points and wrappers.
+- `Module::set_sources` gives the module the `SourceMap` its spans point into; the drivers do it
+  before running or building.
+- `Locations::build(&module)` makes the table of locations both backends give the runtime: for each
+  instruction, its function, file, line and column, and for inlined code the location of the call
+  it was inlined at.
+
+Runtime functions that can fail (`a0_runtime::REPORTS_LOCATION`: array and map access, substrings,
+casts out of `any`, panics, traps) take two arguments more than the IR declares, which the backends
+pass: the location of the call and the caller's frame pointer (null in the interpreter). Native code
+keeps frame pointers and emits a table from the return address of each call to its location, so the
+runtime walks the frame pointer chain through generated frames only; nothing is done at calls that
+do not fail. The interpreter keeps the location of each active call and gives it to the runtime
+when asked.
+
 ## Verifier
 
 `verify(&Module) -> Diagnostics`. It checks symbol references, operand and result types, call
@@ -155,5 +180,5 @@ span of the offending instruction.
 
 ## Not yet
 
-Aggregate types, stack slots, switch, labeled break, debug locations and calling-convention attributes
-are left out until an example language needs them (see `docs/decisions.md`).
+Aggregate types, stack slots, switch, labeled break, DWARF debug information and calling-convention
+attributes are left out until an example language needs them (see `docs/decisions.md`).

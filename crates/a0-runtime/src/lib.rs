@@ -19,7 +19,11 @@ unsafe extern "C" {
     pub fn a0_rt_init(argc: i32, argv: *mut *mut c_char);
     pub fn a0_rt_exit(code: i32) -> !;
     pub fn a0_rt_flush();
-    pub fn a0_rt_trap(code: i32) -> !;
+    pub fn a0_rt_trap(code: i32, loc: u64, frame: *mut c_void) -> !;
+    fn a0_rt_set_debug(locations: *const u8, code: *const c_void);
+    fn a0_rt_set_frames(frames: Option<unsafe extern "C" fn(*mut u32, usize) -> usize>);
+    fn a0_rt_fail_frames(message: *const c_char, ids: *const u32, count: usize) -> !;
+    fn a0_rt_trace_text(ids: *const u32, count: usize, buf: *mut c_char, cap: usize) -> usize;
     pub fn a0_ffi_call(
         f: *const c_void,
         nargs: i32,
@@ -40,6 +44,60 @@ pub mod trap {
 
 /// Exit status of a process that trapped or panicked.
 pub const PANIC_EXIT_CODE: i32 = 101;
+
+/// Runtime functions that can fail. Generated code passes them two arguments more than the IR
+/// declares: the location of the call (a `u64` id in the location table, see [`debug`]) and the
+/// caller's frame pointer (null from the interpreter), so that a failure can say where it happened
+/// and how the program got there.
+pub const REPORTS_LOCATION: &[&str] = &[
+    "a0_rt_trap",
+    "a0_panic_bytes",
+    "a0_any_to_int",
+    "a0_any_cast_failed",
+    "a0_string_substr",
+    "a0_string_byte_at",
+    "a0_string_panic",
+    "a0_array_get",
+    "a0_array_set",
+    "a0_array_pop",
+    "a0_map_get",
+];
+
+/// Whether calls to the runtime function `name` pass a location and a frame pointer.
+pub fn reports_location(name: &str) -> bool {
+    REPORTS_LOCATION.contains(&name)
+}
+
+/// The location table the runtime prints traces from (`A0LocationTable` in `a0rt.h`).
+pub mod debug {
+    /// One location: (function as traces name it, file, line, column, parent id), where the parent
+    /// is the id (index plus one) of the location of the call it was inlined at, or 0.
+    pub type Entry<'a> = (&'a str, &'a str, u32, u32, u32);
+
+    /// The table's bytes: a header, the entries, then their strings, NUL-terminated.
+    pub fn encode(entries: &[Entry]) -> Vec<u8> {
+        let mut strings: Vec<u8> = Vec::new();
+        let mut offsets = std::collections::HashMap::new();
+        let mut string = |s: &str| -> u32 {
+            *offsets.entry(s.to_string()).or_insert_with(|| {
+                let at = strings.len() as u32;
+                strings.extend_from_slice(s.as_bytes());
+                strings.push(0);
+                at
+            })
+        };
+        let mut words: Vec<u32> = Vec::with_capacity(2 + entries.len() * 5);
+        words.push(entries.len() as u32);
+        words.push(0);
+        for &(func, file, line, col, parent) in entries {
+            words.extend([string(func), string(file), line, col, parent]);
+        }
+        words[1] = (words.len() * 4) as u32;
+        let mut out: Vec<u8> = words.iter().flat_map(|w| w.to_le_bytes()).collect();
+        out.extend(strings);
+        out
+    }
+}
 
 /// Maximum number of arguments `a0_ffi_call` supports.
 pub const FFI_MAX_ARGS: usize = 8;
@@ -129,9 +187,43 @@ pub fn exit(code: i32) -> ! {
     unsafe { a0_rt_exit(code) }
 }
 
-/// Reports a trap and exits with [`PANIC_EXIT_CODE`].
+/// Reports a trap with no location and exits with [`PANIC_EXIT_CODE`].
 pub fn trap(code: i32) -> ! {
-    unsafe { a0_rt_trap(code) }
+    unsafe { a0_rt_trap(code, 0, std::ptr::null_mut()) }
+}
+
+/// Gives the runtime the program's location table ([`debug::encode`]), which must live as long as
+/// the program runs, and how to find the interpreter's frames.
+///
+/// # Safety
+/// `locations` must stay valid until the program ends.
+pub unsafe fn set_debug(locations: &[u8], frames: unsafe extern "C" fn(*mut u32, usize) -> usize) {
+    unsafe {
+        a0_rt_set_debug(locations.as_ptr(), std::ptr::null());
+        a0_rt_set_frames(Some(frames));
+    }
+}
+
+/// Fails with `message` and the frames `ids` (innermost first), and exits.
+pub fn fail_frames(message: &str, ids: &[u32]) -> ! {
+    let message = std::ffi::CString::new(message.replace('\0', " ")).unwrap();
+    unsafe { a0_rt_fail_frames(message.as_ptr(), ids.as_ptr(), ids.len()) }
+}
+
+/// The trace the runtime prints for the frames `ids`, with the table given to [`set_debug`].
+pub fn trace_text(ids: &[u32]) -> String {
+    let len = unsafe { a0_rt_trace_text(ids.as_ptr(), ids.len(), std::ptr::null_mut(), 0) };
+    let mut buf = vec![0u8; len + 1];
+    unsafe {
+        a0_rt_trace_text(
+            ids.as_ptr(),
+            ids.len(),
+            buf.as_mut_ptr() as *mut c_char,
+            buf.len(),
+        )
+    };
+    buf.truncate(len);
+    String::from_utf8_lossy(&buf).into_owned()
 }
 
 /// The runtime compiled as a static library for the host, to be passed to the system linker.

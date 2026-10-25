@@ -36,6 +36,7 @@ pub struct Builder {
     value_names: HashSet<String>,
     var_names: HashSet<String>,
     span: Option<Span>,
+    inline: InlineId,
     diags: Diagnostics,
 }
 
@@ -54,6 +55,7 @@ impl Builder {
             value_names: HashSet::new(),
             var_names: HashSet::new(),
             span: None,
+            inline: InlineId::NONE,
             diags: Diagnostics::new(),
         }
     }
@@ -190,6 +192,51 @@ impl Builder {
     /// Sets the span attached to instructions built from now on (useful for diagnostics).
     pub fn set_span(&mut self, span: Option<Span>) {
         self.span = span;
+    }
+
+    /// The span and inline site instructions get now, to restore with [`Builder::set_location`].
+    pub fn location(&self) -> (Option<Span>, InlineId) {
+        (self.span, self.inline)
+    }
+
+    pub fn set_location(&mut self, (span, inline): (Option<Span>, InlineId)) {
+        self.span = span;
+        self.inline = inline;
+    }
+
+    /// Marks instructions built from now on as coming from the inline site `site` (or from no
+    /// inlined function), for stack traces.
+    pub fn set_inline(&mut self, site: Option<InlineId>) {
+        self.inline = site.unwrap_or(InlineId::NONE);
+    }
+
+    /// Records that `callee` was inlined at `call`, inside code itself inlined at `parent`.
+    pub fn add_inline_site(
+        &mut self,
+        callee: &str,
+        call: Option<Span>,
+        parent: Option<InlineId>,
+    ) -> InlineId {
+        self.module.inlines.push(crate::InlineSite {
+            callee: callee.to_string(),
+            call,
+            parent,
+        });
+        InlineId(self.module.inlines.len() as u32 - 1)
+    }
+
+    /// What stack traces call `f` (its IR name by default).
+    pub fn set_trace_name(&mut self, f: FuncId, name: &str) {
+        if let Some(func) = self.module.funcs.get_mut(f.index()) {
+            func.trace_name = Some(name.to_string());
+        }
+    }
+
+    /// Leaves `f` out of stack traces (an entry point or wrapper that is no source-level function).
+    pub fn hide_from_traces(&mut self, f: FuncId) {
+        if let Some(func) = self.module.funcs.get_mut(f.index()) {
+            func.trace_name = None;
+        }
     }
 
     // ---------------------------------------------------------------- names
@@ -608,6 +655,7 @@ impl Builder {
         }
         let inst = self.module.push_inst(self.region, op, args, imm, ty);
         self.module.set_inst_span(inst, self.span);
+        self.module.set_inst_inline(inst, self.inline);
         Some(inst)
     }
 }

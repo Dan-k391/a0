@@ -41,8 +41,9 @@ holds a `T` or `null`. Value types are copied.
 
 **Nullability.** `null<T>` has type `T?`. A `T` fits wherever a `T?` is expected. Fields, elements and
 calls need a non-null value. `if let x = e { a } else { b }` narrows: when `e` (a `T?`) is not null,
-`x` is a `T` holding it in `a`; otherwise `b` runs. `e!` turns a `T?` into a `T` directly and panics
-with `null reference` if it is null, and `x == null<T>` tests for null. Types do not change after a
+`x` is a `T` holding it in `a`; otherwise `b` runs. `e!` turns a `T?` into a `T` directly and fails
+if it is null (``unwrapped a `null` value with `!` ``, in the language's terms), and `x == null<T>`
+tests for null. Types do not change after a
 test (there is no flow typing, D34). Because the types guarantee it, generated code checks for null
 only at `if let` and `!`. A global of reference type starts as null, so its type must be nullable.
 
@@ -121,7 +122,7 @@ it has no trailing `;`, otherwise to `()`.
 | `x = e`, `o.f = e`, `a[i] = e` | assignment (type `unit`) |
 | `a + b`, `-a`, `a < b`, `a == b`, `a && b`, `!a` | operators, see below |
 | `f(a, b)`, `f::<T>(a)`, `e(a, b)` | call a function (with explicit type arguments), extern or closure |
-| `e!` | the value of a `T?`; panics with `null reference` if it is null |
+| `e!` | the value of a `T?`; a runtime error if it is null |
 | `fn(x: int) -> int { x + 1 }` | a closure; captures outer locals by reference |
 | `new S { f: e, ... }`, `new S<T> { ... }`, `o.f` | struct construction (every field) and field access |
 | `E::V(a, b)`, `E<T>::V`, `match e { V(x, y) => ..., _ => ... }` | enum construction and matching |
@@ -147,7 +148,7 @@ for other references; on `any` see below. `&&`, `||` short-circuit; `!` negates 
 | `substr(s, start, count)`, `byte_at(s, i)` | string slicing and bytes |
 | `str(x)` | format an `int`, `float`, `bool` (or `string`) as a string (floats: shortest round-trip, `1` not `1.0`) |
 | `print(s)`, `eprint(s)` | write a string to stdout / stderr (no newline added) |
-| `exit(code)`, `panic(message)` | stop the program (`panic` prints `a0: panic: message`, exit 101) |
+| `exit(code)`, `panic(message)` | stop the program (`panic` prints `panic: message` and the stack trace, exit 101) |
 | `clock()` | processor time in seconds, as a `float` |
 
 ## Conversions and dynamic values
@@ -229,7 +230,11 @@ replaced generic items with one copy per combination of type arguments:
   inline unless both are references (strings and boxed integers compare by value in the runtime).
 - Strings, arrays, maps, formatting and boxing of large integers are runtime calls.
 - Integer division by zero, and dividing the minimum `int` by -1, trap like the core IR's `sdiv`
-  (`a0: trap: ...`, exit 101).
+  (`panic: integer division by zero` and the stack trace, exit 101).
+- Every IR instruction is attributed to the HIR expression it comes from (its span) and to the call
+  it was inlined at, if the optimizer inlined it, and every function gets its HIR name for stack
+  traces (closures `f::{closure}`; entry points and wrappers none), so runtime errors name source
+  locations and source functions (`docs/diagnostics.md`).
 - `a0 lower prog.hir` prints the core IR a module lowers to; `a0 run`/`a0 build` accept `.hir` files.
 
 ## Optimization
@@ -238,9 +243,12 @@ Before lowering, the HIR optimizer (`opt.rs`) runs on the monomorphized module. 
 needs nothing from frontends, and `A0_OPT=0` (or `LowerOptions { optimize: false }`) turns it off.
 It complements Cranelift, which optimizes within each function:
 
-- **Inlining** of small functions (up to 80 nodes, no closures inside, not calling themselves), three
-  levels deep. A `return` in the middle of an inlined function becomes the value of an `if`
-  (`if c { return a } rest` is `if c { a } else { rest }`); functions with other `return`s stay calls.
+- **Inlining** of small functions (no closures inside, not calling themselves), callees first: a
+  function is inlined if it has at most 120 nodes after its own inlining, and a body grows to at most
+  4000 nodes or twice its size (D37), so inlining stays bounded however calls are chained. A `return`
+  in the middle of an inlined function becomes the value of an `if` (`if c { return a } rest` is
+  `if c { a } else { rest }`); functions with other `return`s stay calls. The copies remember where
+  they were inlined, so stack traces show the inlined functions.
 - **`any` folding.** `(x as any) is T` and `(x as any) as T` are decided from `x`'s type, also through
   a local: `let v = <... x as any>` (never reassigned) becomes `let raw = <... x>; let v = raw as
   any`, so tests of `v` fold and `v as T` reads `raw`.
@@ -252,7 +260,8 @@ It complements Cranelift, which optimizes within each function:
 
 Only expressions without effects are removed or duplicated, so traps, panics, output and evaluation
 order stay as written. Every test program runs optimized and unoptimized, interpreted, native and
-under GC stress, and all must agree.
+under GC stress, and all must agree, as must generated random programs (`crates/a0/tests/random.rs`,
+D38), stack traces included.
 
 ## Not yet
 

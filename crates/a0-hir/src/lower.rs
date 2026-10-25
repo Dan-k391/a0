@@ -98,7 +98,7 @@ struct Runtime {
     frame_push: IrFunc,
     frame_pop: IrFunc,
     add_root: IrFunc,
-    panic_null: IrFunc,
+    panic_bytes: IrFunc,
     any_from_int: IrFunc,
     any_is_int: IrFunc,
     any_is_string: IrFunc,
@@ -146,7 +146,7 @@ impl Runtime {
             frame_push: f("a0_gc_frame_push", &[I64], Some(Ptr)),
             frame_pop: f("a0_gc_frame_pop", &[I64], None),
             add_root: f("a0_gc_add_root", &[Ptr, I64], None),
-            panic_null: f("a0_panic_null", &[], None),
+            panic_bytes: f("a0_panic_bytes", &[Ptr, I64], None),
             any_from_int: f("a0_any_from_int", &[I64], Some(I64)),
             any_is_int: f("a0_any_is_int", &[I64], Some(I64)),
             any_is_string: f("a0_any_is_string", &[I64], Some(I64)),
@@ -258,6 +258,10 @@ struct Lowerer<'a> {
     /// Locals assigned after their declaration.
     reassigned: Vec<bool>,
     f: Option<FnState>,
+    /// The IR inline site of each HIR one, made when first needed.
+    inline_ids: HashMap<u32, a0_ir::InlineId>,
+    /// What unwrapping a null says, in the language's words.
+    null_message: Option<(IrGlobal, usize)>,
 }
 
 impl<'a> Lowerer<'a> {
@@ -299,7 +303,30 @@ impl<'a> Lowerer<'a> {
             scoped: Vec::new(),
             reassigned: Vec::new(),
             f: None,
+            inline_ids: HashMap::new(),
+            null_message: None,
         }
+    }
+
+    /// Attributes the instructions built next to the HIR expression `e`: its span, and the call it
+    /// was inlined at, if it was, for stack traces.
+    fn at(&mut self, e: ExprId) {
+        self.b.set_span(self.m.expr(e).span);
+        let site = self.m.inline_of.get(&e).copied();
+        let site = site.map(|s| self.ir_site(s));
+        self.b.set_inline(site);
+    }
+
+    fn ir_site(&mut self, site: u32) -> a0_ir::InlineId {
+        if let Some(&id) = self.inline_ids.get(&site) {
+            return id;
+        }
+        let s = self.m.inline_sites[site as usize].clone();
+        let parent = s.parent.map(|p| self.ir_site(p));
+        let callee = self.m.funcs[s.callee.index()].name.clone();
+        let id = self.b.add_inline_site(&callee, s.call, parent);
+        self.inline_ids.insert(site, id);
+        id
     }
 
     // ---------------------------------------------------------------- types
@@ -431,6 +458,7 @@ impl<'a> Lowerer<'a> {
             let ir = self
                 .b
                 .declare_function(&format!("hir.{}", f.name), &params, ret);
+            self.b.set_trace_name(ir, &f.name);
             self.funcs.push(ir);
         }
         // Closures: one IR function and one descriptor per closure body.
@@ -445,6 +473,8 @@ impl<'a> Lowerer<'a> {
             *n += 1;
             let (params, ret) = self.signature(id, true);
             let f = self.b.declare_function(&name, &params, ret);
+            let trace_name = format!("{}::{{closure}}", m.funcs[body.func.index()].name);
+            self.b.set_trace_name(f, &trace_name);
             self.lambda_funcs.insert(id, f);
             let g = self.b.add_global_int(&format!("{name}.type"), Type::Ptr, 0);
             let mut layout = vec![WORD_RAW];
@@ -467,6 +497,7 @@ impl<'a> Lowerer<'a> {
                 let (params, ret) = self.signature(body, true);
                 let name = format!("hir.{}.as_closure", m.funcs[f.index()].name);
                 let w = self.b.declare_function(&name, &params, ret);
+                self.b.hide_from_traces(w);
                 let g = self.b.add_global_int(&format!("{name}.type"), Type::Ptr, 0);
                 self.descs.push(TypeDesc {
                     global: g,
@@ -569,8 +600,9 @@ impl<'a> Lowerer<'a> {
         g
     }
 
+    /// The type as messages write it (`` `int` ``), for runtime errors.
     fn type_name_data(&mut self, t: TypeId) -> (IrGlobal, usize) {
-        let name = self.m.type_name(t);
+        let name = self.m.quote_type(t);
         if let Some(&g) = self.type_names.get(&name) {
             return (g, name.len());
         }
@@ -585,6 +617,9 @@ impl<'a> Lowerer<'a> {
     /// `main`: registers descriptors, roots and string constants, then runs the HIR `main`.
     fn entry(&mut self) {
         let main = self.b.declare_function("main", &[], Some(Type::I32));
+        self.b.hide_from_traces(main);
+        self.b.set_span(None);
+        self.b.set_inline(None);
         let descs: Vec<(IrGlobal, IrGlobal, IrGlobal, usize, usize, Option<IrGlobal>)> = self
             .descs
             .iter()
@@ -809,7 +844,22 @@ impl<'a> Lowerer<'a> {
         let null = self.b.null();
         let is_null = self.b.icmp(IntCC::Eq, p, null);
         self.b.if_(is_null);
-        self.b.call(self.rt.panic_null, &[]);
+        let (message, len) = match self.null_message {
+            Some(m) => m,
+            None => {
+                let text = format!(
+                    "unwrapped a {} value with {}",
+                    self.m.term(Term::Null),
+                    self.m.term(Term::Unwrap)
+                );
+                let g = self.b.add_data("hir.null_message", text.as_bytes());
+                self.null_message = Some((g, text.len()));
+                (g, text.len())
+            }
+        };
+        let mp = self.b.global_addr(message);
+        let ml = self.b.iconst(Type::I64, len as i64);
+        self.b.call(self.rt.panic_bytes, &[mp, ml]);
         self.b.unreachable();
         self.b.end_if();
     }
@@ -841,6 +891,10 @@ impl<'a> Lowerer<'a> {
     fn function(&mut self, body: BodyId, ir: IrFunc, closure: bool) {
         let m = self.m;
         self.b.begin_function(ir);
+        // The prologue and epilogue belong to the function itself.
+        let decl = m.funcs[m.bodies[body.index()].func.index()].span;
+        self.b.set_span(decl);
+        self.b.set_inline(None);
         let slot_count = self.b.iconst(Type::I64, 0);
         let frame = if self.needs_frame(body, closure) {
             Some(self.b.call(self.rt.frame_push, &[slot_count]).unwrap())
@@ -1067,7 +1121,11 @@ impl<'a> Lowerer<'a> {
 
     fn expr(&mut self, e: ExprId) -> V {
         let mark = self.mark();
+        let outer = self.b.location();
+        self.at(e);
         let r = self.expr_inner(e);
+        // What the enclosing expression builds after this one is its own.
+        self.b.set_location(outer);
         self.release(mark);
         r
     }

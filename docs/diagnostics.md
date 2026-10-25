@@ -118,6 +118,36 @@ The builder needs to know where things are. A frontend that does these gets ever
 The C API binds all of these (`a0_hir_set_name_span`, `a0_hir_set_term`, `a0_hir_report_code`, ...)
 and `a0_diagnostics_code` reads a diagnostic's code.
 
+## Runtime errors
+
+A program that fails prints what failed, with the values involved, and the stack of source-level
+functions that led there, then exits with status 101, the same in the interpreter and in native
+code, optimized or not:
+
+```text
+panic: index out of bounds: the length is 3 but the index is 3
+    at at (runtime_index.mn:4:10)
+    at last (runtime_index.mn:8:10)
+    at main (runtime_index.mn:14:9)
+```
+
+- Functions the optimizer inlined still have their frames: `at` and `last` above were inlined into
+  `main`. Closures are named after the function they are in (`main::{closure}`).
+- Messages carry the values: the length and the index, the missing key (`key not found:
+  "missing"`), the range of a substring, the type an `any` held (`expected `int`, found
+  `string``). Unwrapping a null says so in the language's words (`unwrapped a `null` value with
+  `!``, from its `Term`s). Integer division by zero, the program's own `panic`, a failed `pop`
+  and unreachable code are reported the same way.
+- Deep recursion through one call shows the call once, with `... the frame above repeats N more
+  times`; at most 64 frames are shown. A stack overflow prints no trace: it would be the same call
+  thousands of times, and how deep the stack got is not the same in both backends.
+- Programs that do not fail pay nothing measurable (D45): failures carry their location and frame
+  pointer only into the runtime functions that can fail, and the trace is found from tables when it
+  is needed.
+
+Lox prints its own runtime errors in jlox's format, since the book's suite prescribes them; a
+language can do the same with its own checks.
+
 ## Warnings
 
 A language turns warnings on with `enable_warning`; none is on by default, since what is worth a

@@ -5,7 +5,7 @@
 
 use std::collections::HashMap;
 
-use a0_diag::Span;
+use a0_diag::{SourceMap, Span};
 
 use crate::types::*;
 
@@ -22,6 +22,20 @@ pub(crate) struct FuncData {
     pub sig: SigId,
     pub body: Option<BodyData>,
     pub span: Option<Span>,
+    /// What stack traces call the function; `None` leaves it out of them.
+    pub trace_name: Option<String>,
+}
+
+/// A place where a source-level function was inlined: instructions that came from its body name it
+/// in stack traces, followed by the function that called it, at `call`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct InlineSite {
+    /// The inlined function, as traces name it.
+    pub callee: String,
+    /// The call that was inlined, in the function around it.
+    pub call: Option<Span>,
+    /// Where the function around the call was itself inlined, if it was.
+    pub parent: Option<InlineId>,
 }
 
 #[derive(Clone)]
@@ -80,6 +94,8 @@ pub(crate) struct InstData {
     pub func: FuncId,
     pub parent: Region,
     pub span: Option<Span>,
+    /// The inline site the instruction came from (`NONE` if it was not inlined).
+    pub inline: InlineId,
 }
 
 #[derive(Clone)]
@@ -112,6 +128,9 @@ pub struct Module {
     pub(crate) regions: Vec<RegionData>,
     pub(crate) args: Vec<Value>,
     pub(crate) symbols: HashMap<String, Symbol>,
+    pub(crate) inlines: Vec<InlineSite>,
+    /// The sources spans point into, so that runtime errors can say where they happened.
+    pub(crate) sources: Option<SourceMap>,
 }
 
 impl Module {
@@ -129,7 +148,27 @@ impl Module {
             regions: Vec::new(),
             args: Vec::new(),
             symbols: HashMap::new(),
+            inlines: Vec::new(),
+            sources: None,
         }
+    }
+
+    /// Gives the module the sources its spans point into (the map the frontend registered them
+    /// in), so that runtime errors say where in them they happened.
+    pub fn set_sources(&mut self, sources: SourceMap) {
+        self.sources = Some(sources);
+    }
+
+    pub fn sources(&self) -> Option<&SourceMap> {
+        self.sources.as_ref()
+    }
+
+    pub fn inline_site(&self, id: InlineId) -> &InlineSite {
+        &self.inlines[id.index()]
+    }
+
+    pub fn inline_count(&self) -> u32 {
+        self.inlines.len() as u32
     }
 
     // ---------------------------------------------------------------- module
@@ -184,6 +223,11 @@ impl Module {
 
     pub fn func_name(&self, f: FuncId) -> &str {
         &self.funcs[f.index()].name
+    }
+
+    /// What stack traces call the function, or `None` if they leave it out.
+    pub fn func_trace_name(&self, f: FuncId) -> Option<&str> {
+        self.funcs[f.index()].trace_name.as_deref()
     }
 
     pub fn func_sig(&self, f: FuncId) -> SigId {
@@ -345,6 +389,11 @@ impl Module {
         self.insts[i.index()].span
     }
 
+    /// Where the instruction was inlined, if it came from an inlined function.
+    pub fn inst_inline(&self, i: Inst) -> Option<InlineId> {
+        self.insts[i.index()].inline.option()
+    }
+
     /// The constant of an `iconst`, in canonical form (see [`canonical_int`]).
     pub fn inst_iconst(&self, i: Inst) -> i64 {
         self.insts[i.index()].imm as i64
@@ -422,6 +471,7 @@ impl Module {
             sig,
             body: None,
             span,
+            trace_name: Some(name.to_string()),
         });
         self.items.push(Item::Func(id));
         self.symbols.insert(name.to_string(), Symbol::func(id));
@@ -521,6 +571,7 @@ impl Module {
             func,
             parent: region,
             span: None,
+            inline: InlineId::NONE,
         });
         self.regions[region.index()].insts.push(inst);
         inst
@@ -532,6 +583,10 @@ impl Module {
 
     pub(crate) fn set_inst_span(&mut self, inst: Inst, span: Option<Span>) {
         self.insts[inst.index()].span = span;
+    }
+
+    pub(crate) fn set_inst_inline(&mut self, inst: Inst, inline: InlineId) {
+        self.insts[inst.index()].inline = inline;
     }
 }
 

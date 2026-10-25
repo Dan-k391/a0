@@ -15,6 +15,7 @@ fn run(cmd: &mut Command) -> Output {
     use std::process::Stdio;
     use std::time::{Duration, Instant};
     let mut child = cmd
+        .current_dir(root())
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -83,15 +84,23 @@ fn expectations(text: &str, comment: &str) -> Expect {
     e
 }
 
-/// Every program: core IR in `tests/programs`, HIR in `tests/hir`.
+/// The repository root, where the programs run, so that their paths in stack traces are as their
+/// expectations write them (`tests/hir/x.hir`).
+fn root() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
+}
+
+/// Every program, relative to the root: core IR in `tests/programs`, HIR in `tests/hir`.
 fn programs() -> Vec<PathBuf> {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let root = root();
     let mut files = Vec::new();
     for (dir, ext) in [("tests/programs", "a0ir"), ("tests/hir", "hir")] {
         for entry in std::fs::read_dir(root.join(dir)).unwrap() {
             let p = entry.unwrap().path();
             if p.extension().is_some_and(|x| x == ext) {
-                files.push(p);
+                // Forward slashes on every system, as the expectations write them.
+                let name = p.file_name().unwrap().to_string_lossy();
+                files.push(PathBuf::from(format!("{dir}/{name}")));
             }
         }
     }
@@ -116,7 +125,9 @@ fn check_programs(run: &dyn Fn(&Path) -> Output) {
     let files = programs();
     assert!(!files.is_empty());
     for file in &files {
-        let text = std::fs::read_to_string(file).unwrap().replace("\r\n", "\n");
+        let text = std::fs::read_to_string(root().join(file))
+            .unwrap()
+            .replace("\r\n", "\n");
         let comment = if file.extension().is_some_and(|x| x == "hir") {
             "//"
         } else {

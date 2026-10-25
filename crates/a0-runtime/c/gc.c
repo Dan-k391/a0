@@ -181,7 +181,7 @@ uint64_t *a0_gc_frame_push(int64_t slots) {
         shadow = (uint64_t *)calloc(SHADOW_CAPACITY, sizeof(uint64_t));
         if (shadow == NULL) a0_panic("out of memory");
     }
-    if (shadow_top + slots > SHADOW_CAPACITY) a0_rt_trap(A0_TRAP_STACK_OVERFLOW);
+    if (shadow_top + slots > SHADOW_CAPACITY) a0_rt_trap(A0_TRAP_STACK_OVERFLOW, 0, NULL);
     /* Every word above the top is zero (the float 0.0 in the `any` encoding, not a reference), since
      * frames are cleared before they are popped: the new frame needs no clearing. */
     uint64_t *frame = &shadow[shadow_top];

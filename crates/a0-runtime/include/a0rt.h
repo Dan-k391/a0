@@ -43,11 +43,65 @@ enum {
 /* Exit status used by traps and panics. */
 #define A0_PANIC_EXIT_CODE 101
 
-/* Prints "a0: trap: <reason>" to stderr and exits with A0_PANIC_EXIT_CODE. */
-A0_NORETURN void a0_rt_trap(int32_t code);
-/* Prints "a0: panic: <message>" to stderr and exits with A0_PANIC_EXIT_CODE. */
+/* A failure prints "panic: <message>" to stderr, then the stack of source-level functions that led
+ * to it, and exits with A0_PANIC_EXIT_CODE:
+ *
+ *     panic: index out of bounds: the length is 2 but the index is 5
+ *         at get (prog.mn:4:9)
+ *         at main (prog.mn:9:3)
+ *
+ * Runtime functions that can fail take two arguments more than the IR declares, which generated
+ * code passes: `loc`, the location of the failing operation in the program's location table (0
+ * when unknown), and `frame`, the frame pointer of the generated function that called (NULL from
+ * the interpreter, which reports its frames through a0_rt_set_frames). */
+
+/* One entry of the location table: a function as traces name it and a place in the source (`func`
+ * and `file` are offsets of NUL-terminated strings; `file` names an empty one when the place is not
+ * known), and for inlined code the id of the location of the call it was inlined at (0 for none). */
+typedef struct A0Location {
+    uint32_t func, file, line, col, parent;
+} A0Location;
+/* `count` A0Locations follow the table, with ids 1 to count; the strings start `strings` bytes
+ * after its start. */
+typedef struct A0LocationTable {
+    uint32_t count, strings;
+} A0LocationTable;
+/* Native code: each generated function, and the code ranges of the calls in it with their
+ * locations (offsets from the function's start), so that return addresses find their calls. */
+typedef struct A0CodeFunction {
+    const uint8_t *start;
+    uint32_t size, first, count, unused;
+} A0CodeFunction;
+typedef struct A0CodeRange {
+    uint32_t start, end, location;
+} A0CodeRange;
+typedef struct A0CodeTable {
+    uint64_t count;
+    const A0CodeFunction *functions;
+    const A0CodeRange *ranges;
+} A0CodeTable;
+
+/* Gives the runtime the program's tables (`code` is NULL in the interpreter). */
+void a0_rt_set_debug(const A0LocationTable *locations, const A0CodeTable *code);
+/* The interpreter's frames: fills `out` with the location of the active call in each frame,
+ * innermost first, and returns how many. */
+typedef size_t (*A0FramesFn)(uint32_t *out, size_t max);
+void a0_rt_set_frames(A0FramesFn frames);
+/* Fails with `message` at `loc`. */
+A0_NORETURN void a0_rt_fail(const char *message, uint64_t loc, void *frame);
+A0_NORETURN void a0_rt_fail_bytes(const uint8_t *message, int64_t len, uint64_t loc, void *frame);
+/* Fails with `message` and the frames `ids` (the interpreter's own failures). */
+A0_NORETURN void a0_rt_fail_frames(const char *message, const uint32_t *ids, size_t count);
+/* Writes the trace of the frames `ids` into `buf` (NUL-terminated, cut to `cap`); returns its
+ * full length. */
+size_t a0_rt_trace_text(const uint32_t *ids, size_t count, char *buf, size_t cap);
+/* "index out of bounds: the length is <len> but the index is <index>". */
+A0_NORETURN void a0_rt_out_of_bounds(int64_t len, int64_t index, uint64_t loc, void *frame);
+
+A0_NORETURN void a0_rt_trap(int32_t code, uint64_t loc, void *frame);
+/* A failure of the runtime itself (out of memory), with no location. */
 A0_NORETURN void a0_panic(const char *message);
-A0_NORETURN void a0_panic_bytes(const uint8_t *message, int64_t len);
+A0_NORETURN void a0_panic_bytes(const uint8_t *message, int64_t len, uint64_t loc, void *frame);
 
 /* ---- Output ------------------------------------------------------------------------------- */
 
@@ -176,12 +230,13 @@ int64_t a0_any_is_int(uint64_t value);
 int64_t a0_any_is_string(uint64_t value);
 /* Whether `value` holds an object whose type (or type family) is `type`. */
 int64_t a0_any_is_type(uint64_t value, const A0Type *type);
-int64_t a0_any_to_int(uint64_t value);
+int64_t a0_any_to_int(uint64_t value, uint64_t loc, void *frame);
 /* Equality of two dynamic values: floats by IEEE, ints by value, strings by content, others by
  * identity. */
 int64_t a0_any_eq(uint64_t a, uint64_t b);
-/* Panics with "expected <expected>, found <type of value>". */
-A0_NORETURN void a0_any_cast_failed(uint64_t value, const uint8_t *expected, int64_t len);
+/* Fails with "expected <expected>, found <type of value>". */
+A0_NORETURN void a0_any_cast_failed(uint64_t value, const uint8_t *expected, int64_t len,
+                                    uint64_t loc, void *frame);
 
 /* ---- Strings ----------------------------------------------------------------------------------- */
 
@@ -197,14 +252,14 @@ int64_t a0_string_len(A0String *s);
 int64_t a0_string_eq(A0String *a, A0String *b);
 /* -1, 0 or 1, comparing bytes. */
 int64_t a0_string_compare(A0String *a, A0String *b);
-A0String *a0_string_substr(A0String *s, int64_t start, int64_t count);
-int64_t a0_string_byte_at(A0String *s, int64_t index);
+A0String *a0_string_substr(A0String *s, int64_t start, int64_t count, uint64_t loc, void *frame);
+int64_t a0_string_byte_at(A0String *s, int64_t index, uint64_t loc, void *frame);
 A0String *a0_string_from_int(int64_t value);
 A0String *a0_string_from_float(double value);
 A0String *a0_string_from_bool(int64_t value);
 void a0_string_print(A0String *s);
 void a0_string_eprint(A0String *s);
-A0_NORETURN void a0_string_panic(A0String *message);
+A0_NORETURN void a0_string_panic(A0String *message, uint64_t loc, void *frame);
 
 /* ---- Arrays ------------------------------------------------------------------------------------ *
  * Elements are 64-bit words traced as `elem_kind` (A0_WORD_*). */
@@ -218,10 +273,10 @@ typedef struct A0Array {
 
 A0Array *a0_array_new(int64_t elem_kind, int64_t capacity);
 int64_t a0_array_len(A0Array *a);
-uint64_t a0_array_get(A0Array *a, int64_t index);
-void a0_array_set(A0Array *a, int64_t index, uint64_t value);
+uint64_t a0_array_get(A0Array *a, int64_t index, uint64_t loc, void *frame);
+void a0_array_set(A0Array *a, int64_t index, uint64_t value, uint64_t loc, void *frame);
 void a0_array_push(A0Array *a, uint64_t value);
-uint64_t a0_array_pop(A0Array *a);
+uint64_t a0_array_pop(A0Array *a, uint64_t loc, void *frame);
 
 /* ---- Maps -------------------------------------------------------------------------------------- *
  * Hash maps that remember insertion order. Keys are raw words (ints, booleans) or strings compared by
@@ -234,13 +289,13 @@ typedef struct A0Map A0Map;
 A0Map *a0_map_new(int64_t key_kind, int64_t value_kind);
 int64_t a0_map_len(A0Map *m);
 int64_t a0_map_has(A0Map *m, uint64_t key);
-uint64_t a0_map_get(A0Map *m, uint64_t key);
+uint64_t a0_map_get(A0Map *m, uint64_t key, uint64_t loc, void *frame);
 void a0_map_set(A0Map *m, uint64_t key, uint64_t value);
 int64_t a0_map_remove(A0Map *m, uint64_t key);
 /* The keys in insertion order, as an array with elements of the key's word kind. */
 A0Array *a0_map_keys(A0Map *m);
 
-/* Panics for HIR's checked operations. */
+/* A null reference where the runtime needed an object. */
 A0_NORETURN void a0_panic_null(void);
 
 #ifdef __cplusplus

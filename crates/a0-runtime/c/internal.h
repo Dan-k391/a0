@@ -49,6 +49,14 @@ void a0_map_finalize(A0Map *m);
 
 uint64_t a0_string_hash(A0String *s);
 
+/* For failure paths: kept out of the functions that fail, so that their fast paths need no stack
+ * buffers for messages. */
+#if defined(_MSC_VER)
+#define A0_COLD __declspec(noinline)
+#else
+#define A0_COLD __attribute__((noinline, cold))
+#endif
+
 #define A0_ANY_IS_REF(w) (((w) & A0_ANY_REF_TAG) == A0_ANY_REF_TAG)
 #define A0_ANY_PTR(w) ((void *)(uintptr_t)((w) & 0x0000ffffffffffffull))
 #define A0_ANY_IS_FLOAT(w) (((w) & A0_ANY_QNAN) != A0_ANY_QNAN)

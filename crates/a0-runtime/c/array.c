@@ -34,15 +34,15 @@ A0Array *a0_array_new(int64_t elem_kind, int64_t capacity) {
 
 int64_t a0_array_len(A0Array *a) { return check(a)->len; }
 
-uint64_t a0_array_get(A0Array *a, int64_t index) {
+uint64_t a0_array_get(A0Array *a, int64_t index, uint64_t loc, void *frame) {
     check(a);
-    if (index < 0 || index >= a->len) a0_panic("index out of bounds");
+    if (index < 0 || index >= a->len) a0_rt_out_of_bounds(a->len, index, loc, frame);
     return a->data[index];
 }
 
-void a0_array_set(A0Array *a, int64_t index, uint64_t value) {
+void a0_array_set(A0Array *a, int64_t index, uint64_t value, uint64_t loc, void *frame) {
     check(a);
-    if (index < 0 || index >= a->len) a0_panic("index out of bounds");
+    if (index < 0 || index >= a->len) a0_rt_out_of_bounds(a->len, index, loc, frame);
     a->data[index] = value;
 }
 
@@ -63,9 +63,9 @@ void a0_array_push(A0Array *a, uint64_t value) {
     a->data[a->len++] = value;
 }
 
-uint64_t a0_array_pop(A0Array *a) {
+uint64_t a0_array_pop(A0Array *a, uint64_t loc, void *frame) {
     check(a);
-    if (a->len == 0) a0_panic("pop from an empty array");
+    if (a->len == 0) a0_rt_fail("pop from an empty array", loc, frame);
     return a->data[--a->len];
 }
 

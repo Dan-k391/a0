@@ -5,6 +5,7 @@
  * up the next time the map is rebuilt. */
 #include "internal.h"
 
+#include <stdio.h>
 #include <string.h>
 
 typedef struct {
@@ -122,10 +123,22 @@ int64_t a0_map_has(A0Map *m, uint64_t key) {
     return lookup(m, key) >= 0;
 }
 
-uint64_t a0_map_get(A0Map *m, uint64_t key) {
+static A0_COLD A0_NORETURN void key_not_found(A0Map *m, uint64_t key, uint64_t loc, void *frame) {
+    char message[160];
+    if (m->key_kind == A0_KEY_STRING) {
+        A0String *s = (A0String *)(uintptr_t)key;
+        snprintf(message, sizeof message, "key not found: \"%.*s\"%s", s->len > 100 ? 100 : (int)s->len,
+                 (const char *)s->bytes, s->len > 100 ? "..." : "");
+    } else {
+        snprintf(message, sizeof message, "key not found: %lld", (long long)key);
+    }
+    a0_rt_fail(message, loc, frame);
+}
+
+uint64_t a0_map_get(A0Map *m, uint64_t key, uint64_t loc, void *frame) {
     check(m);
     int64_t e = lookup(m, key);
-    if (e < 0) a0_panic("key not found");
+    if (e < 0) key_not_found(m, key, loc, frame);
     return m->entries[e].value;
 }
 

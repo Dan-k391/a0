@@ -710,9 +710,9 @@ pub unsafe extern "C" fn a0_run(
         }
         Ok(Err(trap)) => {
             set(a0_runtime::PANIC_EXIT_CODE);
-            let what = if trap.code == 0 { "panic" } else { "trap" };
-            let message = format!("{what}: {}", trap.message);
-            unsafe { report(diags, Some(error(&message))) };
+            // What a program prints when it fails: the message, then its stack trace.
+            let message = format!("panic: {}\n{}", trap.message, trap.trace());
+            unsafe { report(diags, Some(error(message.trim_end()))) };
             1
         }
         Err(d) => {

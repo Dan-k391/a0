@@ -260,6 +260,9 @@ impl Language {
                 Err(d) => return self.internal_error(&d, &sources),
             },
         };
+        // Runtime errors say where in the source they happened.
+        let mut module = module;
+        module.set_sources(sources.clone());
         match inv.command {
             Command::Ir => {
                 print!("{module}");
