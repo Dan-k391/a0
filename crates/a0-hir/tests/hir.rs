@@ -354,7 +354,10 @@ fn builders_infer_types_and_generics_are_monomorphized() {
     let m = b.finish().unwrap_or_else(|d| panic!("{}", d.summary()));
     assert_eq!(m.type_name(m.local_type(xs)), "array<int>");
 
-    let ir = lower(&m).unwrap().to_string();
+    // Without inlining, so that the instances are still called (lowering skips unused functions).
+    let ir = lower_with(&m, LowerOptions { optimize: false })
+        .unwrap()
+        .to_string();
     assert!(ir.contains("func @\"hir.id<int>\"("), "{ir}");
     assert!(ir.contains("func @\"hir.id<string>\"("), "{ir}");
 }
@@ -454,7 +457,7 @@ fn h0(x: int) -> int { x + 1 }
 fn casts_guarded_by_a_type_test_are_not_checked_again() {
     let src = |assign: &str| {
         format!(
-            "module \"m\";\nstruct C {{ n: int }}\nfn get(v: any) -> int {{\n  if v is C {{ {assign}(v as C).n }} else {{ 0 }}\n}}\nfn main() -> int {{ get(new C {{ n: 1 }} as any) }}\n"
+            "module \"m\";\nstruct C {{ n: int }}\nfn get(v: any) -> int {{\n  if v is C {{ {assign}(v as C).n }} else {{ 0 }}\n}}\nfn main() -> int {{ let f = get; f(new C {{ n: 1 }} as any) }}\n"
         )
     };
     let get_of = |src: &str, optimize: bool| {

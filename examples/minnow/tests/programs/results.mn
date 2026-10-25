@@ -1,0 +1,67 @@
+// Results: `?` passes a failure, or null, on to the caller.
+import std;
+import std.str as s;
+import std.fs;
+
+enum Outcome<T> { Done(T), Failed(string), Skipped }
+
+fn sum(text: string) -> std.Result<int, string> {
+  let total = 0;
+  for part in s.split(text, ",") {
+    total = total + s.parse_int(part)?;
+  }
+  return std.Result::Ok(total);
+}
+
+fn load(path: string) -> std.Result<int, string> {
+  let text = fs.read(path)?;
+  return std.Result::Ok(len(text));
+}
+
+fn first_word(text: string) -> string? {
+  let words = s.words(text);
+  if len(words) == 0 { return null; }
+  return words[0];
+}
+
+fn shout(text: string) -> string? {
+  let word = first_word(text)?;
+  return s.upper(word) + "!";
+}
+
+fn half(n: int) -> Outcome<int> {
+  if n == 0 { return Outcome::Skipped; }
+  if n % 2 == 1 { return Outcome::Failed("odd: " + str(n)); }
+  return Outcome::Done(n / 2);
+}
+
+fn quarter(n: int) -> Outcome<int> {
+  let h = half(n)?;
+  return Outcome::Done(half(h)?);
+}
+
+fn describe(o: Outcome<int>) -> string {
+  return match o { Done(v) => "done " + str(v), Failed(why) => "failed " + why, Skipped => "skipped" };
+}
+
+fn main() {
+  match sum("1,2,3") { Ok(n) => print(n), Err(e) => print(e) }
+  match sum("1,x,3") { Ok(n) => print(n), Err(e) => print("error: " + e) }
+  match load("no-such-file.txt") {
+    Ok(n) => print(n),
+    Err(e) => print(s.starts_with(e, "cannot read no-such-file.txt")),
+  }
+  print(shout("hello world")!);
+  print(shout("   ") == null);
+  print(describe(quarter(8)));
+  print(describe(quarter(6)));
+  print(describe(quarter(0)));
+}
+// expect: 6
+// expect: error: not an integer
+// expect: true
+// expect: HELLO!
+// expect: true
+// expect: done 2
+// expect: failed odd: 3
+// expect: skipped

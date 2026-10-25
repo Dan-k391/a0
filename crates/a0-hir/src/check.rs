@@ -180,7 +180,7 @@ impl Checker<'_> {
                     self.error(e, &msg);
                 }
             }
-            ExprKind::Let(l, _) | ExprKind::IfLet(l, ..) => {
+            ExprKind::Let(l, _) | ExprKind::IfLet(l, ..) | ExprKind::Try(_, l, _) => {
                 if m.locals[l.index()].body != body {
                     let msg = format!(
                         "'{}' is declared with let in a different body",

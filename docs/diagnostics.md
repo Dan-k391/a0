@@ -80,6 +80,7 @@ list matches it.
 | E2017 | invalid map key |
 | E2018 | not a structure |
 | E2019 | invalid use of a type parameter |
+| E2020 | cannot pass the failure on |
 | E3001 | outside a loop |
 | E4001 | no entry point |
 | E4002 | invalid entry point |

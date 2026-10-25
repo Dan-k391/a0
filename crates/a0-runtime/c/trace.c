@@ -169,6 +169,25 @@ void a0_rt_fail_frames(const char *message, const uint32_t *ids, size_t count) {
     fail((const uint8_t *)message, strlen(message), ids, count);
 }
 
+/* Where the exception in flight was thrown: kept by a0_rt_throw for a0_rt_uncaught, since the
+ * frames are gone by the time the exception reaches `main`. */
+static uint32_t g_thrown[1024];
+static size_t g_thrown_count;
+
+void a0_rt_throw(uint64_t loc, void *frame) {
+    g_thrown_count = frames(loc, frame, g_thrown, sizeof g_thrown / sizeof g_thrown[0]);
+}
+
+void a0_rt_uncaught(uint64_t value) {
+    char what[1024];
+    a0_any_describe(value, what, sizeof what);
+    char message[1100];
+    int n = snprintf(message, sizeof message, "uncaught exception: %s", what);
+    if (n < 0) n = 0;
+    if ((size_t)n >= sizeof message) n = (int)sizeof message - 1;
+    fail((const uint8_t *)message, (size_t)n, g_thrown, g_thrown_count);
+}
+
 A0_COLD void a0_rt_out_of_bounds(int64_t len, int64_t index, uint64_t loc, void *frame) {
     char message[128];
     snprintf(message, sizeof message, "index out of bounds: the length is %lld but the index is %lld",

@@ -99,6 +99,8 @@ codes! {
         "Only structures have fields; this value has another type.";
     BAD_GENERIC_USE = "E2019", "invalid use of a type parameter",
         "Inside a generic function or type, a type parameter stands for any type, so its values can only be stored, passed, compared and converted, not used as numbers or strings.";
+    CANNOT_PROPAGATE = "E2020", "cannot pass the failure on",
+        "Passing a failure on (`?` in many languages) takes a value that is either nullable or of an enumeration whose first variant holds the result, such as `Result<T, E>`, and returns the null or the failure from the function. So the function must return a nullable value, or the same enumeration.";
 
     OUTSIDE_LOOP = "E3001", "outside a loop",
         "Leaving or continuing a loop is only possible inside a loop.";

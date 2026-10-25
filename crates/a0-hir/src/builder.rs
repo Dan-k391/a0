@@ -136,6 +136,9 @@ pub const KEYWORDS: &[&str] = &[
     "break",
     "continue",
     "return",
+    "throw",
+    "try",
+    "catch",
     "match",
     "new",
     "null",
@@ -1378,6 +1381,20 @@ impl HirBuilder {
         self.push(ExprKind::IfLet(local, value, then, els), TypeId::NEVER)
     }
 
+    /// `throw value`: raises an exception that holds `value` (of any type, as an `any`); it unwinds
+    /// to the innermost `try` around it, in this function or a caller, or ends the program with
+    /// `panic: uncaught exception` and the stack trace where it was thrown.
+    pub fn throw(&mut self, value: ExprId) -> ExprId {
+        self.push(ExprKind::Throw(value), TypeId::NEVER)
+    }
+
+    /// `try { body } catch local { handler }`: the value of `body`, or, if `body` raises an exception,
+    /// of `handler`, with the exception's value in `local` (an `any` local, declared for the
+    /// handler).
+    pub fn try_catch(&mut self, body: ExprId, local: LocalId, handler: ExprId) -> ExprId {
+        self.push(ExprKind::Try(body, local, handler), TypeId::NEVER)
+    }
+
     pub fn while_(&mut self, cond: ExprId, body: ExprId) -> ExprId {
         self.push(ExprKind::While(cond, body), TypeId::UNIT)
     }
@@ -1958,6 +1975,22 @@ pub(crate) fn infer(m: &mut HirModule, kind: &ExprKind, hint: TypeId) -> Typed {
             }
         }
         ExprKind::Break | ExprKind::Continue | ExprKind::Return(_) => TypeId::NEVER,
+        ExprKind::Throw(value) => {
+            // Lowering boxes the value, so its type must be known.
+            if matches!(m.kind(ty(m, *value)), TypeKind::Var(_)) {
+                return Err(TypeErr::Open(*value));
+            }
+            TypeId::NEVER
+        }
+        ExprKind::Try(body, local, handler) => {
+            let lt = m.local_type(*local);
+            if !m.unify(lt, TypeId::ANY) {
+                let p = mismatch(m, TypeId::ANY, lt).at(m.local_span(*local), "declared here");
+                return Err(TypeErr::At(Some(*handler), p));
+            }
+            m.join(ty(m, *body), ty(m, *handler))
+                .unwrap_or(TypeId::UNIT)
+        }
         ExprKind::Block(items, tail) => match tail {
             Some(t) => ty(m, *t),
             None if items.iter().any(|&i| ty(m, i) == TypeId::NEVER) => TypeId::NEVER,
@@ -2409,14 +2442,16 @@ pub(crate) fn visit_children(m: &HirModule, e: ExprId, f: &mut dyn FnMut(ExprId)
         | Cast(a)
         | Unwrap(a)
         | Is(a, _)
-        | Loop(a) => f(*a),
+        | Loop(a)
+        | Throw(a) => f(*a),
         SetField(a, _, b)
         | SetFieldName(a, _, b)
         | Binary(_, a, b)
         | And(a, b)
         | Or(a, b)
         | Index(a, b)
-        | While(a, b) => {
+        | While(a, b)
+        | Try(a, _, b) => {
             f(*a);
             f(*b);
         }

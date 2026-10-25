@@ -212,7 +212,7 @@ fn ir_output_is_valid_text() {
         .unwrap();
     assert!(out.status.success());
     let text = String::from_utf8(out.stdout).unwrap();
-    assert!(text.contains("func @hir.fibi(%0: f64) -> f64 {"), "{text}");
+    assert!(text.contains("func @hir.fib(%0: f64) -> f64 {"), "{text}");
     // The printed IR parses and verifies on its own.
     a0_ir::parse_and_verify(&text, a0_diag::SourceId(0)).unwrap();
 }

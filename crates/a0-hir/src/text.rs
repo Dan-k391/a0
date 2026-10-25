@@ -860,6 +860,25 @@ impl<'a> TextParser<'a> {
                 self.at(node);
                 self.b.return_(v)
             }
+            "throw_expr" => {
+                let v = self.expr(self.field(node, "value").unwrap())?;
+                self.at(node);
+                self.b.throw(v)
+            }
+            "try_expr" => {
+                let body = self.block(self.field(node, "body").unwrap())?;
+                let bind = self.field(node, "bind").unwrap();
+                let name = self.text(bind).to_string();
+                self.at(bind);
+                let l = self.b.new_local(self.body.unwrap(), &name, TypeId::ANY);
+                self.scopes.push(ScopeKind::Block);
+                let _ = self.scopes.declare_defined(&name, l.0 as u64);
+                let handler = self.block(self.field(node, "handler").unwrap());
+                self.scopes.pop();
+                let handler = handler?;
+                self.at(node);
+                self.b.try_catch(body, l, handler)
+            }
             "name_expr" => {
                 let name = self.name_of(node);
                 if let Some(l) = self.lookup_local(&name) {

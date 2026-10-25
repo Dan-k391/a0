@@ -56,7 +56,7 @@ let_stmt = "let" name:NAME ~ "expected a name" (":" type:type)? "=" ~ "expected 
            value:expr ";" ~ "expected ';'";
 expr_stmt = e:expr ";";
 blocklike_stmt = e:blocklike !"}";
-blocklike @inline = if_expr | while_expr | loop_expr | match_expr | block;
+blocklike @inline = if_expr | while_expr | loop_expr | match_expr | try_expr | block;
 
 expr @inline = @prec primary ~ "expected an expression" {
     right "=" => assign;
@@ -78,8 +78,8 @@ expr @inline = @prec primary ~ "expected an expression" {
 args = arg:expr ("," arg:expr)*;
 
 primary = unit_lit | paren | literal | float_bits | null_lit | new_expr | array_lit | variant_expr | lambda
-        | if_expr | while_expr | loop_expr | match_expr | block
-        | break_expr | continue_expr | return_expr | name_expr;
+        | if_expr | while_expr | loop_expr | match_expr | try_expr | block
+        | break_expr | continue_expr | return_expr | throw_expr | name_expr;
 
 unit_lit = "(" ")";
 paren = "(" inner:expr ")" ~ "expected ')'";
@@ -106,4 +106,7 @@ pattern = "_" | variant:NAME ("(" bind:NAME ("," bind:NAME)* ")" ~ "expected ')'
 break_expr = "break";
 continue_expr = "continue";
 return_expr = "return" value:expr?;
+throw_expr = "throw" value:expr ~ "expected an expression";
+try_expr = "try" body:block ~ "expected '{'" "catch" ~ "expected 'catch'" bind:NAME ~ "expected a name"
+           handler:block ~ "expected '{'";
 name_expr = name:NAME ("::" type_args)?;

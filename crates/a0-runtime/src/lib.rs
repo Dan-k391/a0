@@ -63,6 +63,7 @@ pub const REPORTS_LOCATION: &[&str] = &[
     "a0_array_pop",
     "a0_map_get",
     "a0_string_from_c",
+    "a0_rt_throw",
 ];
 
 /// Whether calls to the runtime function `name` pass a location and a frame pointer.

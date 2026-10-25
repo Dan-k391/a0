@@ -513,6 +513,11 @@ impl<'a> Compiler<'a> {
                 self.at(node);
                 self.b.unwrap(a)
             }
+            "propagate" => {
+                let a = sub(self, "operand");
+                self.at(node);
+                self.b.propagate(a)
+            }
             "call" => self.call(node),
             "get" => {
                 let name = self.field(node, "name");

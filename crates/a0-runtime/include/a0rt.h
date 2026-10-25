@@ -97,6 +97,11 @@ A0_NORETURN void a0_rt_fail_frames(const char *message, const uint32_t *ids, siz
 size_t a0_rt_trace_text(const uint32_t *ids, size_t count, char *buf, size_t cap);
 /* "index out of bounds: the length is <len> but the index is <index>". */
 A0_NORETURN void a0_rt_out_of_bounds(int64_t len, int64_t index, uint64_t loc, void *frame);
+/* Exceptions (crates/a0-hir/src/lower.rs): generated code keeps the exception in flight itself and
+ * calls a0_rt_throw where one is thrown, which remembers the stack there; a0_rt_uncaught reports an
+ * exception that reached `main` (`panic: uncaught exception: <value>` and that stack). */
+void a0_rt_throw(uint64_t loc, void *frame);
+A0_NORETURN void a0_rt_uncaught(uint64_t value);
 
 A0_NORETURN void a0_rt_trap(int32_t code, uint64_t loc, void *frame);
 /* A failure of the runtime itself (out of memory), with no location. */

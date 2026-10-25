@@ -386,6 +386,13 @@ A0HirExpr a0_hir_if_let(A0HirBuilder *b, A0HirLocal l, A0HirExpr value, A0HirExp
                         A0HirExpr els);
 A0HirExpr a0_hir_while(A0HirBuilder *b, A0HirExpr cond, A0HirExpr body);
 A0HirExpr a0_hir_loop(A0HirBuilder *b, A0HirExpr body);
+/* Exceptions: `throw value` (any type), and `try { body } catch l { handler }` with `l` (from
+ * a0_hir_declare_catch, an `any`) holding the thrown value in `handler`. */
+A0HirExpr a0_hir_throw(A0HirBuilder *b, A0HirExpr value);
+A0HirExpr a0_hir_try_catch(A0HirBuilder *b, A0HirExpr body, A0HirLocal l, A0HirExpr handler);
+/* `e?`: the value of a nullable or a result (an enum whose first variant holds it), or else returns
+ * the null or the failure from the function. */
+A0HirExpr a0_hir_propagate(A0HirBuilder *b, A0HirExpr e);
 A0HirExpr a0_hir_break(A0HirBuilder *b);
 A0HirExpr a0_hir_continue(A0HirBuilder *b);
 A0HirExpr a0_hir_return(A0HirBuilder *b, A0HirExpr value);
@@ -402,6 +409,8 @@ int a0_hir_is_declared_in_scope(A0HirBuilder *b, const char *name, size_t len);
 A0HirLocal a0_hir_declare_local(A0HirBuilder *b, const char *name, size_t len, A0HirType type);
 /* The binding of `if let name = value`, typed from the value; push a scope for it first. */
 A0HirLocal a0_hir_declare_if_let(A0HirBuilder *b, const char *name, size_t len, A0HirExpr value);
+/* The binding of `catch name`, an `any`; push a scope for it first. */
+A0HirLocal a0_hir_declare_catch(A0HirBuilder *b, const char *name, size_t len);
 /* `let name: type = value` with `name` in scope afterwards; `type` may be a0_hir_fresh_type. */
 A0HirExpr a0_hir_let_named(A0HirBuilder *b, const char *name, size_t len, A0HirType type,
                            A0HirExpr value);

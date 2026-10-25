@@ -557,3 +557,27 @@ languages turn into their exceptions; the C side reports failure through a last-
 (one thread, and C functions return one value). Names `std` and `std.*` are reserved for the
 library, so a program's own `std/` directory is not a module. The library's code has no spans for
 now: its text is not in the driver's source map, so diagnostics and traces cannot point into it.
+
+## D49. Exceptions are a pending flag and checks after calls, not unwinding
+
+Exception-style languages need `throw` to leave any number of frames, identically in the
+interpreter and in native code. Unwinding native frames (`setjmp`/`longjmp`, or Cranelift's
+exception tables with an unwinder of our own) would differ between the backends, need care with
+values in registers and with the shadow stack of GC roots, and on Windows interact with SEH. Instead
+an exception is two globals, a flag and the value (an `any`, registered as a root), and every exit
+is an ordinary one: `throw` sets them and leaves to the innermost `try` of its function (a `try`
+body runs in an IR loop, which `break N`, added for this, leaves from inside other loops) or returns
+with the exception pending, clearing GC slots as `return` and `break` already do. Calls that may
+raise are followed by a test of the flag. Which calls may raise is computed over the functions
+reachable from `main`, so programs that never throw get no checks, and a throw costs a walk of the
+stack to remember where it happened, for an exception nothing catches. Runtime errors stay fatal
+panics rather than exceptions: making them catchable would put checks after every operation that
+can fail. Results need no runtime support: `propagate` (`?`) is a `match` and a `return`.
+
+## D50. Lowering skips functions `main` cannot reach
+
+With the standard library and language preludes added to programs, most functions a module holds
+are never called. Lowering now follows calls and the closures a program makes from `main` and lowers
+only those functions, which saves compile time in both backends (Cranelift compiles each function
+it is given) and keeps `lang ir` output to the program's own code. The HIR, its text and its
+diagnostics still cover every function, so errors in unused code are still reported.

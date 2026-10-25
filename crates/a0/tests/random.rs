@@ -195,6 +195,8 @@ struct Ctx {
     ret: Option<Ty>,
     in_loop: bool,
     in_closure: bool,
+    /// Whether a `try` of this function is around the code, so that it may throw.
+    in_try: bool,
     /// How many times the code runs per call of the function (loops multiply it).
     times: u64,
 }
@@ -550,6 +552,7 @@ impl Gen {
         let mut inner = ctx.clone();
         inner.in_closure = true;
         inner.in_loop = false;
+        inner.in_try = false;
         inner.ret = Some(Int);
         inner.locals.push(Local {
             name: x.clone(),
@@ -598,7 +601,7 @@ impl Gen {
     fn stmt(&mut self, ctx: &mut Ctx, d: u32) -> String {
         let e = 3;
         loop {
-            match self.rng.below(15) {
+            match self.rng.below(17) {
                 0..=2 => {
                     let ty = self.rng.pick(&VALUES);
                     let name = self.name("v");
@@ -741,6 +744,30 @@ impl Gen {
                     let f = self.rng.pick(&callees);
                     return format!("{};", self.call(f, ctx, 2));
                 }
+                // Exceptions, thrown inside a `try` of the same function (possibly from inside its
+                // loops, past `break` and `continue` to outer loops, or with `return`).
+                15 if d > 0 => {
+                    let mut inner = ctx.clone();
+                    inner.in_try = true;
+                    let body = self.stmts(&mut inner, 3, d - 1);
+                    let e = self.name("e");
+                    let mut handler = ctx.clone();
+                    handler.locals.push(Local {
+                        name: e.clone(),
+                        ty: Any,
+                        mutable: false,
+                    });
+                    let rest = self.stmts(&mut handler, 2, d - 1);
+                    return format!(
+                        "try {{ {body} }} catch {e} {{ print(\"[caught \" + show_any({e}) + \"]\"); {rest} }}"
+                    );
+                }
+                16 if ctx.in_try => {
+                    let c = self.expr(Bool, ctx, 1);
+                    let ty = self.rng.pick(&VALUES);
+                    let v = self.expr(ty, ctx, 2);
+                    return format!("if {c} {{ throw {v}; }}");
+                }
                 _ => continue,
             }
         }
@@ -768,6 +795,7 @@ impl Gen {
             ret: Some(ret),
             in_loop: false,
             in_closure: false,
+            in_try: false,
             times: 1,
         };
         let mut sig = Vec::new();
@@ -859,6 +887,7 @@ impl Gen {
             ret: None,
             in_loop: false,
             in_closure: false,
+            in_try: false,
             times: 1,
         };
         let mut main = Vec::new();

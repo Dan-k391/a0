@@ -419,6 +419,12 @@ impl Opt<'_> {
                 let f = f.map(|f| self.copy(f, body, locals, site, sites));
                 ExprKind::IfLet(l, v, t, f)
             }
+            ExprKind::Try(b, l, h) => {
+                let b = self.copy(b, body, locals, site, sites);
+                let l = self.copy_local(l, body, locals);
+                let h = self.copy(h, body, locals, site, sites);
+                ExprKind::Try(b, l, h)
+            }
             ExprKind::Match(s, arms) => {
                 let s = self.copy(s, body, locals, site, sites);
                 let mut out = Vec::new();
@@ -982,6 +988,11 @@ fn map_children(kind: &ExprKind, f: &mut dyn FnMut(ExprId) -> ExprId) -> ExprKin
         Block(items, tail) => {
             let items = all(items, f);
             Block(items, tail.map(&mut *f))
+        }
+        Throw(v) => Throw(f(*v)),
+        Try(b, l, h) => {
+            let b = f(*b);
+            Try(b, *l, f(*h))
         }
     }
 }

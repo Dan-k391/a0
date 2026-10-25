@@ -132,6 +132,8 @@ struct Runtime {
     map_remove: IrFunc,
     map_keys: IrFunc,
     string_from_c: IrFunc,
+    throw: IrFunc,
+    uncaught: IrFunc,
     exit: IrFunc,
     clock: IrFunc,
 }
@@ -181,6 +183,8 @@ impl Runtime {
             map_remove: f("a0_map_remove", &[Ptr, I64], Some(I64)),
             map_keys: f("a0_map_keys", &[Ptr], Some(Ptr)),
             string_from_c: f("a0_string_from_c", &[Ptr, I64], Some(Ptr)),
+            throw: f("a0_rt_throw", &[], None),
+            uncaught: f("a0_rt_uncaught", &[I64], None),
             exit: f("a0_rt_exit", &[I32], None),
             clock: f("a0_clock", &[], Some(F64)),
         }
@@ -232,8 +236,16 @@ struct FnState {
     max: u32,
     storage: HashMap<LocalId, Storage>,
     gc_memo: HashMap<ExprId, bool>,
-    /// The first slot of each enclosing loop's body, for `break` and `continue`.
-    loops: Vec<u32>,
+    /// The enclosing loops and `try`s, innermost last, for `break`, `continue` and exceptions.
+    exits: Vec<Exit>,
+}
+
+/// An IR loop that code can leave: a HIR loop, or the loop a `try` body runs in, which a raised
+/// exception leaves. Each holds the first slot of its body, cleared when it is left.
+#[derive(Clone, Copy)]
+enum Exit {
+    Loop(u32),
+    Try(u32),
 }
 
 struct Lowerer<'a> {
@@ -264,6 +276,14 @@ struct Lowerer<'a> {
     inline_ids: HashMap<u32, a0_ir::InlineId>,
     /// What unwrapping a null says, in the language's words.
     null_message: Option<(IrGlobal, usize)>,
+    /// Per body: whether `main` can reach it (others are not lowered), and whether it may raise an
+    /// exception into its caller (`analyze_raises`).
+    reached: Vec<bool>,
+    raises: Vec<bool>,
+    /// Whether some closure the program makes may raise one.
+    closures_raise: bool,
+    /// The pending exception, if the program throws: a flag, and its value (an `any`).
+    exception: Option<(IrGlobal, IrGlobal)>,
 }
 
 impl<'a> Lowerer<'a> {
@@ -307,6 +327,10 @@ impl<'a> Lowerer<'a> {
             f: None,
             inline_ids: HashMap::new(),
             null_message: None,
+            reached: Vec::new(),
+            raises: Vec::new(),
+            closures_raise: false,
+            exception: None,
         }
     }
 
@@ -384,7 +408,13 @@ impl<'a> Lowerer<'a> {
     fn run(&mut self) {
         self.analyze_captures();
         self.analyze_locals();
+        self.analyze_raises();
         let m = self.m;
+        if m.exprs.iter().any(|e| matches!(e.kind, ExprKind::Throw(_))) {
+            let pending = self.b.add_global_int("hir.exception.pending", Type::I64, 0);
+            let value = self.b.add_global_int("hir.exception.value", Type::I64, 0);
+            self.exception = Some((pending, value));
+        }
         for (i, s) in m.structs.iter().enumerate() {
             let g = self
                 .b
@@ -470,6 +500,10 @@ impl<'a> Lowerer<'a> {
             self.externs.push(f);
         }
         for f in &m.funcs {
+            if !self.reached[f.body.index()] {
+                self.funcs.push(IrFunc::NONE);
+                continue;
+            }
             let (params, ret) = self.signature(f.body, false);
             let ir = self
                 .b
@@ -480,7 +514,7 @@ impl<'a> Lowerer<'a> {
         // Closures: one IR function and one descriptor per closure body.
         let mut lambda_count: HashMap<FuncId, u32> = HashMap::new();
         for (i, body) in m.bodies.iter().enumerate() {
-            if body.parent.is_none() {
+            if body.parent.is_none() || !self.reached[i] {
                 continue;
             }
             let id = BodyId(i as u32);
@@ -506,7 +540,7 @@ impl<'a> Lowerer<'a> {
         // Functions used as values get a wrapper with the closure calling convention.
         for e in &m.exprs {
             if let ExprKind::Func(f, _) = e.kind {
-                if self.wrappers.contains_key(&f) {
+                if self.wrappers.contains_key(&f) || !self.reached[m.func_body(f).index()] {
                     continue;
                 }
                 let body = m.func_body(f);
@@ -527,7 +561,9 @@ impl<'a> Lowerer<'a> {
 
         for i in 0..m.funcs.len() {
             let body = m.funcs[i].body;
-            self.function(body, self.funcs[i], false);
+            if self.reached[body.index()] {
+                self.function(body, self.funcs[i], false);
+            }
         }
         let lambdas: Vec<(BodyId, IrFunc)> =
             self.lambda_funcs.iter().map(|(&b, &f)| (b, f)).collect();
@@ -579,7 +615,7 @@ impl<'a> Lowerer<'a> {
                     }
                 }
                 ExprKind::SetLocal(l, _) => self.reassigned[l.index()] = true,
-                ExprKind::IfLet(l, ..) => self.scoped[l.index()] = true,
+                ExprKind::IfLet(l, ..) | ExprKind::Try(_, l, _) => self.scoped[l.index()] = true,
                 _ => {}
             }
             visit_children(m, e, &mut |c| stack.push(c));
@@ -699,6 +735,11 @@ impl<'a> Lowerer<'a> {
                 self.b.call(self.rt.add_root, &[a, k]);
             }
         }
+        if let Some((_, value)) = self.exception {
+            let a = self.b.global_addr(value);
+            let k = self.b.iconst(Type::I64, WORD_ANY as i64);
+            self.b.call(self.rt.add_root, &[a, k]);
+        }
         for (g, bytes, len) in strings {
             let a = self.b.global_addr(g);
             let k = self.b.iconst(Type::I64, WORD_REF as i64);
@@ -713,6 +754,20 @@ impl<'a> Lowerer<'a> {
             _ => unreachable!("check_entry guarantees main"),
         };
         let r = self.b.call(self.funcs[hir_main.index()], &[]);
+        if let Some((pending, value)) = self.exception
+            && self.raises[self.m.func_body(hir_main).index()]
+        {
+            let a = self.b.global_addr(pending);
+            let p = self.b.load(Type::I64, a);
+            let zero = self.b.iconst(Type::I64, 0);
+            let raised = self.b.icmp(IntCC::Ne, p, zero);
+            self.b.if_(raised);
+            let va = self.b.global_addr(value);
+            let w = self.b.load(Type::I64, va);
+            self.b.call(self.rt.uncaught, &[w]);
+            self.b.unreachable();
+            self.b.end_if();
+        }
         let code = match r {
             Some(v) => self.b.cast(Opcode::Trunc, v, Type::I32),
             None => self.b.iconst(Type::I32, 0),
@@ -963,7 +1018,7 @@ impl<'a> Lowerer<'a> {
             max: 0,
             storage: HashMap::new(),
             gc_memo: HashMap::new(),
-            loops: Vec::new(),
+            exits: Vec::new(),
         });
 
         // Storage for this body's own locals, except those of blocks, which get theirs later.
@@ -1122,7 +1177,11 @@ impl<'a> Lowerer<'a> {
         }
         let m = self.m;
         let own = match &m.expr(e).kind {
-            ExprKind::Let(l, _) | ExprKind::IfLet(l, ..) => self.captured[l.index()],
+            ExprKind::Let(l, _) | ExprKind::IfLet(l, ..) | ExprKind::Try(_, l, _) => {
+                self.captured[l.index()]
+            }
+            // Boxing the value may allocate.
+            ExprKind::Throw(_) => true,
             ExprKind::Func(..)
             | ExprKind::Lambda(_)
             | ExprKind::Call(..)
@@ -1302,6 +1361,9 @@ impl<'a> Lowerer<'a> {
                     .filter_map(|v| if let V::Val(v) = v { Some(*v) } else { None })
                     .collect();
                 let r = self.b.call(self.funcs[f.index()], &ir_args);
+                if self.raises[m.func_body(f).index()] {
+                    self.check_raised();
+                }
                 self.call_result(r, ty)
             }
             ExprKind::CallExtern(x, args) => {
@@ -1348,6 +1410,9 @@ impl<'a> Lowerer<'a> {
                 );
                 let (params, ret) = self.fn_signature(m.expr_type(callee));
                 let r = self.b.call_indirect(code, &params, ret, &ir_args);
+                if self.closures_raise {
+                    self.check_raised();
+                }
                 self.call_result(r, ty)
             }
             ExprKind::Lambda(body) => {
@@ -1478,7 +1543,7 @@ impl<'a> Lowerer<'a> {
             ExprKind::While(c, body) => {
                 self.b.loop_();
                 let mark = self.mark();
-                self.st().loops.push(mark);
+                self.st().exits.push(Exit::Loop(mark));
                 let cv = self.expr(c);
                 if let V::Val(cv) = cv {
                     let stop = self.b.not(cv);
@@ -1487,16 +1552,16 @@ impl<'a> Lowerer<'a> {
                     self.b.end_if();
                     self.expr(body);
                 }
-                self.st().loops.pop();
+                self.st().exits.pop();
                 self.b.end_loop();
                 V::Unit
             }
             ExprKind::Loop(body) => {
                 self.b.loop_();
                 let mark = self.mark();
-                self.st().loops.push(mark);
+                self.st().exits.push(Exit::Loop(mark));
                 self.expr(body);
-                self.st().loops.pop();
+                self.st().exits.pop();
                 self.b.end_loop();
                 if ty == TypeId::NEVER {
                     V::Never
@@ -1505,15 +1570,34 @@ impl<'a> Lowerer<'a> {
                 }
             }
             ExprKind::Break => {
-                self.leave_loop_scopes();
-                self.b.break_();
+                let depth = self.leave_loop_scopes();
+                self.b.break_out(depth);
                 V::Never
             }
             ExprKind::Continue => {
-                self.leave_loop_scopes();
-                self.b.continue_();
+                let depth = self.leave_loop_scopes();
+                self.b.continue_out(depth);
                 V::Never
             }
+            ExprKind::Throw(v) => {
+                let vt = m.expr_type(v);
+                let r = self.expr(v);
+                if matches!(r, V::Never) {
+                    return V::Never;
+                }
+                let w = self.box_any(r, vt);
+                let (pending, value) = self.exception.expect("a throw makes the program raise");
+                let a = self.b.global_addr(value);
+                self.b.store(w, a);
+                let one = self.b.iconst(Type::I64, 1);
+                let a = self.b.global_addr(pending);
+                self.b.store(one, a);
+                // Remembers where it was thrown, for an exception nothing catches.
+                self.b.call(self.rt.throw, &[]);
+                self.unwind();
+                V::Never
+            }
+            ExprKind::Try(body, l, handler) => self.try_(body, l, handler, ty),
             ExprKind::Return(v) => {
                 let r = match v {
                     Some(v) => self.expr(v),
@@ -1550,11 +1634,190 @@ impl<'a> Lowerer<'a> {
         }
     }
 
-    /// Clears the slots of the scopes that `break` or `continue` leaves.
-    fn leave_loop_scopes(&mut self) {
+    /// Clears the slots of the scopes that `break` or `continue` leaves, and returns how many IR
+    /// loops out the HIR loop is (the `try`s inside it are loops too).
+    fn leave_loop_scopes(&mut self) -> u32 {
         let st = self.st();
-        let (from, to) = (*st.loops.last().unwrap(), st.next);
+        let i = st
+            .exits
+            .iter()
+            .rposition(|x| matches!(x, Exit::Loop(_)))
+            .expect("the checker keeps break and continue in loops");
+        let Exit::Loop(from) = st.exits[i] else {
+            unreachable!()
+        };
+        let (depth, to) = ((st.exits.len() - 1 - i) as u32, st.next);
         self.clear_slots(from, to);
+        depth
+    }
+
+    // ---------------------------------------------------------------- exceptions
+
+    /// Which bodies `main` can reach, through calls and the closures it makes (the others are not
+    /// lowered, so a library or a prelude costs only what the program uses), and which of those may
+    /// raise an exception into their caller: those that throw, call one that may, or call a closure
+    /// while some closure the program makes may. Calls to the others need no check, so a program
+    /// that never throws pays nothing.
+    fn analyze_raises(&mut self) {
+        let m = self.m;
+        let n = m.bodies.len();
+        self.raises = vec![false; n];
+        let Some(Item::Func(main)) = m.lookup_value("main") else {
+            self.reached = vec![true; n];
+            return;
+        };
+        // What each body does itself: throw, call closures, call bodies, make closures of bodies.
+        let mut throws = vec![false; n];
+        let mut calls_closures = vec![false; n];
+        let mut calls: Vec<Vec<usize>> = vec![Vec::new(); n];
+        let mut makes: Vec<Vec<usize>> = vec![Vec::new(); n];
+        for b in 0..n {
+            let mut stack: Vec<ExprId> = m.bodies[b].root.into_iter().collect();
+            while let Some(e) = stack.pop() {
+                match &m.expr(e).kind {
+                    ExprKind::Throw(_) => throws[b] = true,
+                    ExprKind::CallValue(..) => calls_closures[b] = true,
+                    ExprKind::Call(f, ..) => calls[b].push(m.func_body(*f).index()),
+                    ExprKind::Func(f, _) => makes[b].push(m.func_body(*f).index()),
+                    ExprKind::Lambda(body) => makes[b].push(body.index()),
+                    _ => {}
+                }
+                visit_children(m, e, &mut |c| stack.push(c));
+            }
+        }
+        let mut reached = vec![false; n];
+        let mut closure = vec![false; n];
+        let mut stack = vec![m.func_body(main).index()];
+        while let Some(b) = stack.pop() {
+            if std::mem::replace(&mut reached[b], true) {
+                continue;
+            }
+            stack.extend(&calls[b]);
+            for &c in &makes[b] {
+                closure[c] = true;
+                stack.push(c);
+            }
+        }
+        loop {
+            let closures = (0..n).any(|b| closure[b] && self.raises[b]);
+            let mut changed = false;
+            for b in 0..n {
+                if !reached[b] || self.raises[b] {
+                    continue;
+                }
+                if throws[b]
+                    || (calls_closures[b] && closures)
+                    || calls[b].iter().any(|&c| self.raises[c])
+                {
+                    self.raises[b] = true;
+                    changed = true;
+                }
+            }
+            if !changed {
+                self.closures_raise = closures;
+                break;
+            }
+        }
+        self.reached = reached;
+    }
+
+    /// After a call that may raise: if an exception is pending, leaves.
+    fn check_raised(&mut self) {
+        let Some((pending, _)) = self.exception else {
+            return;
+        };
+        let a = self.b.global_addr(pending);
+        let p = self.b.load(Type::I64, a);
+        let zero = self.b.iconst(Type::I64, 0);
+        let raised = self.b.icmp(IntCC::Ne, p, zero);
+        self.b.if_(raised);
+        self.unwind();
+        self.b.end_if();
+    }
+
+    /// Leaves the code where an exception was raised: to the innermost `try` around it in this
+    /// function, or else out of the function with the exception still pending, for the caller.
+    fn unwind(&mut self) {
+        let st = self.st();
+        match st.exits.iter().rposition(|x| matches!(x, Exit::Try(_))) {
+            Some(i) => {
+                let Exit::Try(from) = st.exits[i] else {
+                    unreachable!()
+                };
+                let (depth, to) = ((st.exits.len() - 1 - i) as u32, st.next);
+                self.clear_slots(from, to);
+                self.b.break_out(depth);
+            }
+            None => {
+                self.pop_frame();
+                let ret = self.m.body_ret(self.st().body);
+                let zero = match self.ir_type(ret) {
+                    None => None,
+                    Some(Type::Ptr) => Some(self.b.null()),
+                    Some(Type::F64) => Some(self.b.fconst_bits(Type::F64, 0)),
+                    Some(t) => Some(self.b.iconst(t, 0)),
+                };
+                self.b.ret(zero);
+            }
+        }
+    }
+
+    /// `try { body } catch l { handler }`: the body runs in a loop that a raised exception leaves;
+    /// after it, a pending exception is taken and handled.
+    fn try_(&mut self, body: ExprId, l: LocalId, handler: ExprId, ty: TypeId) -> V {
+        let Some((pending, value)) = self.exception else {
+            // Nothing in the program throws, so the handler never runs.
+            return self.expr(body);
+        };
+        let result = match self.ir_type(ty) {
+            Some(t) if ty != TypeId::NEVER => Some(self.b.declare_var("try", t)),
+            _ => None,
+        };
+        self.b.loop_();
+        let mark = self.mark();
+        self.st().exits.push(Exit::Try(mark));
+        let bv = self.expr(body);
+        self.st().exits.pop();
+        if let (Some(r), V::Val(x)) = (result, bv) {
+            self.b.set(r, x);
+        }
+        if !self.b.is_terminated() {
+            self.b.break_();
+        }
+        self.b.end_loop();
+        if self.b.is_terminated() {
+            // The body always returns.
+            return V::Never;
+        }
+        let a = self.b.global_addr(pending);
+        let p = self.b.load(Type::I64, a);
+        let zero = self.b.iconst(Type::I64, 0);
+        let raised = self.b.icmp(IntCC::Ne, p, zero);
+        self.b.if_(raised);
+        self.b.store(zero, a);
+        let va = self.b.global_addr(value);
+        let w = self.b.load(Type::I64, va);
+        let mark = self.mark();
+        self.declare_local(l);
+        // Binding a captured local allocates its box; the value stays rooted in the global till then.
+        self.bind_local(l, V::Val(w));
+        self.b.store(zero, va);
+        let hv = self.expr(handler);
+        if let (Some(r), V::Val(x)) = (result, hv) {
+            self.b.set(r, x);
+        }
+        self.release(mark);
+        self.b.end_if();
+        if ty == TypeId::NEVER {
+            if !self.b.is_terminated() {
+                self.b.unreachable();
+            }
+            return V::Never;
+        }
+        match result {
+            Some(r) => V::Val(self.b.get(r)),
+            None => V::Unit,
+        }
     }
 
     fn call_result(&mut self, r: Option<Value>, ty: TypeId) -> V {

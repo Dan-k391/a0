@@ -32,7 +32,9 @@ A program can have several files. `import text.util;` makes the public (`pub`) i
 `text/util.mn`, found next to the program's main file, available as `util.twice(21)`,
 `util.Point` and `util.Shape::Dot`; `import text.util as u;` names the module `u`. The standard
 library's modules (`docs/std.md`) are imported the same way: `import std.fs;`, then
-`match fs.read(path) { Ok(text) => ..., Err(e) => ... }`.
+`match fs.read(path) { Ok(text) => ..., Err(e) => ... }`. Inside a function that returns a
+`std.Result` (or another enum whose first variant holds the value), `fs.read(path)?` is the text or
+returns the failure; on a nullable value, `x?` is the value or returns `null`.
 
 ```
 minnow run prog.mn               # interpret

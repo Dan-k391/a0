@@ -144,6 +144,8 @@ it has no trailing `;`, otherwise to `()`.
 | `if c { } else { }`, `while c { }`, `loop { }` | control flow; `if` with `else` is a value |
 | `if let x = e { } else { }` | narrowing: `x` is `e`'s value in the first block when `e: T?` is not null |
 | `break`, `continue`, `return e` | type `never` |
+| `throw e` | raises an exception holding `e` (of any type, as an `any`); type `never` |
+| `try { a } catch x { b }` | `a`, or if `a` raises an exception, `b` with its value in `x: any` |
 
 **Operators.** `+ - * / %` on two `int`s (wrapping; `/` and `%` by zero panic) or two `float`s (no
 `%`); `+` on two `string`s concatenates. `< <= > >=` on `int`, `float` or `string` (byte order).
@@ -162,6 +164,22 @@ for other references; on `any` see below. `&&`, `||` short-circuit; `!` negates 
 | `print(s)`, `eprint(s)` | write a string to stdout / stderr (no newline added) |
 | `exit(code)`, `panic(message)` | stop the program (`panic` prints `panic: message` and the stack trace, exit 101) |
 | `clock()` | processor time in seconds, as a `float` |
+
+## Errors: exceptions and results
+
+Both styles of error handling are the HIR's, and work the same in both backends:
+
+- **Exceptions.** `throw e` unwinds to the innermost `try` around it, in its function or a caller
+  (through closures too), whose handler gets the value as an `any`. An exception nothing catches
+  ends the program: `panic: uncaught exception: <value>`, the stack where it was thrown, exit 101.
+  Runtime errors (an index out of bounds, a failed conversion) are not exceptions: they end the
+  program, as before. There is no `finally`; a language puts the cleanup in both places. Builder:
+  `throw`, `try_catch`, and `declare_catch` for the handler's local.
+- **Results.** `std.Result<T, E>` (or a language's own enum whose first variant holds the value),
+  matched like any enum, and `propagate(e)`, a language's `e?`: the value when `e` succeeded, or else
+  a `return` of the failure, made again as the function's result (the same enum; for `e: T?`, a
+  `return null`). It is built from `match` (or `if let`) and `return`, so lowering and the
+  optimizer see nothing new; misuse is E2020.
 
 ## Conversions and dynamic values
 
@@ -271,6 +289,15 @@ replaced generic items with one copy per combination of type arguments:
   it was inlined at, if the optimizer inlined it, and every function gets its HIR name for stack
   traces (closures `f::{closure}`; entry points and wrappers none), so runtime errors name source
   locations and source functions (`docs/diagnostics.md`).
+- **Only what `main` reaches** is lowered: functions it calls, directly or through others, and the
+  closures it can make. A prelude or a library costs only what the program uses.
+- **Exceptions** (D49) are values in two globals (a flag and the value, a root) and explicit checks:
+  `throw` sets them, records where it happened (`a0_rt_throw`), and leaves to the innermost `try` of
+  its function (whose body runs in an IR loop, left with `break N`) or returns a zero value with the
+  exception pending. After a call that may raise one, generated code tests the flag and does the
+  same. A function may raise if it throws or calls one that may; a call through a closure may raise
+  if any closure the program makes may. So a program that never throws has no checks at all, and
+  one that does pays a load and a branch after the calls that can raise.
 - `a0 lower prog.hir` prints the core IR a module lowers to; `a0 run`/`a0 build` accept `.hir` files.
 
 ## Optimization
@@ -301,5 +328,5 @@ D38), stack traces included.
 
 ## Not yet
 
-Bounds on type parameters, methods, interfaces, exceptions, iteration protocols, float map keys, and
+Bounds on type parameters, methods, interfaces, `finally`, iteration protocols, float map keys, and
 memory modes other than `gc`.

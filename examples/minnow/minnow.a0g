@@ -89,6 +89,7 @@ expr @inline = @prec primary ~ "expected an expression" {
     postfix "." name:NAME ~ "expected a field name" => get;
     postfix "[" index:expr ~ "expected an index" "]" ~ "expected ']'" => index;
     postfix "!" => unwrap;
+    postfix "?" => propagate;
 };
 
 args = arg:expr ("," arg:expr)*;

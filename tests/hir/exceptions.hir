@@ -1,0 +1,145 @@
+// Exceptions: thrown values of any type, caught in the same function, through calls, closures and
+// loops; handlers that rethrow; `try` as a value; `break` and `continue` out of a `try`.
+// expect-stdout: caught here: bad
+// expect-stdout: caught from depth 3
+// expect-stdout: loop: 0 1 2 caught 3 at 3
+// expect-stdout: closure: 42
+// expect-stdout: rethrown: inner, then outer
+// expect-stdout: value: 7 -1
+// expect-stdout: point 1 2
+// expect-stdout: break and continue: 0 1 3 4
+// expect-stdout: returned from try: 5
+// expect-stdout: kept 1000 objects
+// expect-stdout: nested: inner handled, outer untouched
+module "exceptions";
+
+struct Point { x: int, y: int }
+struct Node { value: int, next: Node? }
+
+fn deep(n: int) -> int {
+  if n == 0 { throw "depth 3" }
+  1 + deep(n - 1)
+}
+
+fn checked(i: int) -> int {
+  if i == 3 { throw i }
+  i
+}
+
+fn parse(s: string) -> int {
+  if s == "seven" { 7 } else { throw "not a number: " + s }
+}
+
+fn early() -> int {
+  try {
+    return 5;
+  } catch e {
+    0
+  }
+}
+
+fn build(n: int) -> Node? {
+  let list = null<Node>;
+  let i = 0;
+  while i < n {
+    list = new Node { value: i, next: list };
+    i = i + 1;
+  }
+  list
+}
+
+fn main() -> int {
+  try {
+    throw "bad";
+  } catch e {
+    print("caught here: " + (e as string) + "\n");
+  }
+
+  try {
+    print(str(deep(3)));
+  } catch e {
+    print("caught from " + (e as string) + "\n");
+  }
+
+  print("loop:");
+  let i = 0;
+  try {
+    while i < 10 {
+      print(" " + str(checked(i)));
+      i = i + 1;
+    }
+  } catch e {
+    print(" caught " + str(e as int) + " at " + str(i) + "\n");
+  }
+
+  let f = fn(x: int) -> int { if x > 40 { throw x } x };
+  try {
+    f(1);
+    f(42);
+    print("not reached\n");
+  } catch e {
+    print("closure: " + str(e as int) + "\n");
+  }
+
+  try {
+    try {
+      throw "inner";
+    } catch e {
+      print("rethrown: " + (e as string));
+      throw "outer";
+    }
+  } catch e {
+    print(", then " + (e as string) + "\n");
+  }
+
+  let a = try { parse("seven") } catch e { -1 };
+  let b = try { parse("eight") } catch e { -1 };
+  print("value: " + str(a) + " " + str(b) + "\n");
+
+  try {
+    throw new Point { x: 1, y: 2 };
+  } catch e {
+    if e is Point {
+      let p = e as Point;
+      print("point " + str(p.x) + " " + str(p.y) + "\n");
+    }
+  }
+
+  print("break and continue:");
+  let j = 0;
+  while true {
+    try {
+      if j == 2 { j = j + 1; continue }
+      if j == 5 { break }
+      print(" " + str(j));
+    } catch e {
+      print("never");
+    }
+    j = j + 1;
+  }
+  print("\n");
+
+  print("returned from try: " + str(early()) + "\n");
+
+  // Objects made before and inside a try stay correct after an exception unwinds past them.
+  let kept = build(1000);
+  try {
+    let lost = build(500);
+    throw lost;
+  } catch e {
+    let n = 0;
+    let p = kept;
+    while true {
+      if let q = p { n = n + 1; p = q.next; } else { break }
+    }
+    print("kept " + str(n) + " objects\n");
+  }
+
+  try {
+    try { throw 1 } catch e { print("nested: inner handled") }
+    print(", outer untouched\n");
+  } catch e {
+    print("wrong\n");
+  }
+  0
+}

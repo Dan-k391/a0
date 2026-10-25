@@ -486,6 +486,12 @@ impl Mono<'_> {
             ExprKind::Break => ExprKind::Break,
             ExprKind::Continue => ExprKind::Continue,
             ExprKind::Return(v) => ExprKind::Return(v.map(|v| self.expr(c, v, body))),
+            ExprKind::Throw(v) => ExprKind::Throw(self.expr(c, v, body)),
+            ExprKind::Try(b, l, h) => {
+                let b = self.expr(c, b, body);
+                let l = self.local(c, l, body);
+                ExprKind::Try(b, l, self.expr(c, h, body))
+            }
             ExprKind::Block(items, tail) => {
                 let items = self.exprs(c, &items, body);
                 ExprKind::Block(items, tail.map(|t| self.expr(c, t, body)))

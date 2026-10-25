@@ -580,6 +580,16 @@ impl Printer<'_> {
                 None => self.out.push_str("return"),
             },
             ExprKind::Block(items, tail) => self.block(&items, tail, indent),
+            ExprKind::Throw(v) => {
+                self.out.push_str("throw ");
+                self.expr(v, 0, indent);
+            }
+            ExprKind::Try(body, l, handler) => {
+                self.out.push_str("try ");
+                self.as_block(body, indent);
+                let _ = write!(self.out, " catch {} ", ident(m.local_name(l)));
+                self.as_block(handler, indent);
+            }
         }
     }
 
@@ -645,5 +655,6 @@ fn is_block_like(m: &HirModule, e: ExprId) -> bool {
             | ExprKind::Loop(_)
             | ExprKind::Match(..)
             | ExprKind::Block(..)
+            | ExprKind::Try(..)
     )
 }

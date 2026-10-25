@@ -22,6 +22,8 @@ const A0Symbol a0_rt_symbols[] = {
     SYM(a0_rt_argc),
     SYM(a0_rt_argv),
     SYM(a0_rt_trap),
+    SYM(a0_rt_throw),
+    SYM(a0_rt_uncaught),
     SYM(a0_panic),
     SYM(a0_panic_bytes),
     SYM(a0_print_i64),

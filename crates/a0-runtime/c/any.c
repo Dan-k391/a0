@@ -99,3 +99,25 @@ int64_t a0_any_eq(uint64_t a, uint64_t b) {
     }
     return 0;
 }
+
+size_t a0_any_describe(uint64_t value, char *buf, size_t cap) {
+    int n;
+    if (A0_ANY_IS_FLOAT(value)) {
+        char text[32];
+        int32_t len = a0_format_f64(as_double(value), text);
+        n = snprintf(buf, cap, "%.*s", (int)len, text);
+    } else if (value == A0_ANY_UNIT) {
+        n = snprintf(buf, cap, "()");
+    } else if (value == A0_ANY_TRUE || value == A0_ANY_FALSE) {
+        n = snprintf(buf, cap, "%s", value == A0_ANY_TRUE ? "true" : "false");
+    } else if (a0_any_is_int(value)) {
+        int64_t i = is_inline_int(value) ? (int64_t)(value << 16) >> 16 : ((A0BoxedInt *)A0_ANY_PTR(value))->value;
+        n = snprintf(buf, cap, "%lld", (long long)i);
+    } else if (a0_any_is_string(value)) {
+        A0String *s = (A0String *)A0_ANY_PTR(value);
+        n = snprintf(buf, cap, "%.*s", (int)s->len, (const char *)s->bytes);
+    } else {
+        n = snprintf(buf, cap, "a value of type `%s`", type_name(value));
+    }
+    return n < 0 ? 0 : (size_t)n;
+}

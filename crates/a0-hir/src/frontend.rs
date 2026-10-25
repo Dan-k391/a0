@@ -108,6 +108,110 @@ impl HirBuilder {
         self.declare_local(name, t)
     }
 
+    /// `e?`, for languages whose functions return failures: the value `e` holds when it succeeded,
+    /// or else returns `e`'s failure from the enclosing function. For `e: T?` the value is a `T` and
+    /// the failure `null` (the function returns a nullable value); for an enum like `Result<T, E>`,
+    /// whose first variant holds the value in its one field, every other variant is a failure,
+    /// returned as the function's own result, which must be of the same enum (`Result<U, E>`).
+    pub fn propagate(&mut self, e: ExprId) -> ExprId {
+        let Some(&(body, _)) = self.body_stack.last() else {
+            self.misuse("propagate outside a body");
+            return self.error_expr();
+        };
+        let t = self.m.expr_type(e);
+        let ret = self.m.body_ret(body);
+        let what = self.m.term(Term::Propagate).to_string();
+        match self.m.kind(t).clone() {
+            TypeKind::Nullable(inner) => {
+                if !matches!(self.m.kind(ret), TypeKind::Nullable(_) | TypeKind::Var(_)) {
+                    let message = format!(
+                        "{what} passes {} on, but the {} returns {}",
+                        self.m.term(Term::Null),
+                        self.m.term(Term::Function),
+                        self.m.quote_type(ret)
+                    );
+                    return self.cannot_propagate(message, "this may be null", Some(body));
+                }
+                let l = self.new_local(body, "value", inner);
+                let value = self.local(l);
+                let null = self.null(self.m.non_null(ret));
+                let failed = self.return_(Some(null));
+                self.if_let(l, e, value, Some(failed))
+            }
+            TypeKind::Enum(en, _) => {
+                let fits = match self.m.kind(ret) {
+                    TypeKind::Enum(r, _) => *r == en,
+                    TypeKind::Var(_) => true,
+                    _ => false,
+                };
+                if self.m.variant_count(en) == 0 || self.m.variant_fields(en, 0).len() != 1 {
+                    let message = format!(
+                        "{what} needs an enum whose first variant holds the value, like `Result`"
+                    );
+                    let label = format!("this is {}", self.m.quote_type(t));
+                    return self.cannot_propagate(message, &label, None);
+                }
+                if !fits {
+                    let message = format!(
+                        "{what} passes the failure on, but the {} returns {}",
+                        self.m.term(Term::Function),
+                        self.m.quote_type(ret)
+                    );
+                    let label = format!("this may hold a failure, as {}", self.m.quote_type(t));
+                    return self.cannot_propagate(message, &label, Some(body));
+                }
+                let mut arms = Vec::new();
+                for v in 0..self.m.variant_count(en) {
+                    let count = self.m.variant_fields(en, v).len();
+                    let binds: Vec<LocalId> = (0..count)
+                        .map(|_| {
+                            let t = self.fresh_type();
+                            self.new_local(body, if v == 0 { "value" } else { "failure" }, t)
+                        })
+                        .collect();
+                    let arm_body = if v == 0 {
+                        self.local(binds[0])
+                    } else {
+                        let args: Vec<ExprId> = binds.iter().map(|&l| self.local(l)).collect();
+                        let failure = self.variant(en, v, &args);
+                        self.return_(Some(failure))
+                    };
+                    arms.push(self.arm(Some(v), &binds, arm_body));
+                }
+                self.match_(e, &arms)
+            }
+            TypeKind::Never | TypeKind::Error => e,
+            _ => {
+                let message = format!(
+                    "{what} needs a nullable value or a result, found {}",
+                    self.m.quote_type(t)
+                );
+                let label = format!("this is {}", self.m.quote_type(t));
+                self.cannot_propagate(message, &label, None)
+            }
+        }
+    }
+
+    /// Reports a misused `propagate`, pointing at the declaration of `body`'s result if given.
+    fn cannot_propagate(&mut self, message: String, label: &str, body: Option<BodyId>) -> ExprId {
+        let decl = body.and_then(|b| match self.m.bodies[b.index()].parent {
+            None => self.m.funcs[self.m.bodies[b.index()].func.index()].span,
+            Some(_) => None,
+        });
+        let p = Problem::new(code::CANNOT_PROPAGATE, message)
+            .label(label)
+            .at(decl, "the result type is declared here");
+        self.problem(&p);
+        self.error_expr()
+    }
+
+    /// Declares the local that `try { ... } catch name { ... }` binds to the exception's value (an
+    /// `any`), in the innermost scope (push one for the handler first); pass it to
+    /// [`HirBuilder::try_catch`].
+    pub fn declare_catch(&mut self, name: &str) -> LocalId {
+        self.declare_local(name, TypeId::ANY)
+    }
+
     /// `let name: ty = value`, with `name` in scope afterwards (not inside `value`). `ty` may be
     /// [`HirBuilder::fresh_type`] to take the value's type.
     pub fn let_named(&mut self, name: &str, ty: TypeId, value: ExprId) -> ExprId {

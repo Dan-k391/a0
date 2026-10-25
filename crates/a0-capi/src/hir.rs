@@ -448,6 +448,7 @@ pub unsafe extern "C" fn a0_hir_set_term(
                 "null" => Term::Null,
                 "unwrap" => Term::Unwrap,
                 "narrow" => Term::Narrow,
+                "propagate" => Term::Propagate,
                 "match" => Term::Match,
                 "break" => Term::Break,
                 "continue" => Term::Continue,
@@ -1471,6 +1472,57 @@ pub unsafe extern "C" fn a0_hir_declare_local(
             h.needs_body()?;
             let ty = h.t(ty)?;
             Some(h.b.declare_local(&name, ty).0)
+        })
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn a0_hir_throw(b: *mut A0HirBuilder, value: u32) -> u32 {
+    unsafe {
+        with(b, |h| {
+            let value = h.e(value)?;
+            Some(h.b.throw(value).0)
+        })
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn a0_hir_try_catch(
+    b: *mut A0HirBuilder,
+    body: u32,
+    local: u32,
+    handler: u32,
+) -> u32 {
+    unsafe {
+        with(b, |h| {
+            let local = h.l(local)?;
+            let (body, handler) = (h.e(body)?, h.e(handler)?);
+            Some(h.b.try_catch(body, local, handler).0)
+        })
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn a0_hir_declare_catch(
+    b: *mut A0HirBuilder,
+    name: *const c_char,
+    len: usize,
+) -> u32 {
+    let name = unsafe { text(name, len) };
+    unsafe {
+        with(b, |h| {
+            h.needs_body()?;
+            Some(h.b.declare_catch(&name).0)
+        })
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn a0_hir_propagate(b: *mut A0HirBuilder, e: u32) -> u32 {
+    unsafe {
+        with(b, |h| {
+            let e = h.e(e)?;
+            Some(h.b.propagate(e).0)
         })
     }
 }

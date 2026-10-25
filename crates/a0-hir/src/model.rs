@@ -268,6 +268,11 @@ pub(crate) enum ExprKind {
     Continue,
     Return(Option<ExprId>),
     Block(Vec<ExprId>, Option<ExprId>),
+    /// `throw value`: raises an exception holding `value` (as an `any`).
+    Throw(ExprId),
+    /// `try { body } catch local { handler }`: runs `handler`, with the exception's value in `local`
+    /// (an `any`), if `body` raises one.
+    Try(ExprId, LocalId, ExprId),
 }
 
 #[derive(Clone)]
@@ -430,6 +435,8 @@ pub enum Term {
     Break,
     /// "`continue`"
     Continue,
+    /// "`?`", which passes a failure (or null) on to the caller.
+    Propagate,
 }
 
 impl Term {
@@ -448,6 +455,7 @@ impl Term {
             Term::Match => "`match`",
             Term::Break => "`break`",
             Term::Continue => "`continue`",
+            Term::Propagate => "`?`",
         }
     }
 }

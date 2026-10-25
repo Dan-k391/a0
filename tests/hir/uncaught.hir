@@ -1,0 +1,17 @@
+// An exception nothing catches ends the program with its value and the stack where it was thrown.
+// expect-stdout: before
+// expect-stderr: panic: uncaught exception: no such file
+// expect-stderr:     at open (tests/hir/uncaught.hir:10:3)
+// expect-stderr:     at main (tests/hir/uncaught.hir:15:3)
+// expect-exit: 101
+module "uncaught";
+
+fn open(path: string) -> int {
+  throw "no such file"
+}
+
+fn main() -> int {
+  print("before\n");
+  open("x");
+  0
+}
