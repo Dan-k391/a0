@@ -394,6 +394,64 @@ fn suite_unoptimized_native() {
     native("unoptimized, native", "0");
 }
 
+/// How long the suite takes to compile, with the HIR optimizer and without: the front end, lowering
+/// (which runs the optimizer) and Cranelift, not linking; the best of three for each file.
+/// `cargo test --release -p lox --test suite compile_time -- --ignored --nocapture`
+#[test]
+#[ignore]
+fn compile_time() {
+    use std::time::{Duration, Instant};
+    fn best<T>(f: &mut dyn FnMut() -> T) -> (Duration, T) {
+        let mut out = None;
+        let mut fastest = Duration::MAX;
+        for _ in 0..3 {
+            let t = Instant::now();
+            let v = f();
+            fastest = fastest.min(t.elapsed());
+            out = Some(v);
+        }
+        (fastest, out.unwrap())
+    }
+    let target = a0_native::Target::host().unwrap();
+    let (mut front, mut lower, mut codegen) =
+        (Duration::ZERO, [Duration::ZERO; 2], [Duration::ZERO; 2]);
+    let (mut files, mut insts) = (0, [0; 2]);
+    for (_, path) in tests() {
+        let text = std::fs::read_to_string(&path).unwrap();
+        let (t, hir) = best(&mut || lox::compile_hir(&text));
+        let Ok(hir) = hir else {
+            continue;
+        };
+        front += t;
+        files += 1;
+        for (i, optimize) in [false, true].into_iter().enumerate() {
+            let (t, ir) = best(&mut || a0_hir::lower_with(&hir, a0_hir::LowerOptions { optimize }));
+            let ir = ir.unwrap();
+            lower[i] += t;
+            insts[i] += ir.to_string().lines().count();
+            let opts = a0_native::CodegenOptions {
+                optimize: true,
+                entry_point: true,
+            };
+            codegen[i] += best(&mut || a0_native::compile_object(&ir, target, &opts).unwrap()).0;
+        }
+    }
+    let ms = |d: Duration| d.as_secs_f64() * 1000.0;
+    println!("{files} programs that compile; total milliseconds:");
+    println!("| | front end | lowering | Cranelift | total | IR lines |");
+    println!("|---|---|---|---|---|---|");
+    for (i, name) in ["`A0_OPT=0`", "optimized"].into_iter().enumerate() {
+        println!(
+            "| {name} | {:.0} | {:.0} | {:.0} | {:.0} | {} |",
+            ms(front),
+            ms(lower[i]),
+            ms(codegen[i]),
+            ms(front + lower[i] + codegen[i]),
+            insts[i]
+        );
+    }
+}
+
 #[test]
 fn expectation_parsing_matches_test_dart() {
     let e = expectations(

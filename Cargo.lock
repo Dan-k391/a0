@@ -447,6 +447,7 @@ dependencies = [
  "a0-driver",
  "a0-hir",
  "a0-ir",
+ "a0-native",
  "a0-sema",
  "a0-syntax",
 ]

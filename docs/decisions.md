@@ -257,7 +257,7 @@ Languages on the HIR express their semantics as small HIR functions (Lox's opera
 functions), so calls and `any` boxing dominate their run time. The optimizer works on the
 monomorphized HIR, where types are concrete: it inlines small functions (turning mid-function
 `return`s into `if` values), decides `is`/`as` on `any` statically where the boxed type is known,
-and cleans up (constants, copies, dead code). It is about 820 lines, runs in linear passes, is on by
+and cleans up (constants, copies, dead code). It is about 820 lines, runs in linear passes (inlining bounded as in D37), is on by
 default for every HIR language with no frontend work, and `A0_OPT=0` turns it off. It never removes
 or duplicates an expression with an effect. Languages that emit the core IR directly (Kaleidoscope)
 do not get it; an inliner on the core IR would be the next step if one needs it.
@@ -384,3 +384,17 @@ change earlier listings: `match` arms and grammar alternatives that a chapter in
 regions of their own, so the program as it stands after each chapter builds and runs (checked by
 hand for chapters 3 to 5 when the tutorial was written). This is mdBook's anchor convention without
 mdBook, since the tutorial is plain Markdown that GitHub renders.
+
+## D37. Inlining goes bottom-up and is bounded by sizes after inlining
+
+The first inliner measured each callee once, before any inlining, and then inlined into the copies
+it made, up to three levels deep. A chain of helpers that each call the previous one twice grew
+exponentially: every copy carried the copies inlined into it. The optimizer now visits functions
+callees first and copies a callee as it is after its own inlining, so a copy is never inlined into
+again, and it measures the callee at that point: a function is inlined only if its body is at most
+120 nodes after inlining (the old limit was 80 nodes of a function's own code, which with its small
+callees inlined came to about 100). Each body may grow to 4000 nodes or to twice its size, whichever
+is more, the rule GCC uses for large functions; a limit relative to the size alone stopped inlining
+in long straight-line code such as a loop of 30 calls. The Lox suite compiles as fast as before
+(3.2 s with the optimizer, 2.3 s without), the benchmarks run as fast, and a chain of 40 helpers
+(`tests/hir/inline_chain.hir`), which did not finish before, compiles in a fifth of a second.

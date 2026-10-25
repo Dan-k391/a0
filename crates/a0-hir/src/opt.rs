@@ -14,20 +14,29 @@ use std::collections::{HashMap, HashSet};
 use crate::builder::visit_children;
 use crate::model::*;
 
-/// Functions with at most this many nodes are inlined.
-const INLINE_SIZE: usize = 80;
-/// Inlining into inlined code goes at most this deep.
-const INLINE_DEPTH: u32 = 3;
+/// Functions with at most this many nodes, counted after inlining into them, are inlined (D37).
+const INLINE_SIZE: usize = 120;
+/// Inlining grows a body to at most this many nodes, or to twice its size if that is more.
+const GROWN_SIZE: usize = 4000;
 /// Rounds of simplification.
 const ROUNDS: u32 = 3;
 
 pub(crate) fn optimize(m: &mut HirModule) {
     let mut o = Opt { m };
     let inlinable = o.inlinable_functions();
-    for b in 0..o.m.bodies.len() {
-        let body = BodyId(b as u32);
-        if let Some(root) = o.m.bodies[b].root {
-            o.inline_calls(root, body, &inlinable, 0);
+    // Callees before their callers: a callee is copied, and measured, as it is after its own
+    // inlining, so no copy is inlined into again and sizes cannot compound along a call chain.
+    for f in o.bottom_up() {
+        for b in 0..o.m.bodies.len() {
+            let body = BodyId(b as u32);
+            if o.m.bodies[b].func != f {
+                continue;
+            }
+            if let Some(root) = o.m.bodies[b].root {
+                let size = o.size(root);
+                let mut budget = GROWN_SIZE.max(2 * size) - size;
+                o.inline_calls(root, body, &inlinable, &mut budget);
+            }
         }
     }
     for _ in 0..ROUNDS {
@@ -112,6 +121,52 @@ impl Opt<'_> {
             }
         }
         out
+    }
+
+    /// The functions, callees before their callers except around recursion.
+    fn bottom_up(&self) -> Vec<FuncId> {
+        let n = self.m.funcs.len();
+        let mut calls = vec![Vec::new(); n];
+        for body in &self.m.bodies {
+            if let Some(root) = body.root {
+                let callers = &mut calls[body.func.index()];
+                self.walk(root, &mut |m, e| {
+                    if let ExprKind::Call(g, ..) = m.exprs[e.index()].kind {
+                        callers.push(g);
+                    }
+                });
+            }
+        }
+        let mut order = Vec::with_capacity(n);
+        let mut seen = vec![false; n];
+        for start in 0..n {
+            if seen[start] {
+                continue;
+            }
+            seen[start] = true;
+            // (function, how many of its callees have been visited)
+            let mut stack = vec![(start, 0)];
+            while let Some(&mut (f, ref mut next)) = stack.last_mut() {
+                if let Some(&g) = calls[f].get(*next) {
+                    *next += 1;
+                    if !seen[g.index()] {
+                        seen[g.index()] = true;
+                        stack.push((g.index(), 0));
+                    }
+                } else {
+                    order.push(FuncId(f as u32));
+                    stack.pop();
+                }
+            }
+        }
+        order
+    }
+
+    /// The number of nodes in the tree `e` (not inside closures).
+    fn size(&self, e: ExprId) -> usize {
+        let mut n = 0;
+        self.walk(e, &mut |_, _| n += 1);
+        n
     }
 
     /// Calls `f` on `e` and every node under it (not inside closures).
@@ -233,21 +288,34 @@ impl Opt<'_> {
         }
     }
 
-    /// Replaces calls of inlinable functions under `e`, which belongs to `body`.
-    fn inline_calls(&mut self, e: ExprId, body: BodyId, inlinable: &HashSet<FuncId>, depth: u32) {
+    /// Replaces calls of inlinable functions under `e`, which belongs to `body`, while the copies
+    /// fit in `budget` nodes.
+    fn inline_calls(
+        &mut self,
+        e: ExprId,
+        body: BodyId,
+        inlinable: &HashSet<FuncId>,
+        budget: &mut usize,
+    ) {
         for c in self.children(e) {
-            self.inline_calls(c, body, inlinable, depth);
+            self.inline_calls(c, body, inlinable, budget);
         }
         let ExprKind::Call(f, _, args) = self.kind(e).clone() else {
             return;
         };
-        if depth >= INLINE_DEPTH || !inlinable.contains(&f) {
+        // A function that became recursive by inlining stays a call within itself.
+        if !inlinable.contains(&f) || self.m.bodies[body.index()].func == f {
             return;
         }
         let callee = self.m.func_body(f);
+        let root = self.m.body_root(callee).unwrap();
+        let size = self.size(root);
+        if size > INLINE_SIZE || size > *budget {
+            return;
+        }
+        *budget -= size;
         let params = self.m.body_params(callee).to_vec();
         let ret = self.m.body_ret(callee);
-        let root = self.m.body_root(callee).unwrap();
         let mut locals = HashMap::new();
         let mut items = Vec::new();
         for (&p, &a) in params.iter().zip(&args) {
@@ -259,8 +327,6 @@ impl Opt<'_> {
         let e_ty = self.ty(e);
         self.m.exprs[e.index()].kind = ExprKind::Block(items, Some(value));
         self.m.exprs[e.index()].ty = e_ty;
-        // The inlined body may call other small functions.
-        self.inline_calls(value, body, inlinable, depth + 1);
     }
 
     fn copy_local(

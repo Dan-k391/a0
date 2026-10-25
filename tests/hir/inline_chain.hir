@@ -1,0 +1,52 @@
+// A chain of helpers, each calling the previous one twice: inlining every call would make the
+// last one 2^40 nodes. The optimizer must check a callee's size as it is after its own inlining
+// and cap how much a function grows, so this compiles quickly.
+// expect-stdout: 41
+module "inline_chain";
+
+fn h0(x: int) -> int { x + 1 }
+fn h1(x: int) -> int { if x > 1000000 { h0(x) } else { h0(x + 1) } }
+fn h2(x: int) -> int { if x > 1000000 { h1(x) } else { h1(x + 1) } }
+fn h3(x: int) -> int { if x > 1000000 { h2(x) } else { h2(x + 1) } }
+fn h4(x: int) -> int { if x > 1000000 { h3(x) } else { h3(x + 1) } }
+fn h5(x: int) -> int { if x > 1000000 { h4(x) } else { h4(x + 1) } }
+fn h6(x: int) -> int { if x > 1000000 { h5(x) } else { h5(x + 1) } }
+fn h7(x: int) -> int { if x > 1000000 { h6(x) } else { h6(x + 1) } }
+fn h8(x: int) -> int { if x > 1000000 { h7(x) } else { h7(x + 1) } }
+fn h9(x: int) -> int { if x > 1000000 { h8(x) } else { h8(x + 1) } }
+fn h10(x: int) -> int { if x > 1000000 { h9(x) } else { h9(x + 1) } }
+fn h11(x: int) -> int { if x > 1000000 { h10(x) } else { h10(x + 1) } }
+fn h12(x: int) -> int { if x > 1000000 { h11(x) } else { h11(x + 1) } }
+fn h13(x: int) -> int { if x > 1000000 { h12(x) } else { h12(x + 1) } }
+fn h14(x: int) -> int { if x > 1000000 { h13(x) } else { h13(x + 1) } }
+fn h15(x: int) -> int { if x > 1000000 { h14(x) } else { h14(x + 1) } }
+fn h16(x: int) -> int { if x > 1000000 { h15(x) } else { h15(x + 1) } }
+fn h17(x: int) -> int { if x > 1000000 { h16(x) } else { h16(x + 1) } }
+fn h18(x: int) -> int { if x > 1000000 { h17(x) } else { h17(x + 1) } }
+fn h19(x: int) -> int { if x > 1000000 { h18(x) } else { h18(x + 1) } }
+fn h20(x: int) -> int { if x > 1000000 { h19(x) } else { h19(x + 1) } }
+fn h21(x: int) -> int { if x > 1000000 { h20(x) } else { h20(x + 1) } }
+fn h22(x: int) -> int { if x > 1000000 { h21(x) } else { h21(x + 1) } }
+fn h23(x: int) -> int { if x > 1000000 { h22(x) } else { h22(x + 1) } }
+fn h24(x: int) -> int { if x > 1000000 { h23(x) } else { h23(x + 1) } }
+fn h25(x: int) -> int { if x > 1000000 { h24(x) } else { h24(x + 1) } }
+fn h26(x: int) -> int { if x > 1000000 { h25(x) } else { h25(x + 1) } }
+fn h27(x: int) -> int { if x > 1000000 { h26(x) } else { h26(x + 1) } }
+fn h28(x: int) -> int { if x > 1000000 { h27(x) } else { h27(x + 1) } }
+fn h29(x: int) -> int { if x > 1000000 { h28(x) } else { h28(x + 1) } }
+fn h30(x: int) -> int { if x > 1000000 { h29(x) } else { h29(x + 1) } }
+fn h31(x: int) -> int { if x > 1000000 { h30(x) } else { h30(x + 1) } }
+fn h32(x: int) -> int { if x > 1000000 { h31(x) } else { h31(x + 1) } }
+fn h33(x: int) -> int { if x > 1000000 { h32(x) } else { h32(x + 1) } }
+fn h34(x: int) -> int { if x > 1000000 { h33(x) } else { h33(x + 1) } }
+fn h35(x: int) -> int { if x > 1000000 { h34(x) } else { h34(x + 1) } }
+fn h36(x: int) -> int { if x > 1000000 { h35(x) } else { h35(x + 1) } }
+fn h37(x: int) -> int { if x > 1000000 { h36(x) } else { h36(x + 1) } }
+fn h38(x: int) -> int { if x > 1000000 { h37(x) } else { h37(x + 1) } }
+fn h39(x: int) -> int { if x > 1000000 { h38(x) } else { h38(x + 1) } }
+fn h40(x: int) -> int { if x > 1000000 { h39(x) } else { h39(x + 1) } }
+
+fn main() -> int {
+  print(str(h40(0)) + "\n");
+  0
+}

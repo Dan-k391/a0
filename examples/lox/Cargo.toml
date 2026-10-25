@@ -12,3 +12,6 @@ a0-ir.workspace = true
 a0-hir.workspace = true
 a0-syntax.workspace = true
 a0-sema.workspace = true
+
+[dev-dependencies]
+a0-native.workspace = true

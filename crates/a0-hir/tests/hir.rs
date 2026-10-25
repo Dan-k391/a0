@@ -366,6 +366,40 @@ fn the_optimizer_inlines_small_functions_and_folds_any_tests() {
 }
 
 #[test]
+fn inlining_is_bounded_along_call_chains() {
+    // Each helper calls the previous one twice: inlining everything would double the code at every
+    // step. A callee is measured after its own inlining, so every few helpers the chain stays a call
+    // and the code grows by a constant factor, however long the chain.
+    let mut text = String::from(
+        "module \"m\";
+fn h0(x: int) -> int { x + 1 }
+",
+    );
+    for i in 1..=64 {
+        text += &format!(
+            "fn h{i}(x: int) -> int {{ if x > 9 {{ h{p}(x) }} else {{ h{p}(x + 1) }} }}
+",
+            p = i - 1
+        );
+    }
+    text += "fn main() -> int { h64(0) }
+";
+    let m = parse_ok(&text);
+    let size = |optimize: bool| {
+        lower_with(&m, LowerOptions { optimize })
+            .unwrap()
+            .to_string()
+            .lines()
+            .count()
+    };
+    let (plain, optimized) = (size(false), size(true));
+    assert!(
+        optimized < 8 * plain,
+        "{optimized} lines of IR, {plain} without inlining"
+    );
+}
+
+#[test]
 fn casts_guarded_by_a_type_test_are_not_checked_again() {
     let src = |assign: &str| {
         format!(
