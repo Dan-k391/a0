@@ -16,7 +16,8 @@ use std::collections::{BTreeSet, HashMap};
 
 use a0_diag::{Diagnostic, Diagnostics};
 use a0_ir::{
-    Builder, FloatCC, FuncId as IrFunc, GlobalId as IrGlobal, IntCC, Opcode, Type, Value, Var,
+    Builder, DebugKind, DebugType, FloatCC, FuncId as IrFunc, GlobalId as IrGlobal, IntCC, Opcode,
+    Type, Value, Var,
 };
 
 use crate::builder::visit_children;
@@ -275,6 +276,8 @@ struct Lowerer<'a> {
     f: Option<FnState>,
     /// The IR inline site of each HIR one, made when first needed.
     inline_ids: HashMap<u32, a0_ir::InlineId>,
+    /// The debug type of each HIR type, made when a local first needs it.
+    debug_types: HashMap<TypeId, DebugType>,
     /// What unwrapping a null says, in the language's words.
     null_message: Option<(IrGlobal, usize)>,
     /// Per body: whether `main` can reach it (others are not lowered), and whether it may raise an
@@ -327,6 +330,7 @@ impl<'a> Lowerer<'a> {
             reassigned: Vec::new(),
             f: None,
             inline_ids: HashMap::new(),
+            debug_types: HashMap::new(),
             null_message: None,
             reached: Vec::new(),
             raises: Vec::new(),
@@ -524,7 +528,10 @@ impl<'a> Lowerer<'a> {
             *n += 1;
             let (params, ret) = self.signature(id, true);
             let f = self.b.declare_function(&name, &params, ret);
-            let trace_name = format!("{}::{{closure}}", m.funcs[body.func.index()].name);
+            let trace_name = match &body.name {
+                Some(name) => name.clone(),
+                None => format!("{}::{{closure}}", m.funcs[body.func.index()].name),
+            };
             self.b.set_trace_name(f, &trace_name);
             self.lambda_funcs.insert(id, f);
             let g = self.b.add_global_int(&format!("{name}.type"), Type::Ptr, 0);
@@ -1164,6 +1171,7 @@ impl<'a> Lowerer<'a> {
                 let tagged = self.b.or(w, tag);
                 self.b.store(tagged, addr);
                 let var = self.b.declare_var(&m.locals[l.index()].name, Type::Ptr);
+                self.describe_local(var, l, true);
                 let bx = self.b.cast(Opcode::Inttoptr, w, Type::Ptr);
                 self.b.set(var, bx);
                 self.st().storage.insert(l, Storage::Boxed(var, s));
@@ -1232,12 +1240,14 @@ impl<'a> Lowerer<'a> {
             None => Storage::None,
             Some(_) if self.captured[l.index()] => {
                 let var = self.b.declare_var(&data.name, Type::Ptr);
+                self.describe_local(var, l, true);
                 let null = self.b.null();
                 self.b.set(var, null);
                 Storage::Boxed(var, self.alloc_slot())
             }
             Some(t) if self.is_gc(data.ty) => {
                 let var = self.b.declare_var(&data.name, t);
+                self.describe_local(var, l, false);
                 let zero = if t == Type::Ptr {
                     self.b.null()
                 } else {
@@ -1246,9 +1256,79 @@ impl<'a> Lowerer<'a> {
                 self.b.set(var, zero);
                 Storage::Rooted(var, self.alloc_slot())
             }
-            Some(t) => Storage::Var(self.b.declare_var(&data.name, t)),
+            Some(t) => {
+                let var = self.b.declare_var(&data.name, t);
+                self.describe_local(var, l, false);
+                Storage::Var(var)
+            }
         };
         self.st().storage.insert(l, storage);
+    }
+
+    /// Tells debuggers that `var` holds the local `l` (in a box if `boxed`).
+    fn describe_local(&mut self, var: Var, l: LocalId, boxed: bool) {
+        let data = &self.m.locals[l.index()];
+        let (name, ty, span) = (data.source_name.clone(), data.ty, data.span);
+        let mut t = self.debug_type(ty);
+        if boxed {
+            t = self.b.debug_type(DebugKind::Boxed, "box", &[t]);
+        }
+        self.b.set_var_debug(var, &name, t, span);
+    }
+
+    /// How a debugger shows values of type `t`: the language's name for the type, and how to read
+    /// its words (`a0_ir::DebugKind`).
+    fn debug_type(&mut self, t: TypeId) -> DebugType {
+        if let Some(&d) = self.debug_types.get(&t) {
+            return d;
+        }
+        let m = self.m;
+        let name = m.display_type(t);
+        let simple = |s: &mut Self, kind: DebugKind, elems: &[TypeId]| {
+            let elems: Vec<DebugType> = elems.iter().map(|&e| s.debug_type(e)).collect();
+            s.b.debug_type(kind, &name, &elems)
+        };
+        let d = match m.kind(t) {
+            TypeKind::Int => simple(self, DebugKind::Int, &[]),
+            TypeKind::Float => simple(self, DebugKind::Float, &[]),
+            TypeKind::Bool => simple(self, DebugKind::Bool, &[]),
+            TypeKind::String => simple(self, DebugKind::String, &[]),
+            TypeKind::Any => simple(self, DebugKind::Any, &[]),
+            TypeKind::Array(e) => simple(self, DebugKind::Array, &[*e]),
+            TypeKind::Map(k, v) => simple(self, DebugKind::Map, &[*k, *v]),
+            TypeKind::Nullable(i) => simple(self, DebugKind::Nullable, &[*i]),
+            TypeKind::Interface(_) => simple(self, DebugKind::Object, &[]),
+            TypeKind::Struct(s, _) => {
+                // Named as the object's descriptor is, which interface values are found by.
+                let s = *s;
+                let d = self.b.debug_type(DebugKind::Struct, m.struct_name(s), &[]);
+                self.debug_types.insert(t, d);
+                for i in 0..m.struct_field_count(s) {
+                    let (field, ft) = m.struct_field(s, i);
+                    let ft = self.debug_type(ft);
+                    self.b.debug_type_add_field(d, field, ft);
+                }
+                d
+            }
+            TypeKind::Enum(e, _) => {
+                let e = *e;
+                let d = self.b.debug_type(DebugKind::Enum, m.enum_name(e), &[]);
+                self.debug_types.insert(t, d);
+                for v in 0..m.variant_count(e) {
+                    let fields: Vec<DebugType> = m
+                        .variant_fields(e, v)
+                        .iter()
+                        .map(|&f| self.debug_type(f))
+                        .collect();
+                    self.b
+                        .debug_type_add_variant(d, m.variant_name(e, v), &fields);
+                }
+                d
+            }
+            _ => simple(self, DebugKind::Opaque, &[]),
+        };
+        self.debug_types.insert(t, d);
+        d
     }
 
     /// Clears the slots in use and pops the frame, before a return.

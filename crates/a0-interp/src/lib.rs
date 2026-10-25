@@ -91,6 +91,45 @@ thread_local! {
     /// The location of the active call in each interpreted frame, outermost first, for the
     /// runtime's stack traces.
     static CALLS: std::cell::RefCell<Vec<u32>> = const { std::cell::RefCell::new(Vec::new()) };
+    /// The interpreter being debugged while it is in a runtime function, for the runtime's
+    /// failure hook.
+    static DEBUGGEE: std::cell::Cell<*const Interpreter> = const {
+        std::cell::Cell::new(std::ptr::null())
+    };
+    /// Why the program being debugged failed.
+    static FAILURE: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+}
+
+/// What a debugger is told (see [`Interpreter::new_debug`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DebugEvent {
+    /// Execution reached a new source line: [`Interpreter::debug_frame_location`] of call 0.
+    Line,
+    /// The program failed ([`Interpreter::debug_failure`]); its calls are still active.
+    Failure,
+}
+
+/// A debugger's view of execution. It runs on the interpreter's thread; returning resumes it.
+pub type DebugHook = fn(&Interpreter, DebugEvent);
+
+/// The runtime's failure hook for a debugged program (`a0_rt_set_fail_hook`): tells the debugger,
+/// while the failing call is still active, before the runtime reports the failure and exits.
+///
+/// # Safety
+/// `message` points to `len` bytes (the runtime passes its message).
+pub unsafe extern "C" fn runtime_failed(message: *const u8, len: usize) {
+    let this = DEBUGGEE.with(|d| d.get());
+    if this.is_null() {
+        return;
+    }
+    // SAFETY: the runtime passes its message; the pointer was set from the interpreter that called
+    // into the runtime, which never returns to it after a failure.
+    let text = unsafe { std::slice::from_raw_parts(message, len) };
+    FAILURE.with(|f| *f.borrow_mut() = Some(String::from_utf8_lossy(text).into_owned()));
+    let interp = unsafe { &*this };
+    if let Some(hook) = interp.hook {
+        hook(interp, DebugEvent::Failure);
+    }
 }
 
 /// The interpreter's frames, as the runtime asks for them when a runtime function fails.
@@ -260,6 +299,8 @@ enum Op {
     Continue(u32),
     Return(Option<Slot>),
     Unreachable(u32),
+    /// Execution reaches a new source line (only when debugging): its location id.
+    Line(u32),
 }
 
 /// A call signature as the interpreter needs it.
@@ -296,6 +337,8 @@ struct Code {
     ops: Box<[Op]>,
     params: Vec<Slot>,
     frame_size: usize,
+    /// The slot of each variable, for debuggers.
+    vars: Vec<(a0_ir::Var, Slot)>,
 }
 
 enum FuncKind {
@@ -346,12 +389,46 @@ pub struct Interpreter {
     max_depth: u32,
     /// The location table, in the runtime's format.
     debug: Vec<u8>,
+    locations: a0_ir::Locations,
+    /// The debugger, when one is attached (`Interpreter::new_debug`).
+    hook: Option<DebugHook>,
+    /// Per active call, innermost last, when debugging.
+    frames: Vec<DebugFrame>,
+    /// Whether the debugger was told of the failure being unwound.
+    failure_told: bool,
+}
+
+/// A call as the debugger sees it.
+struct DebugFrame {
+    func: u32,
+    base: usize,
+    /// The location id of the line it is at (0 before its first).
+    loc: u32,
 }
 
 impl Interpreter {
     /// Verifies and prepares a module. Every extern that the module calls or takes the address of
     /// must be present in `symbols`.
     pub fn new(module: Module, symbols: &HostSymbols) -> Result<Interpreter, Diagnostics> {
+        Interpreter::new_with(module, symbols, None)
+    }
+
+    /// Like [`Interpreter::new`], for a debugger: `hook` is called whenever execution reaches a
+    /// new source line, and when the program fails, before its calls are unwound; it can inspect
+    /// the calls with the `debug_*` methods, and stops the program by not returning.
+    pub fn new_debug(
+        module: Module,
+        symbols: &HostSymbols,
+        hook: DebugHook,
+    ) -> Result<Interpreter, Diagnostics> {
+        Interpreter::new_with(module, symbols, Some(hook))
+    }
+
+    fn new_with(
+        module: Module,
+        symbols: &HostSymbols,
+        hook: Option<DebugHook>,
+    ) -> Result<Interpreter, Diagnostics> {
         let diags = a0_ir::verify(&module);
         if diags.has_errors() {
             return Err(diags);
@@ -464,7 +541,7 @@ impl Interpreter {
             codes.push(
                 module
                     .func_body(f)
-                    .map(|_| compile_function(&module, f, &addr_of, &locations)),
+                    .map(|_| compile_function(&module, f, &addr_of, &locations, hook.is_some())),
             );
         }
         let entries: Vec<a0_runtime::debug::Entry> = locations
@@ -488,7 +565,62 @@ impl Interpreter {
             depth: 0,
             max_depth: DEFAULT_MAX_DEPTH,
             debug,
+            locations,
+            hook,
+            frames: Vec::new(),
+            failure_told: false,
         })
+    }
+
+    // ---------------------------------------------------------------- debugging
+
+    /// The number of active calls of defined functions (when debugging).
+    pub fn debug_frame_count(&self) -> usize {
+        self.frames.len()
+    }
+
+    /// The function of active call `i`, 0 being the innermost.
+    pub fn debug_frame_function(&self, i: usize) -> FuncId {
+        FuncId(self.frames[self.frames.len() - 1 - i].func)
+    }
+
+    /// The location id of the line active call `i` is at (0 if it has not reached one yet).
+    pub fn debug_frame_location(&self, i: usize) -> u32 {
+        self.frames[self.frames.len() - 1 - i].loc
+    }
+
+    /// A location by id: the function as traces name it, the file, line and column.
+    pub fn debug_location(&self, id: u32) -> Option<&a0_ir::Location> {
+        self.locations.get(id)
+    }
+
+    /// The variables of active call `i`'s function and their current values (raw bits).
+    pub fn debug_frame_vars(&self, i: usize) -> Vec<(a0_ir::Var, u64)> {
+        let frame = &self.frames[self.frames.len() - 1 - i];
+        match &self.funcs[frame.func as usize].kind {
+            FuncKind::Defined(code) => code
+                .vars
+                .iter()
+                .map(|&(v, slot)| (v, self.stack[frame.base + slot as usize]))
+                .collect(),
+            _ => Vec::new(),
+        }
+    }
+
+    /// Why the program failed, during a [`DebugEvent::Failure`].
+    pub fn debug_failure(&self) -> Option<String> {
+        FAILURE.with(|f| f.borrow().clone())
+    }
+
+    /// Tells the debugger that the program failed with `trap`, once, while its calls are active.
+    fn tell_failure(&mut self, trap: &Trap) {
+        if let Some(hook) = self.hook
+            && !self.failure_told
+        {
+            self.failure_told = true;
+            FAILURE.with(|f| *f.borrow_mut() = Some(trap.message.clone()));
+            hook(self, DebugEvent::Failure);
+        }
     }
 
     pub fn module(&self) -> &Module {
@@ -559,7 +691,21 @@ impl Interpreter {
                     self.stack[base + param as usize] = self.stack[caller_base + arg as usize];
                 }
                 CALLS.with(|c| c.borrow_mut().push(loc));
+                if self.hook.is_some() {
+                    self.frames.push(DebugFrame {
+                        func: f,
+                        base,
+                        loc: 0,
+                    });
+                }
                 let flow = self.exec(&code.ops, base);
+                if self.hook.is_some() {
+                    if let Err(trap) = &flow {
+                        let trap = trap.clone();
+                        self.tell_failure(&trap);
+                    }
+                    self.frames.pop();
+                }
                 CALLS.with(|c| c.borrow_mut().pop());
                 self.stack.truncate(base);
                 self.depth -= 1;
@@ -608,8 +754,17 @@ impl Interpreter {
             buf[n + 1] = 0;
             n += 2;
         }
+        // A runtime function that fails never returns: the debugger hears of it through the
+        // runtime's failure hook (`debug::runtime_failed`), which finds this interpreter here.
+        if self.hook.is_some() {
+            let this: *const Interpreter = self;
+            DEBUGGEE.with(|d| d.set(this));
+        }
         // SAFETY: the address came from a symbol table entry whose signature the IR declares.
         let raw = unsafe { a0_runtime::ffi_call(address, &buf[..n], mask, ret_kind) };
+        if self.hook.is_some() {
+            DEBUGGEE.with(|d| d.set(std::ptr::null()));
+        }
         match raw {
             Some(v) => Ok(ret.map(|t| normalize(t, v)).unwrap_or(0)),
             None => Err(Trap::panic("unsupported C call shape".to_string())),
@@ -784,6 +939,14 @@ impl Interpreter {
                     return Ok(Flow::Return(v.map(|s| self.get(base, s)).unwrap_or(0)));
                 }
                 &Op::Unreachable(loc) => return Err(Trap::new(trap::UNREACHABLE).at(loc)),
+                &Op::Line(loc) => {
+                    if let Some(hook) = self.hook {
+                        if let Some(frame) = self.frames.last_mut() {
+                            frame.loc = loc;
+                        }
+                        hook(self, DebugEvent::Line);
+                    }
+                }
             }
         }
         Ok(Flow::Next)
@@ -798,6 +961,8 @@ struct FuncCompiler<'a> {
     vars: HashMap<a0_ir::Var, Slot>,
     addr_of: &'a dyn Fn(a0_ir::Symbol) -> u64,
     locations: &'a a0_ir::Locations,
+    /// Whether to mark new source lines for a debugger.
+    lines: bool,
 }
 
 fn compile_function(
@@ -805,6 +970,7 @@ fn compile_function(
     f: FuncId,
     addr_of: &dyn Fn(a0_ir::Symbol) -> u64,
     locations: &a0_ir::Locations,
+    lines: bool,
 ) -> Code {
     let mut c = FuncCompiler {
         m,
@@ -812,6 +978,7 @@ fn compile_function(
         vars: HashMap::new(),
         addr_of,
         locations,
+        lines,
     };
     let mut next = 0u32;
     let mut params = Vec::new();
@@ -832,10 +999,12 @@ fn compile_function(
         next += 1;
     }
     let ops = c.region(body);
+    let vars = m.func_vars(f).iter().map(|v| (*v, c.vars[v])).collect();
     Code {
         ops,
         params,
         frame_size: next as usize,
+        vars,
     }
 }
 
@@ -845,11 +1014,28 @@ impl FuncCompiler<'_> {
     }
 
     fn region(&self, r: Region) -> Box<[Op]> {
-        self.m
-            .region_insts(r)
-            .iter()
-            .map(|&i| self.inst(i))
-            .collect()
+        let insts = self.m.region_insts(r);
+        if !self.lines {
+            return insts.iter().map(|&i| self.inst(i)).collect();
+        }
+        // A debugger hears of each new line: where a region starts (so every loop iteration),
+        // and where an instruction is on another line than the one before it.
+        let mut ops = Vec::with_capacity(insts.len() + 1);
+        let mut last = None;
+        for &i in insts {
+            let id = self.locations.of(i);
+            if let Some(l) = self.locations.get(id)
+                && l.line != 0
+            {
+                let key = (l.file.as_str(), l.line, l.parent);
+                if last != Some(key) {
+                    ops.push(Op::Line(id));
+                    last = Some(key);
+                }
+            }
+            ops.push(self.inst(i));
+        }
+        ops.into_boxed_slice()
     }
 
     fn inst(&self, i: Inst) -> Op {

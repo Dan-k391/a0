@@ -967,6 +967,7 @@ impl HirBuilder {
             root: None,
             parent: None,
             func: f,
+            name: None,
         });
         self.add_value_name(name, Item::Func(f));
         f
@@ -1012,9 +1013,19 @@ impl HirBuilder {
             root: None,
             parent: Some(parent),
             func,
+            name: None,
         });
         self.add_params(body, param_names, params);
         body
+    }
+
+    /// Names a closure for stack traces and debuggers (by default `f::{closure}`, after the
+    /// function it is in): a language whose functions are closures (Lox) gives them their names.
+    pub fn set_closure_name(&mut self, body: BodyId, name: &str) {
+        match self.m.bodies.get_mut(body.index()) {
+            Some(b) if b.parent.is_some() => b.name = Some(name.to_string()),
+            _ => self.misuse("set_closure_name takes the body of a closure"),
+        }
     }
 
     fn add_params(&mut self, body: BodyId, names: &[&str], types: &[TypeId]) {

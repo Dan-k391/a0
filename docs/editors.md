@@ -82,6 +82,18 @@ file-types = ["lox"]
 language-servers = ["lox"]
 ```
 
+## Debugging
+
+The extension also adds a debugger of type `a0`, which runs `<command> dap` for the program's
+language (`docs/debugging.md`):
+
+```json
+{ "type": "a0", "request": "launch", "name": "Debug the current file", "program": "${file}" }
+```
+
+For languages the extension does not declare, `"debug.allowBreakpointsEverywhere": true` lets VS
+Code take breakpoints in their files.
+
 ## Limits
 
 Resolution is lexical and knows no types, so `p.x` offers every member named `x`, and names a language

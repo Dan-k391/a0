@@ -145,13 +145,13 @@ static uint32_t g_ids[4096];
 static char g_text[65536];
 
 static A0_NORETURN void fail(const uint8_t *message, size_t len, const uint32_t *ids, size_t count) {
-    fflush(stdout);
-    fputs("panic: ", stderr);
-    fwrite(message, 1, len, stderr);
-    fputc('\n', stderr);
+    a0_rt_tell_failure(message, len);
+    a0_rt_write(2, (const uint8_t *)"panic: ", 7);
+    a0_rt_write(2, message, len);
+    a0_rt_write(2, (const uint8_t *)"\n", 1);
     if (count > 0) {
-        a0_rt_trace_text(ids, count, g_text, sizeof g_text);
-        fputs(g_text, stderr);
+        size_t n = a0_rt_trace_text(ids, count, g_text, sizeof g_text);
+        a0_rt_write(2, (const uint8_t *)g_text, n < sizeof g_text ? n : sizeof g_text - 1);
     }
     a0_rt_exit(A0_PANIC_EXIT_CODE);
 }

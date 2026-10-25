@@ -93,6 +93,7 @@ static A0Array *string_array(char **items, int64_t count) {
 
 A0String *a0_std_read_line(void) {
     a0_rt_flush(); /* so that a prompt is seen before the program waits */
+    if (a0_rt_has_debugger()) return NULL; /* standard input is the debugger's */
     Buffer b = {0};
     char chunk[4096];
     int any = 0;
@@ -114,6 +115,7 @@ A0String *a0_std_read_line(void) {
 A0String *a0_std_read_all(void) {
     a0_rt_flush();
     Buffer b = {0};
+    if (a0_rt_has_debugger()) return buffer_string(&b);
     char chunk[4096];
     size_t n;
     while ((n = fread(chunk, 1, sizeof chunk, stdin)) > 0) buffer_add(&b, chunk, n);

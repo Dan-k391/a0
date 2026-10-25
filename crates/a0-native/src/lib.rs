@@ -9,6 +9,7 @@
 //! same message as the interpreter.
 
 mod codegen;
+mod dwarf;
 mod link;
 
 use std::path::Path;
@@ -23,6 +24,8 @@ pub use link::{Library, LinkOptions, link_executable};
 pub struct BuildOptions {
     /// Skip Cranelift's optimizations (faster compiles, slower code).
     pub no_optimize: bool,
+    /// Describe the program for the platform's debugger (`CodegenOptions::debug_info`).
+    pub debug_info: bool,
     pub link: LinkOptions,
 }
 
@@ -39,7 +42,10 @@ pub fn build_executable(
         &CodegenOptions {
             optimize: !opts.no_optimize,
             entry_point: true,
+            debug_info: opts.debug_info,
         },
     )?;
-    link_executable(&object, target, output, &opts.link)
+    let mut link = opts.link.clone();
+    link.debug_info |= opts.debug_info;
+    link_executable(&object, target, output, &link)
 }

@@ -817,6 +817,23 @@ pub unsafe extern "C" fn a0_hir_new_closure_body(
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn a0_hir_set_closure_name(
+    b: *mut A0HirBuilder,
+    body: u32,
+    name: *const c_char,
+    len: usize,
+) {
+    let name = unsafe { text(name, len) };
+    unsafe {
+        with_unit(b, |h| {
+            let body = h.body(body)?;
+            h.b.set_closure_name(body, &name);
+            Some(())
+        })
+    }
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn a0_hir_param(b: *mut A0HirBuilder, body: u32, i: u32) -> u32 {
     unsafe {
         with(b, |h| {

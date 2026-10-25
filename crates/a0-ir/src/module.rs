@@ -79,6 +79,18 @@ pub(crate) struct VarData {
     pub ty: Type,
     pub name: Option<String>,
     pub func: FuncId,
+    /// The source-level variable it holds, for debuggers: its name, type and declaration.
+    pub debug: Option<(String, DebugType, Option<Span>)>,
+}
+
+/// A source-level type, for debuggers.
+#[derive(Clone)]
+pub(crate) struct DebugTypeData {
+    pub kind: DebugKind,
+    pub name: String,
+    pub elems: Vec<DebugType>,
+    pub fields: Vec<(String, DebugType)>,
+    pub variants: Vec<(String, Vec<DebugType>)>,
 }
 
 #[derive(Clone)]
@@ -129,6 +141,7 @@ pub struct Module {
     pub(crate) args: Vec<Value>,
     pub(crate) symbols: HashMap<String, Symbol>,
     pub(crate) inlines: Vec<InlineSite>,
+    pub(crate) debug_types: Vec<DebugTypeData>,
     /// The sources spans point into, so that runtime errors can say where they happened.
     pub(crate) sources: Option<SourceMap>,
 }
@@ -149,6 +162,7 @@ impl Module {
             args: Vec::new(),
             symbols: HashMap::new(),
             inlines: Vec::new(),
+            debug_types: Vec::new(),
             sources: None,
         }
     }
@@ -352,6 +366,66 @@ impl Module {
         self.vars[v.index()].func
     }
 
+    // ---------------------------------------------------------------- debug information
+
+    /// The source-level variable `v` holds, if the frontend said: its name and type. Variables
+    /// without one are the compiler's own, unless the module has no debug types at all.
+    pub fn var_debug(&self, v: Var) -> Option<(&str, DebugType)> {
+        self.vars[v.index()]
+            .debug
+            .as_ref()
+            .map(|(n, t, _)| (n.as_str(), *t))
+    }
+
+    /// Where the source-level variable `v` holds is declared, if known.
+    pub fn var_debug_span(&self, v: Var) -> Option<Span> {
+        self.vars[v.index()].debug.as_ref().and_then(|d| d.2)
+    }
+
+    pub fn debug_type_count(&self) -> u32 {
+        self.debug_types.len() as u32
+    }
+
+    pub fn debug_type_kind(&self, t: DebugType) -> DebugKind {
+        self.debug_types[t.index()].kind
+    }
+
+    /// The type as the language writes it (`[int]`, `Point`).
+    pub fn debug_type_name(&self, t: DebugType) -> &str {
+        &self.debug_types[t.index()].name
+    }
+
+    /// Element types: an array's, a map's key and value, what a nullable or a box holds.
+    pub fn debug_type_elems(&self, t: DebugType) -> &[DebugType] {
+        &self.debug_types[t.index()].elems
+    }
+
+    pub fn debug_type_field_count(&self, t: DebugType) -> u32 {
+        self.debug_types[t.index()].fields.len() as u32
+    }
+
+    pub fn debug_type_field(&self, t: DebugType, i: u32) -> (&str, DebugType) {
+        let (n, ty) = &self.debug_types[t.index()].fields[i as usize];
+        (n, *ty)
+    }
+
+    pub fn debug_type_variant_count(&self, t: DebugType) -> u32 {
+        self.debug_types[t.index()].variants.len() as u32
+    }
+
+    pub fn debug_type_variant(&self, t: DebugType, i: u32) -> (&str, &[DebugType]) {
+        let (n, fields) = &self.debug_types[t.index()].variants[i as usize];
+        (n, fields)
+    }
+
+    /// The struct or enum type named `name`, for objects whose descriptors say their type.
+    pub fn debug_type_named(&self, name: &str) -> Option<DebugType> {
+        self.debug_types
+            .iter()
+            .position(|d| matches!(d.kind, DebugKind::Struct | DebugKind::Enum) && d.name == name)
+            .map(|i| DebugType(i as u32))
+    }
+
     // ---------------------------------------------------------------- regions and instructions
 
     pub fn region_insts(&self, r: Region) -> &[Inst] {
@@ -542,7 +616,12 @@ impl Module {
 
     pub(crate) fn new_var(&mut self, func: FuncId, ty: Type, name: Option<String>) -> Var {
         let v = Var(self.vars.len() as u32);
-        self.vars.push(VarData { ty, name, func });
+        self.vars.push(VarData {
+            ty,
+            name,
+            func,
+            debug: None,
+        });
         if let Some(body) = self.funcs[func.index()].body.as_mut() {
             body.vars.push(v);
         }

@@ -1,0 +1,6 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    { "type": "a0", "request": "launch", "name": "Debug the current file", "program": "${file}" }
+  ]
+}

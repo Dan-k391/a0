@@ -10,6 +10,7 @@
 //! lang ir <file>                 print the core IR
 //! lang hir <file>                print the HIR (languages that compile to the HIR)
 //! lang lsp                       serve the Language Server Protocol on stdin and stdout
+//! lang dap                       serve the Debug Adapter Protocol (a debugger) on stdin and stdout
 //! lang explain <code>            explain an error code
 //! lang <file> [args...]          the same as `run`, if the language says so
 //! ```
@@ -22,10 +23,12 @@
 //! compiler, and highlighting, the outline, go-to-definition and hovers from the grammar's `@def`
 //! and `@scope` annotations (`docs/grammar.md`) and the HIR the compiler builds.
 
+pub mod dap;
 pub mod json;
 pub mod lsp;
 pub mod program;
 pub mod snapshots;
+mod values;
 
 use std::io::{BufRead, Write};
 use std::path::Path;
@@ -174,6 +177,8 @@ pub struct Invocation {
     pub output: Option<String>,
     /// Arguments after the file, passed to the program by `run`.
     pub args: Vec<String>,
+    /// `build -g`: describe the executable for the platform's debugger.
+    pub debug: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -183,6 +188,8 @@ pub enum Command {
     Ir,
     Hir,
     Lsp,
+    /// The Debug Adapter Protocol (`dap.rs`).
+    Dap,
     /// `explain <code>`: the code is the invocation's `file`.
     Explain,
 }
@@ -217,6 +224,10 @@ impl Language {
             let stdin = std::io::stdin();
             let code = self.serve_lsp(&mut stdin.lock(), &mut std::io::stdout());
             return ExitCode::from(code);
+        }
+        if inv.command == Command::Dap {
+            let input = Box::new(std::io::BufReader::new(std::io::stdin()));
+            return ExitCode::from(dap::serve(self, input, Box::new(std::io::stdout())));
         }
         if inv.command == Command::Explain {
             return match self.codes.explain(&inv.file) {
@@ -279,6 +290,13 @@ impl Language {
                 return ExitCode::from(self.exit_codes.usage);
             }
             Program::Ir(m) => m,
+            // Debug information describes the program as written: no inlining.
+            Program::Hir(m) if inv.debug => {
+                match a0_hir::lower_with(&m, a0_hir::LowerOptions { optimize: false }) {
+                    Ok(m) => m,
+                    Err(d) => return self.internal_error(&d, &sources),
+                }
+            }
             Program::Hir(m) => match a0_hir::lower(&m) {
                 Ok(m) => m,
                 Err(d) => return self.internal_error(&d, &sources),
@@ -315,12 +333,25 @@ impl Language {
                 if let Some(libraries) = self.libraries {
                     opts.link.libraries = libraries();
                 }
+                if inv.debug {
+                    opts.debug_info = true;
+                    opts.no_optimize = true;
+                    if !target.has_dwarf() {
+                        eprintln!(
+                            "{}: note: Windows' debuggers read PDB, which A0 does not write; debug \
+                             the program with `{} dap` instead",
+                            self.name, self.name
+                        );
+                    }
+                }
                 match a0_native::build_executable(&module, target, Path::new(&output), &opts) {
                     Ok(()) => ExitCode::SUCCESS,
                     Err(d) => self.internal_error(&d, &sources),
                 }
             }
-            Command::Hir | Command::Lsp | Command::Explain => unreachable!("handled above"),
+            Command::Hir | Command::Lsp | Command::Dap | Command::Explain => {
+                unreachable!("handled above")
+            }
         }
     }
 
@@ -375,12 +406,19 @@ impl Language {
 
     /// Parses a command line, or returns `None` if it is not valid.
     pub fn parse_args(&self, args: &[String]) -> Option<Invocation> {
-        if args.len() == 1 && args[0] == "lsp" {
+        if let [only] = args
+            && (only == "lsp" || only == "dap")
+        {
             return Some(Invocation {
-                command: Command::Lsp,
+                command: if only == "lsp" {
+                    Command::Lsp
+                } else {
+                    Command::Dap
+                },
                 file: String::new(),
                 output: None,
                 args: Vec::new(),
+                debug: false,
             });
         }
         if let [explain, code] = args
@@ -391,6 +429,7 @@ impl Language {
                 file: code.clone(),
                 output: None,
                 args: Vec::new(),
+                debug: false,
             });
         }
         let (command, rest) = match args.first().map(String::as_str) {
@@ -407,10 +446,25 @@ impl Language {
             file: file.clone(),
             output: None,
             args: Vec::new(),
+            debug: false,
         };
         match (command, rest) {
             (Command::Run, rest) => inv.args = rest.to_vec(),
-            (Command::Build, [o, out]) if o == "-o" => inv.output = Some(out.clone()),
+            (Command::Build, mut rest) => {
+                while let Some((flag, more)) = rest.split_first() {
+                    match (flag.as_str(), more) {
+                        ("-o", [out, more @ ..]) if inv.output.is_none() => {
+                            inv.output = Some(out.clone());
+                            rest = more;
+                        }
+                        ("-g", more) if !inv.debug => {
+                            inv.debug = true;
+                            rest = more;
+                        }
+                        _ => return None,
+                    }
+                }
+            }
             (_, []) => {}
             _ => return None,
         }
@@ -428,10 +482,12 @@ impl Language {
             "usage: {n} <command> <file>\n\n\
              commands:\n\
              \x20 run <file> [args...]   interpret the program{run}\n\
-             \x20 build <file> [-o out]  compile it to a native executable\n\
+             \x20 build <file> [-o out] [-g]\n\
+             \x20                        compile it to a native executable (-g: for gdb or lldb)\n\
              \x20 ir <file>              print the core IR\n\
              \x20 hir <file>             print the high-level IR\n\
              \x20 lsp                    serve the Language Server Protocol on stdin/stdout\n\
+             \x20 dap                    serve the Debug Adapter Protocol (debugging) on stdin/stdout\n\
              \x20 explain <code>         explain an error code\n"
         )
     }

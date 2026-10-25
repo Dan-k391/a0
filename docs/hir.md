@@ -233,7 +233,9 @@ Boxing a null reference yields `()`.
 A `fn(...) { ... }` expression captures the outer locals it uses **by reference**: assignments are
 seen by the closure and by the enclosing function, and every execution of a `let` creates a fresh
 variable (a closure created in a loop body sees that iteration's variables). A top-level function
-used as a value becomes a closure with no captures.
+used as a value becomes a closure with no captures. Stack traces and debuggers call a closure
+`f::{closure}` after the function it is in, unless the frontend names it (`set_closure_name`, for a
+language whose functions are closures).
 
 ## Building HIR from a frontend
 
@@ -260,6 +262,10 @@ types in the language's syntax and `set_term` names its concepts; `set_name_span
 `add_text` adds items written in the text format to a builder, for runtime code a language keeps as
 text (Lox's `natives.hir`, which uses the standard library). Item names are free: one that is a HIR keyword
 (`map`) or not an identifier is written in backquotes in the text format.
+
+Spans also place the code for debuggers (`docs/debugging.md`): each new line of a function is a
+place to stop, and lowering describes every local by its source name and type, so a frontend that
+sets spans on what it builds, literals included, gets a debugger with nothing more to do.
 
 `a0_hir::dsl` is a frontend of this kind that needs no code from the language: it builds HIR by
 name from any syntax tree whose grammar gives its rules `@hir` forms (`docs/grammar.md`,

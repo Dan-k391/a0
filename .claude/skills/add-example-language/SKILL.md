@@ -52,7 +52,10 @@ output, and report errors with source locations.
    `examples/minnow/tests/diagnostics.rs`, bless with `A0_BLESS=1`), and `tests/lsp.rs`, which runs
    the language server on a small program with `a0_driver::lsp::session` (copy
    `examples/minnow/tests/lsp.rs`) and checks the outline, a definition, a hover, a diagnostic and a
-   quick fix.
+   quick fix; and `tests/dap.rs`, a debugging session with `a0_driver::dap::Client` (copy
+   `examples/minnow/tests/dap.rs`: a breakpoint, the stack, locals, a step). The debugger needs a
+   span on every HIR expression (literals too), `set_closure_name` for functions that are
+   closures, and a C runtime of the language's own that writes with `a0_rt_write`.
 7. `examples/foo/README.md` - what the language is, the file map, deliberate differences.
 
 ## Files to update

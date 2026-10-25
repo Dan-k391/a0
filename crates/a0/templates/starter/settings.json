@@ -1,5 +1,6 @@
 {
   "a0.languages": [
     { "extensions": [".{{ext}}"], "command": "${workspaceFolder}/target/debug/{{name}}" }
-  ]
+  ],
+  "debug.allowBreakpointsEverywhere": true
 }

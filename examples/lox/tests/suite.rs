@@ -441,6 +441,7 @@ fn compile_time() {
             let opts = a0_native::CodegenOptions {
                 optimize: true,
                 entry_point: true,
+                debug_info: false,
             };
             codegen[i] += best(&mut || a0_native::compile_object(&ir, target, &opts).unwrap()).0;
         }

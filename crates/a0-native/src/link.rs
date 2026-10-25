@@ -22,6 +22,9 @@ pub struct LinkOptions {
     pub libraries: Vec<Library>,
     /// Stack size of the main thread in bytes, where the target lets the executable choose it.
     pub stack_size: u64,
+    /// The object has debug information: on macOS it is then gathered into `<output>.dSYM` with
+    /// `dsymutil`, since debuggers read it from object files, and this one is temporary.
+    pub debug_info: bool,
 }
 
 impl Default for LinkOptions {
@@ -29,6 +32,7 @@ impl Default for LinkOptions {
         LinkOptions {
             libraries: Vec::new(),
             stack_size: 8 << 20,
+            debug_info: false,
         }
     }
 }
@@ -146,6 +150,10 @@ pub fn link_executable(
         return Err(Diagnostic::error("native.link", "the linker failed")
             .with_note(text.trim())
             .into());
+    }
+    if opts.debug_info && target.linker_flavor() == LinkerFlavor::Darwin {
+        // Missing dsymutil only costs the debug information.
+        let _ = Command::new("dsymutil").arg(output).output();
     }
     Ok(())
 }

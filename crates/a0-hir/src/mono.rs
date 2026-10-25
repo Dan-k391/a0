@@ -382,6 +382,7 @@ impl Mono<'_> {
             root: None,
             parent: None,
             func: id,
+            name: None,
         });
         self.register_value(&name, Item::Func(id));
         self.funcs.insert((f, args.to_vec()), id);
@@ -521,6 +522,7 @@ impl Mono<'_> {
                     root: None,
                     parent: Some(body),
                     func: c.func,
+                    name: self.m.bodies[b.index()].name.clone(),
                 });
                 self.copy_body(c, b, out_b);
                 ExprKind::Lambda(out_b)

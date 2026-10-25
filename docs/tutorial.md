@@ -303,6 +303,8 @@ impl Compiler<'_> {
                 _ => self.toplevel(item),
             }
         }
+        // `main`'s own code comes from no line of the program.
+        self.b.set_span(None);
         let zero = self.b.int(0);
         let root = self.b.block(&self.toplevel, Some(zero));
         self.b.set_root(self.main, root);
@@ -416,6 +418,7 @@ impl Compiler<'_> {
             "expr" => self.chain(node),
             "number" => {
                 let value: f64 = self.text(node).parse().unwrap_or(f64::NAN);
+                self.at(node);
                 self.b.float(value)
             }
             "variable" => {
@@ -545,20 +548,25 @@ runtime library:
 
 ```c file=examples/kaleidoscope/runtime/kaleidoscope.c
 /* Kaleidoscope's runtime library: the helpers the LLVM tutorial's programs call through `extern`.
- * Unlike the tutorial, output goes to stdout rather than stderr. */
+ * Unlike the tutorial, output goes to stdout rather than stderr. It goes through a0_rt_write, as
+ * the A0 runtime's own does, so that a debugger running the program can take it. */
 #include "a0rt.h"
 
 #include <stdio.h>
 
 /* putchard - putchar that takes a double and returns 0. */
 double putchard(double x) {
-    putchar((char)x);
+    uint8_t c = (uint8_t)(char)x;
+    a0_rt_write(1, &c, 1);
     return 0;
 }
 
 /* printd - printf that takes a double, prints it as "%f\n", and returns 0. */
 double printd(double x) {
-    printf("%f\n", x);
+    char text[512];
+    int n = snprintf(text, sizeof text, "%f\n", x);
+    if (n > (int)sizeof text - 1) n = (int)sizeof text - 1;
+    if (n > 0) a0_rt_write(1, (const uint8_t *)text, (size_t)n);
     return 0;
 }
 

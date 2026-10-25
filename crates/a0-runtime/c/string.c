@@ -110,13 +110,12 @@ A0String *a0_string_from_bool(int64_t value) {
 
 void a0_string_print(A0String *s) {
     check(s);
-    if (s->len > 0) fwrite(s->bytes, 1, (size_t)s->len, stdout);
+    if (s->len > 0) a0_rt_write(1, s->bytes, (size_t)s->len);
 }
 
 void a0_string_eprint(A0String *s) {
     check(s);
-    fflush(stdout);
-    if (s->len > 0) fwrite(s->bytes, 1, (size_t)s->len, stderr);
+    if (s->len > 0) a0_rt_write(2, s->bytes, (size_t)s->len);
 }
 
 void a0_string_panic(A0String *message, uint64_t loc, void *frame) {

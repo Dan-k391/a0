@@ -171,6 +171,24 @@ runtime walks the frame pointer chain through generated frames only; nothing is 
 do not fail. The interpreter keeps the location of each active call and gives it to the runtime
 when asked.
 
+## Debug information
+
+Debuggers (`docs/debugging.md`) show variables by what the frontend says they hold; none of it is in
+the text format either.
+
+- `debug_type(kind, name, elems)` makes a source-level type: its name as the language writes it
+  (`[int]`, `Point`) and a `DebugKind` saying how its 64-bit words read: `int`, `float`, `bool`,
+  `string` (a pointer to an `A0String`), `array` and `map` (with element types), `struct` (an object
+  of fields, added with `debug_type_add_field`), `enum` (an object whose first word is the variant,
+  added with `debug_type_add_variant`), `nullable`, `any`, `boxed` (a captured variable's box),
+  `object` (whatever type the object's descriptor names) and `opaque`. Types are made before their
+  fields, so that they can refer to themselves.
+- `set_var_debug(var, name, type, decl)` says which source variable a `var` holds and where it is
+  declared; variables without it are the compiler's own (shown by their IR names and types only in
+  modules with no debug types at all, like a frontend's core IR).
+- `Module::var_debug`, `debug_type_kind` and the like read it back. HIR lowering describes every
+  local; the native backend uses the locations for DWARF line tables (`-g`).
+
 ## Verifier
 
 `verify(&Module) -> Diagnostics`. It checks symbol references, operand and result types, call

@@ -431,6 +431,8 @@ pub(crate) struct BodyData {
     /// The enclosing body, for closures.
     pub parent: Option<BodyId>,
     pub func: FuncId,
+    /// What stack traces and debuggers call a closure (`HirBuilder::set_closure_name`).
+    pub name: Option<String>,
 }
 
 #[derive(Clone)]

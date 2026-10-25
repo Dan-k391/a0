@@ -30,6 +30,7 @@ fn a_new_project_builds_and_passes_its_tests() {
         "tests/programs/basics.dl",
         "examples/hello.dl",
         ".vscode/settings.json",
+        ".vscode/launch.json",
         "README.md",
     ] {
         assert!(dir.join(file).is_file(), "no {file}");
@@ -53,6 +54,10 @@ fn a_new_project_builds_and_passes_its_tests() {
     assert!(report.contains("programs_run_natively ... ok"), "{report}");
     assert!(
         report.contains("the_language_server_knows_the_program ... ok"),
+        "{report}"
+    );
+    assert!(
+        report.contains("programs_can_be_debugged ... ok"),
         "{report}"
     );
     // A program fails to compile with the language's diagnostics.

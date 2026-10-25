@@ -24,6 +24,9 @@ pub struct CodegenOptions {
     /// Emit a C `main` that initializes the runtime and calls the IR's `@main`. The IR `@main` is then
     /// emitted as [`ENTRY_SYMBOL`].
     pub entry_point: bool,
+    /// Describe the code for the platform's debuggers (DWARF line tables and functions, `dwarf.rs`;
+    /// ELF and Mach-O targets only).
+    pub debug_info: bool,
 }
 
 impl Default for CodegenOptions {
@@ -31,6 +34,7 @@ impl Default for CodegenOptions {
         CodegenOptions {
             optimize: true,
             entry_point: false,
+            debug_info: false,
         }
     }
 }
@@ -187,6 +191,7 @@ fn compile_object_inner(
     let locations = a0_ir::Locations::build(m);
     // Per defined function: its id, code size and the ranges of its calls with their locations.
     let mut code_ranges: Vec<CallRanges> = Vec::new();
+    let mut defined: Vec<FuncId> = Vec::new();
 
     let frontend_config = obj.target_config();
     let mut ctx = obj.make_context();
@@ -215,12 +220,15 @@ fn compile_object_inner(
                 trap_sites: Vec::new(),
                 loops: Vec::new(),
                 locations: &locations,
+                lines: opts.debug_info,
+                line: ir::SourceLoc::default(),
             };
             lower.function();
             lower.b.finalize(frontend_config);
         }
         define(&mut obj, func_ids[f.index()], &mut ctx, m.func_name(f))?;
         code_ranges.push(call_ranges(&ctx, func_ids[f.index()]));
+        defined.push(f);
         obj.clear_context(&mut ctx);
     }
     let tables = emit_debug_tables(&mut obj, &locations, &code_ranges)?;
@@ -238,24 +246,48 @@ fn compile_object_inner(
         )?;
     }
 
-    let product = obj.finish();
+    let mut product = obj.finish();
+    if opts.debug_info && target.has_dwarf() {
+        let functions: Vec<crate::dwarf::Function> = defined
+            .iter()
+            .zip(&code_ranges)
+            .map(|(&f, (id, size, _, lines))| crate::dwarf::Function {
+                symbol: product.function_symbol(*id),
+                name: m.func_trace_name(f).unwrap_or(m.func_name(f)),
+                size: *size,
+                ranges: lines,
+            })
+            .collect();
+        let dir = std::env::current_dir()
+            .map(|d| d.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        crate::dwarf::emit(&mut product.object, &locations, &functions, &dir)
+            .map_err(|e| backend_error(format!("cannot write debug information: {e}")))?;
+    }
     product
         .emit()
         .map_err(|e| backend_error(format!("cannot write the object file: {e}")))
 }
 
 /// A compiled function, its code size, and the code ranges of its calls with their locations:
-/// `(start, end, location)`, offsets from the function's start.
-type CallRanges = (cranelift_module::FuncId, u32, Vec<(u32, u32, u32)>);
+/// `(start, end, location)`, offsets from the function's start; then the same for every
+/// instruction that has a location, when debug information is wanted.
+type CallRanges = (
+    cranelift_module::FuncId,
+    u32,
+    Vec<(u32, u32, u32)>,
+    Vec<(u32, u32, u32)>,
+);
 
 /// The ranges of the calls in a compiled function, whose locations were set as source locations
 /// while lowering.
 fn call_ranges(ctx: &Context, id: cranelift_module::FuncId) -> CallRanges {
     let Some(code) = ctx.compiled_code() else {
-        return (id, 0, Vec::new());
+        return (id, 0, Vec::new(), Vec::new());
     };
     let base = ctx.func.params.base_srcloc();
     let mut ranges = Vec::new();
+    let mut lines = Vec::new();
     for r in code.buffer.get_srclocs_sorted() {
         let loc = if r.loc.is_rel() {
             r.loc.as_rel().expand(base)
@@ -263,10 +295,13 @@ fn call_ranges(ctx: &Context, id: cranelift_module::FuncId) -> CallRanges {
             r.loc.as_abs()
         };
         if !loc.is_default() && r.end > r.start {
-            ranges.push((r.start, r.end, loc.bits()));
+            lines.push((r.start, r.end, loc.bits() & !LINE_ONLY));
+            if loc.bits() & LINE_ONLY == 0 {
+                ranges.push((r.start, r.end, loc.bits()));
+            }
         }
     }
-    (id, code.code_info().total_size, ranges)
+    (id, code.code_info().total_size, ranges, lines)
 }
 
 /// Emits the tables runtime errors print traces from (`A0LocationTable` and `A0CodeTable` in
@@ -303,7 +338,7 @@ fn emit_debug_tables(
 
     let mut ranges = Vec::new();
     let mut funcs = Vec::new();
-    for (id, size, rs) in code {
+    for (id, size, rs, _) in code {
         funcs.push((*id, *size, (ranges.len() / 12) as u32, rs.len() as u32));
         for &(start, end, loc) in rs {
             ranges.extend([start, end, loc].iter().flat_map(|w| w.to_le_bytes()));
@@ -521,7 +556,15 @@ struct Lower<'a> {
     trap_sites: Vec<(ir::Block, i32, u32)>,
     loops: Vec<LoopBlocks>,
     locations: &'a a0_ir::Locations,
+    /// Give every instruction its location, for debug information (not only calls).
+    lines: bool,
+    /// The srcloc of the instruction being lowered when `lines`.
+    line: ir::SourceLoc,
 }
+
+/// Marks a srcloc that is there for debug information only, so that the code table (which
+/// finds calls by return address) keeps only calls.
+const LINE_ONLY: u32 = 1 << 31;
 
 impl Lower<'_> {
     fn ty(&self, t: Type) -> ir::Type {
@@ -580,6 +623,15 @@ impl Lower<'_> {
     /// Lowers a region; returns whether control can fall off its end.
     fn region(&mut self, r: Region) -> bool {
         for &inst in self.m.region_insts(r) {
+            if self.lines {
+                let loc = self.locations.of(inst);
+                self.line = if loc == 0 {
+                    ir::SourceLoc::default()
+                } else {
+                    ir::SourceLoc::new(loc | LINE_ONLY)
+                };
+                self.b.set_srcloc(self.line);
+            }
             if !self.inst(inst) {
                 // Everything after a terminator in this region is dead and cannot be referenced from
                 // outside it, so it is simply not emitted.
@@ -640,7 +692,7 @@ impl Lower<'_> {
     fn mark_call(&mut self, inst: Option<Inst>) {
         let loc = inst.map_or(0, |i| self.locations.of(i));
         let srcloc = if loc == 0 {
-            ir::SourceLoc::default()
+            self.line
         } else {
             ir::SourceLoc::new(loc)
         };

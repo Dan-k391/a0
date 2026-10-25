@@ -263,3 +263,40 @@ fn the_language_server_knows_calc_programs() {
     let message = diagnostics[0].get("message").as_str().unwrap();
     assert!(message.contains("cube"), "{message}");
 }
+
+#[test]
+fn calc_programs_can_be_debugged() {
+    let dir = std::env::temp_dir().join(format!("a0-calc-dap-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("debug.calc");
+    std::fs::write(
+        &file,
+        "fn area(w, h) {\n  let a = w * h\n  return a\n}\nlet total = area(3, 4)\nprint total\n",
+    )
+    .unwrap();
+    let grammar = root().join("examples/calc/calc.a0g");
+    let mut c = a0_driver::dap::Client::start(
+        Path::new(env!("CARGO_BIN_EXE_a0")),
+        &["lang", &grammar.to_string_lossy(), "dap"],
+    )
+    .unwrap();
+    let launch = c.launch(&file.to_string_lossy(), &[3]);
+    assert_eq!(launch.get("success"), &Json::Bool(true), "{launch:?}");
+    c.event("stopped");
+    assert_eq!(
+        c.stack(),
+        [("area".to_string(), 3), ("main".to_string(), 5)]
+    );
+    let locals = c.locals(1);
+    for (name, value) in [("w", "3"), ("h", "4"), ("a", "12")] {
+        assert!(
+            locals.iter().any(|(n, v, _)| n == name && v == value),
+            "{name} = {value} not in {locals:?}"
+        );
+    }
+    c.resume("continue");
+    c.event("exited");
+    assert_eq!(c.output("stdout"), "12\n");
+    c.finish();
+    std::fs::remove_dir_all(&dir).ok();
+}

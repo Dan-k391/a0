@@ -26,7 +26,10 @@ The runtime is C, compiled once into a static library that the interpreter calls
      location.
    - If it allocates GC objects, every GC reference it holds across another allocation must be a
      root (see the GC section of `include/a0rt.h`).
-3. `crates/a0-runtime/c/symbols.c` - add `SYM(a0_<name>)` so the interpreter can resolve it. In
+3. `crates/a0-runtime/c/symbols.c` - add `SYM(a0_<name>)` so the interpreter can resolve it.
+   Output goes through `a0_rt_write(stream, bytes, len)`, never `printf` or `fwrite` to the
+   standard streams, so that a debugger running the program can take it (`a0rt.h`,
+   "Debuggers"). In
    WebAssembly (the playground) the table holds wrappers that `build.rs` generates from the
    declaration in `a0rt.h`, so keep the declaration on one prototype there (a C library function
    goes into `C_LIBRARY` in `build.rs` instead). A field of a runtime structure that generated

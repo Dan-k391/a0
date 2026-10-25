@@ -33,9 +33,10 @@ grammar ──a0-syntax──▶ syntax tree ──your compiler──▶ HIR �
   (where an expected type comes from, the earlier declaration), "did you mean" fixes, warnings, in
   the language's words; and runtime errors with the values involved and a stack trace of source
   functions, inlined ones included.
-- **A command-line driver** (`run`, `build`, `ir`, `hir`, `explain`) and **a language server**
-  (`lsp`) for diagnostics with quick fixes, highlighting, outline, go-to-definition and hover, with
-  a VS Code extension.
+- **A command-line driver** (`run`, `build`, `ir`, `hir`, `explain`), **a language server**
+  (`lsp`) for diagnostics with quick fixes, highlighting, outline, go-to-definition and hover, and
+  **a debugger** (`dap`: breakpoints, stepping, the stack and its locals), with a VS Code
+  extension; `build -g` describes executables for gdb and lldb.
 - **A C API**, for hosts that are not written in Rust: a C program can build HIR with the same
   builder, run it and compile it. **Python bindings** over it, for languages written in Python.
 

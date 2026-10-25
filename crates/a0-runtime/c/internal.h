@@ -49,6 +49,9 @@ void a0_map_finalize(A0Map *m);
 
 uint64_t a0_string_hash(A0String *s);
 
+/* Tells a debugger of a failure, before it is reported (rt.c). */
+void a0_rt_tell_failure(const uint8_t *message, size_t len);
+
 /* An `any` as text in `buf` (at most `cap` bytes with the NUL): a string's own text, a number, or
  * the type of other values. Returns the length it wanted. */
 size_t a0_any_describe(uint64_t value, char *buf, size_t cap);

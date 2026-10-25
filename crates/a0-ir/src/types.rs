@@ -390,6 +390,82 @@ entity!(
     /// A place where a source-level function was inlined, for stack traces.
     InlineId
 );
+entity!(
+    /// A source-level type, for debuggers (see [`DebugKind`]).
+    DebugType
+);
+
+/// What a source-level value is, so that a debugger can show it (`docs/ir.md`, "Debug
+/// information"). Values are 64-bit words as variables, struct fields and array elements hold
+/// them: references are pointers to the runtime's objects.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[repr(u8)]
+pub enum DebugKind {
+    Int,
+    Float,
+    Bool,
+    /// A pointer to an `A0String`.
+    String,
+    /// A pointer to an `A0Array` of the first element type.
+    Array,
+    /// A pointer to an `A0Map` from the first element type to the second.
+    Map,
+    /// A pointer to an object whose words are the fields.
+    Struct,
+    /// A pointer to an object whose first word is the variant's index, then its fields.
+    Enum,
+    /// The first element type, or 0 for null.
+    Nullable,
+    /// A dynamic value (`a0rt.h`, "Dynamic values").
+    Any,
+    /// A pointer to a box whose first word holds a value of the first element type.
+    Boxed,
+    /// A pointer to an object of a type the object itself says (an interface value): its
+    /// descriptor's name is a struct's, or an enum's variant's as `Enum::Variant`.
+    Object,
+    /// Shown by name only (closures, foreign pointers).
+    Opaque,
+}
+
+impl DebugKind {
+    pub const ALL: &'static [DebugKind] = &[
+        DebugKind::Int,
+        DebugKind::Float,
+        DebugKind::Bool,
+        DebugKind::String,
+        DebugKind::Array,
+        DebugKind::Map,
+        DebugKind::Struct,
+        DebugKind::Enum,
+        DebugKind::Nullable,
+        DebugKind::Any,
+        DebugKind::Boxed,
+        DebugKind::Object,
+        DebugKind::Opaque,
+    ];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            DebugKind::Int => "int",
+            DebugKind::Float => "float",
+            DebugKind::Bool => "bool",
+            DebugKind::String => "string",
+            DebugKind::Array => "array",
+            DebugKind::Map => "map",
+            DebugKind::Struct => "struct",
+            DebugKind::Enum => "enum",
+            DebugKind::Nullable => "nullable",
+            DebugKind::Any => "any",
+            DebugKind::Boxed => "boxed",
+            DebugKind::Object => "object",
+            DebugKind::Opaque => "opaque",
+        }
+    }
+
+    pub fn from_name(s: &str) -> Option<DebugKind> {
+        DebugKind::ALL.iter().copied().find(|k| k.name() == s)
+    }
+}
 
 /// What kind of item a [`Symbol`] names.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]

@@ -32,6 +32,10 @@ const FILES: &[(&str, &str)] = &[
         include_str!("../templates/starter/tests/lsp.rs"),
     ),
     (
+        "tests/dap.rs",
+        include_str!("../templates/starter/tests/dap.rs"),
+    ),
+    (
         "tests/programs/basics.{{ext}}",
         include_str!("../templates/starter/tests/programs/basics.ext"),
     ),
@@ -46,6 +50,10 @@ const FILES: &[(&str, &str)] = &[
     (
         ".vscode/settings.json",
         include_str!("../templates/starter/settings.json"),
+    ),
+    (
+        ".vscode/launch.json",
+        include_str!("../templates/starter/launch.json"),
     ),
     ("README.md", include_str!("../templates/starter/README.md")),
     (".gitignore", "/target\n"),

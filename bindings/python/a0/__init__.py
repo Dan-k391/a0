@@ -430,6 +430,7 @@ HIR_FUNCTIONS = {
     "set_signature": "uPu:v",
     "function_body": "u:u",
     "new_closure_body": "uPu:u",
+    "set_closure_name": "us:v",
     "param": "uu:u",
     "new_local": "usu:u",
     "set_root": "uu:v",

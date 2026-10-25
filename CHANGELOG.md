@@ -6,6 +6,24 @@ APIs. `docs/milestones.md` has the details of each step, with measurements.
 
 ## [Unreleased]
 
+### Added
+
+- **A debugger for every language** (`lang dap`, `docs/debugging.md`): the Debug Adapter Protocol
+  over the interpreter, with breakpoints, pause, stepping, the stack, locals shown by their source
+  types (structs, arrays, maps, enums, `any`), hovers, and a stop where a program fails. The VS
+  Code extension adds a debugger of type `a0`; projects made with `a0 new` come with a launch
+  configuration and a test of it.
+- **Native debug information** (`lang build -g`, `a0 build|obj -g`): DWARF line tables and functions
+  for gdb and lldb on Linux and macOS (`dsymutil` on macOS); not variables, and not Windows (PDB).
+- IR debug types (`Builder::debug_type`, `set_var_debug`), which lowering records for every local;
+  `HirBuilder::set_closure_name` (`a0_hir_set_closure_name`); the runtime's debugger hooks
+  (`a0_rt_write`, `a0_rt_set_output`, `a0_rt_set_fail_hook`, `a0_rt_set_exit_hook`).
+
+### Fixed
+
+- Kaleidoscope gave number literals the span of the expression built before them, and Lox gave its
+  HIR no spans at all; both now place their code on its lines, which the debugger needs.
+
 ## [0.3.0] - 2026-10-25
 
 Easy for everyone: a language can be started in minutes, in Rust, in Python or in a grammar alone,

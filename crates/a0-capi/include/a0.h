@@ -347,6 +347,8 @@ A0HirBody a0_hir_function_body(A0HirBuilder *b, A0HirFunc f);
 /* The body of a closure created inside `parent` (make the closure with a0_hir_lambda). */
 A0HirBody a0_hir_new_closure_body(A0HirBuilder *b, A0HirBody parent, const A0Str *param_names,
                                   const A0HirType *param_types, size_t param_count, A0HirType ret);
+/* What stack traces and debuggers call a closure (by default `f::{closure}`). */
+void a0_hir_set_closure_name(A0HirBuilder *b, A0HirBody body, const char *name, size_t len);
 A0HirLocal a0_hir_param(A0HirBuilder *b, A0HirBody body, uint32_t i);
 A0HirLocal a0_hir_new_local(A0HirBuilder *b, A0HirBody body, const char *name, size_t len,
                             A0HirType type);

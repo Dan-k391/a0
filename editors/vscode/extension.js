@@ -1,5 +1,6 @@
-// Starts `<command> lsp` (or `<command> <args>`) for each language in the `a0.languages` setting, the first time a file of
-// that language is opened. Everything else (what the server can do) comes from the server.
+// Starts `<command> lsp` (or `<command> <args>`) for each language in the `a0.languages` setting,
+// the first time a file of that language is opened, and `<command> dap` to debug one of its
+// programs. Everything else (what the server and the debugger can do) comes from them.
 const vscode = require('vscode');
 const { LanguageClient } = require('vscode-languageclient/node');
 
@@ -49,9 +50,28 @@ function startFor(document) {
   }
 }
 
+// Debugging (`a0` launch configurations) runs `<command> dap`: the entry of `a0.languages` whose
+// extensions match the program, with `lsp` in its `args` replaced by `dap`.
+const debugAdapters = {
+  createDebugAdapterDescriptor(session) {
+    const program = session.configuration.program || '';
+    const entry = vscode.workspace
+      .getConfiguration('a0')
+      .get('languages', [])
+      .find((e) => (e.extensions || []).some((ext) => program.endsWith(ext)));
+    if (!entry) {
+      throw new Error(`No language in the a0.languages setting has the extension of ${program}`);
+    }
+    const document = vscode.workspace.textDocuments.find((d) => d.uri.fsPath === program);
+    const args = (entry.args || ['lsp']).map((arg) => (arg === 'lsp' ? 'dap' : expand(arg, document)));
+    return new vscode.DebugAdapterExecutable(expand(entry.command, document), args);
+  },
+};
+
 function activate(context) {
   vscode.workspace.textDocuments.forEach(startFor);
   context.subscriptions.push(vscode.workspace.onDidOpenTextDocument(startFor));
+  context.subscriptions.push(vscode.debug.registerDebugAdapterDescriptorFactory('a0', debugAdapters));
 }
 
 function deactivate() {

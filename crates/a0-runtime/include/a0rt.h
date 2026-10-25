@@ -41,6 +41,26 @@ int32_t a0_rt_argc(void);
 /* The `i`th command-line argument, or NULL. */
 const char *a0_rt_argv(int32_t i);
 
+/* ---- Debuggers ---------------------------------------------------------------------------- *
+ * A debugger that runs the program in its own process (the interpreter under `lang dap`) takes
+ * its output, gives it no input, and hears of its failures and its end. NULL restores the
+ * default: the standard streams, no hooks. */
+
+typedef void (*A0WriteFn)(int32_t stream, const uint8_t *bytes, size_t len);
+typedef void (*A0FailFn)(const uint8_t *message, size_t len);
+typedef void (*A0ExitFn)(int32_t code);
+/* Output to standard output (stream 1) and error (2) goes to `write`, and standard input is
+ * empty. */
+void a0_rt_set_output(A0WriteFn write);
+/* Called with a failure's message before it is reported and the program exits. */
+void a0_rt_set_fail_hook(A0FailFn fail);
+/* Called with the exit status before the program exits. */
+void a0_rt_set_exit_hook(A0ExitFn exit);
+/* Writes to standard output (1) or error (2), or to the debugger that took them. */
+void a0_rt_write(int32_t stream, const uint8_t *bytes, size_t len);
+/* Whether a debugger took standard output (and so standard input is empty). */
+int32_t a0_rt_has_debugger(void);
+
 /* ---- Traps and panics --------------------------------------------------------------------- */
 
 enum {

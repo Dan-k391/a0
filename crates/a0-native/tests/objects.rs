@@ -73,6 +73,7 @@ fn every_program_compiles_for_every_target() {
             let opts = CodegenOptions {
                 optimize: true,
                 entry_point: true,
+                debug_info: false,
             };
             let bytes = compile_object(&m, target, &opts)
                 .unwrap_or_else(|d| panic!("{name} for {target}: {}", d.summary()));
@@ -155,6 +156,7 @@ fn invalid_modules_are_rejected_with_diagnostics() {
     let opts = CodegenOptions {
         optimize: false,
         entry_point: true,
+        debug_info: false,
     };
     let err = compile_object(&no_main, Target::X86_64_LINUX, &opts).unwrap_err();
     assert!(err.summary().contains("no function @main"));

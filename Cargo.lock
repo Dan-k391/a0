@@ -14,6 +14,8 @@ dependencies = [
  "a0-native",
  "a0-runtime",
  "a0-syntax",
+ "gimli",
+ "object",
 ]
 
 [[package]]
@@ -95,6 +97,7 @@ dependencies = [
  "cranelift-frontend",
  "cranelift-module",
  "cranelift-object",
+ "gimli",
  "object",
 ]
 

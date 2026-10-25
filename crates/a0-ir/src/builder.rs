@@ -257,6 +257,64 @@ impl Builder {
     // ---------------------------------------------------------------- variables
 
     /// Declares a mutable variable in the current function. It starts out as zero.
+    /// A source-level type for debuggers, of kind `kind`, written `name`, with element types
+    /// `elems` (see [`DebugKind`]). Struct fields and enum variants are added afterwards, so that
+    /// types can refer to themselves.
+    pub fn debug_type(&mut self, kind: DebugKind, name: &str, elems: &[DebugType]) -> DebugType {
+        if elems
+            .iter()
+            .any(|e| e.index() >= self.module.debug_types.len())
+        {
+            self.error("debug_type: an element type does not exist");
+            return DebugType::NONE;
+        }
+        let t = DebugType(self.module.debug_types.len() as u32);
+        self.module.debug_types.push(crate::module::DebugTypeData {
+            kind,
+            name: name.to_string(),
+            elems: elems.to_vec(),
+            fields: Vec::new(),
+            variants: Vec::new(),
+        });
+        t
+    }
+
+    /// Adds a field to a struct's debug type.
+    pub fn debug_type_add_field(&mut self, t: DebugType, name: &str, ty: DebugType) {
+        if !self.debug_type_exists(t) || !self.debug_type_exists(ty) {
+            self.error("debug_type_add_field: no such debug type");
+            return;
+        }
+        self.module.debug_types[t.index()]
+            .fields
+            .push((name.to_string(), ty));
+    }
+
+    /// Adds a variant, with the types of its fields, to an enum's debug type.
+    pub fn debug_type_add_variant(&mut self, t: DebugType, name: &str, fields: &[DebugType]) {
+        if !self.debug_type_exists(t) || !fields.iter().all(|&f| self.debug_type_exists(f)) {
+            self.error("debug_type_add_variant: no such debug type");
+            return;
+        }
+        self.module.debug_types[t.index()]
+            .variants
+            .push((name.to_string(), fields.to_vec()));
+    }
+
+    /// Says that `var` holds the source-level variable `name` of type `ty`, declared at `decl`,
+    /// for debuggers.
+    pub fn set_var_debug(&mut self, var: Var, name: &str, ty: DebugType, decl: Option<Span>) {
+        if var.index() >= self.module.vars.len() || !self.debug_type_exists(ty) {
+            self.error("set_var_debug: no such variable or debug type");
+            return;
+        }
+        self.module.vars[var.index()].debug = Some((name.to_string(), ty, decl));
+    }
+
+    fn debug_type_exists(&self, t: DebugType) -> bool {
+        t.index() < self.module.debug_types.len()
+    }
+
     pub fn declare_var(&mut self, name: &str, ty: Type) -> Var {
         if self.func.is_none() {
             self.error("declare_var called outside a function");

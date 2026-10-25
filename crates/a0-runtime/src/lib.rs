@@ -25,6 +25,9 @@ unsafe extern "C" {
     fn a0_rt_set_frames(frames: Option<unsafe extern "C" fn(*mut u32, usize) -> usize>);
     fn a0_rt_fail_frames(message: *const c_char, ids: *const u32, count: usize) -> !;
     fn a0_rt_trace_text(ids: *const u32, count: usize, buf: *mut c_char, cap: usize) -> usize;
+    fn a0_rt_set_output(write: Option<WriteFn>);
+    fn a0_rt_set_fail_hook(fail: Option<FailFn>);
+    fn a0_rt_set_exit_hook(exit: Option<ExitFn>);
     pub fn a0_ffi_call(
         f: *const c_void,
         nargs: i32,
@@ -201,6 +204,24 @@ pub fn exit(code: i32) -> ! {
 /// Reports a trap with no location and exits with [`PANIC_EXIT_CODE`].
 pub fn trap(code: i32) -> ! {
     unsafe { a0_rt_trap(code, 0, std::ptr::null_mut()) }
+}
+
+/// Receives what the program writes to standard output (stream 1) or error (2).
+pub type WriteFn = extern "C" fn(stream: i32, bytes: *const u8, len: usize);
+/// Hears of a failure, with its message, before it is reported and the program exits.
+pub type FailFn = unsafe extern "C" fn(message: *const u8, len: usize);
+/// Hears of the program's end, with its exit status, before the process exits.
+pub type ExitFn = extern "C" fn(code: i32);
+
+/// Lets a debugger that runs the program in this process take its output (standard input is
+/// then empty) and hear of its failures and its end (`a0rt.h`, "Debuggers"). `None` restores the
+/// defaults.
+pub fn set_debugger(write: Option<WriteFn>, fail: Option<FailFn>, exit: Option<ExitFn>) {
+    unsafe {
+        a0_rt_set_output(write);
+        a0_rt_set_fail_hook(fail);
+        a0_rt_set_exit_hook(exit);
+    }
 }
 
 /// Gives the runtime the program's location table ([`debug::encode`]), which must live as long as

@@ -1,7 +1,7 @@
 {
   "name": "a0-languages",
   "displayName": "A0 languages",
-  "description": "Editor support for languages built on A0: diagnostics, highlighting, outline, go to definition and hover, from each language's `lsp` command.",
+  "description": "Editor support for languages built on A0: diagnostics, highlighting, outline, go to definition and hover from each language's `lsp` command, and debugging from its `dap` command.",
   "version": "0.3.0",
   "publisher": "a0",
   "license": "MIT",
@@ -14,6 +14,7 @@
   ],
   "main": "./extension.js",
   "activationEvents": [
+    "onDebug",
     "onStartupFinished"
   ],
   "contributes": {
@@ -35,6 +36,36 @@
         "aliases": ["Kaleidoscope"],
         "extensions": [".k"],
         "configuration": "./hash-comments.json"
+      }
+    ],
+    "breakpoints": [
+      { "language": "lox" },
+      { "language": "minnow" },
+      { "language": "kaleidoscope" }
+    ],
+    "debuggers": [
+      {
+        "type": "a0",
+        "label": "A0",
+        "configurationAttributes": {
+          "launch": {
+            "required": ["program"],
+            "properties": {
+              "program": { "type": "string", "description": "The program to debug.", "default": "${file}" },
+              "args": { "type": "array", "items": { "type": "string" }, "description": "Its arguments.", "default": [] },
+              "stopOnEntry": { "type": "boolean", "description": "Stop at its first line.", "default": false }
+            }
+          }
+        },
+        "initialConfigurations": [
+          { "type": "a0", "request": "launch", "name": "Debug the current file", "program": "${file}" }
+        ],
+        "configurationSnippets": [
+          {
+            "label": "A0: debug the current file",
+            "body": { "type": "a0", "request": "launch", "name": "Debug the current file", "program": "^\"\\${file}\"" }
+          }
+        ]
       }
     ],
     "semanticTokenScopes": [

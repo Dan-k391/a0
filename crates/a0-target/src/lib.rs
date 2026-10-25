@@ -173,6 +173,11 @@ impl Target {
         }
     }
 
+    /// Whether the platform's debuggers read DWARF (gdb, lldb); Windows' read PDB.
+    pub fn has_dwarf(self) -> bool {
+        matches!(self.os, Os::Linux | Os::MacOs)
+    }
+
     /// Whether code must be position independent (PIE executables on Linux, always on macOS).
     pub fn requires_pic(self) -> bool {
         matches!(self.os, Os::Linux | Os::MacOs)

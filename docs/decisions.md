@@ -671,3 +671,28 @@ there. The page implements the WASI calls itself (about 110 lines) rather than u
 Node's built-in WASI, which crashed on these programs. The interpreter recurses on the engine's
 stack, so in WebAssembly calls nest at most 1000 deep. The playground is published to GitHub
 Pages from `main`; CI builds and tests it with Node on every push.
+
+## D58. The debugger runs the program in the interpreter, behind the Debug Adapter Protocol
+
+v0.4 asks for a debugger for every language with no extra code. Native code under gdb or lldb would
+need a debug adapter per platform debugger and variable locations from Cranelift; a debugger of our
+own over the interpreter needs neither. It is the latter, served as the Debug Adapter Protocol by
+the driver (`lang dap`), so any DAP client works. The interpreter, built for debugging, marks each
+new source line and calls a plain-function hook there and when the program fails before unwinding;
+the hook decides on breakpoints and steps and, while stopped, answers requests from the frames.
+Lowering records each local's source name, type and declaration (IR debug types, which DWARF could
+use later), so values show as the language writes them. The program shares the adapter's process,
+so the runtime hands its output to the debugger and keeps standard input from it; programs are
+lowered without the HIR optimizer, so that every call keeps its frame. The cost: a debugged program
+runs at the interpreter's speed, and globals and expressions beyond names are not shown yet.
+
+## D59. Native debug information is DWARF lines and functions, written with gimli
+
+The goal also asks for debug information for the platform's debugger where feasible. Cranelift
+reports a source location for every instruction it emits (A0 already gave it each call's, for
+traces), which is enough for DWARF line tables and subprograms: `-g` writes them with `gimli` (already
+a dependency of Cranelift, now a direct one of `a0-native` with its `write` feature) into ELF and
+Mach-O objects, relocated against the functions, and runs `dsymutil` on macOS. Not done: variables,
+whose locations would come from Cranelift's value labels and need location lists; and Windows, whose
+debuggers read PDB, a format of its own (CodeView) that no library we use writes. `lang dap` covers
+both.

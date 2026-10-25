@@ -238,6 +238,8 @@ impl Emit<'_> {
         let n = self.n;
         let tree = self.tree;
         let kind = tree.kind(node);
+        // Where the HIR comes from, for debuggers; Lox's own errors carry jlox's line numbers.
+        self.b.set_span(Some(tree.span(node)));
         if kind == n.print_stmt {
             let v = self.expr(tree.field(node, n.value).unwrap());
             out.push(self.rt("print_value", &[v]));
@@ -381,6 +383,9 @@ impl Emit<'_> {
         let body = self
             .b
             .new_closure_body(self.body, &names, &types, TypeId::ANY);
+        if let Some(name) = tree.field(node, n.name) {
+            self.b.set_closure_name(body, tree.text(name));
+        }
         let outer = (self.body, self.init_this);
         self.body = body;
         let this = self.b.param(body, 0);
@@ -488,6 +493,7 @@ impl Emit<'_> {
         let n = self.n;
         let tree = self.tree;
         let kind = tree.kind(node);
+        self.b.set_span(Some(tree.span(node)));
         if kind == n.primary {
             self.primary(node)
         } else if kind == n.assign {

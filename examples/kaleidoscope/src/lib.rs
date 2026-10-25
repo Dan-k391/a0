@@ -143,6 +143,8 @@ impl Compiler<'_> {
                 _ => self.toplevel(item),
             }
         }
+        // `main`'s own code comes from no line of the program.
+        self.b.set_span(None);
         let zero = self.b.int(0);
         let root = self.b.block(&self.toplevel, Some(zero));
         self.b.set_root(self.main, root);
@@ -252,6 +254,7 @@ impl Compiler<'_> {
             "expr" => self.chain(node),
             "number" => {
                 let value: f64 = self.text(node).parse().unwrap_or(f64::NAN);
+                self.at(node);
                 self.b.float(value)
             }
             "variable" => {

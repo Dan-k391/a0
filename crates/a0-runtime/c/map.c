@@ -18,13 +18,14 @@ typedef struct {
 #define EMPTY (-1)
 #define TOMBSTONE (-2)
 
+/* Pointers are word slots, so that debuggers read maps the same way on every target. */
 struct A0Map {
     int64_t count;      /* live entries */
     int64_t used;       /* entries in use, including dead ones */
     int64_t entry_cap;
-    Entry *entries;
+    A0_WORD_PTR(Entry *, entries);
     int64_t index_cap;  /* a power of two, or 0 */
-    int64_t *index;
+    A0_WORD_PTR(int64_t *, index);
     int64_t key_kind;
     int64_t value_kind;
     /* The entry the last lookup found. `has(m, k)` followed by `m[k]` (the usual way to read a key

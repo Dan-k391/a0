@@ -1,5 +1,5 @@
 /* Core of the A0 runtime: lifecycle, traps, output, memory and time. */
-#include "a0rt.h"
+#include "internal.h"
 
 #include <float.h>
 #include <math.h>
@@ -31,8 +31,39 @@ void a0_rt_flush(void) {
     fflush(stderr);
 }
 
+/* A debugger's hooks (a0rt.h, "Debuggers"); NULL when the program runs on its own. */
+static A0WriteFn g_write;
+static A0FailFn g_fail;
+static A0ExitFn g_exit;
+
+void a0_rt_set_output(A0WriteFn write) { g_write = write; }
+void a0_rt_set_fail_hook(A0FailFn fail) { g_fail = fail; }
+void a0_rt_set_exit_hook(A0ExitFn exit) { g_exit = exit; }
+int32_t a0_rt_has_debugger(void) { return g_write != NULL; }
+
+void a0_rt_write(int32_t stream, const uint8_t *bytes, size_t len) {
+    if (g_write != NULL) {
+        g_write(stream, bytes, len);
+        return;
+    }
+    if (len == 0) return;
+    if (stream == 2) {
+        /* What was printed before an error comes before it. */
+        fflush(stdout);
+        fwrite(bytes, 1, len, stderr);
+    } else {
+        fwrite(bytes, 1, len, stdout);
+    }
+}
+
+/* For the failure path (trace.c): the debugger first, while the failing call is active. */
+void a0_rt_tell_failure(const uint8_t *message, size_t len) {
+    if (g_fail != NULL) g_fail(message, len);
+}
+
 void a0_rt_exit(int32_t code) {
     a0_rt_flush();
+    if (g_exit != NULL) g_exit(code);
     exit(code);
 }
 
@@ -68,7 +99,11 @@ void a0_panic_bytes(const uint8_t *message, int64_t len, uint64_t loc, void *fra
 
 /* ---- Output ------------------------------------------------------------------------------- */
 
-void a0_print_i64(int64_t value) { printf("%lld", (long long)value); }
+void a0_print_i64(int64_t value) {
+    char buf[24];
+    int32_t n = a0_format_i64(value, buf);
+    a0_rt_write(1, (const uint8_t *)buf, (size_t)n);
+}
 
 int32_t a0_format_i64(int64_t value, char *buf) {
     char digits[24];
@@ -141,28 +176,28 @@ int32_t a0_format_f64(double value, char *buf) {
 void a0_print_f64(double value) {
     char buf[32];
     int32_t n = a0_format_f64(value, buf);
-    fwrite(buf, 1, (size_t)n, stdout);
+    a0_rt_write(1, (const uint8_t *)buf, (size_t)n);
 }
 
 void a0_print_bytes(const uint8_t *bytes, int64_t len) {
-    if (len > 0) fwrite(bytes, 1, (size_t)len, stdout);
+    if (len > 0) a0_rt_write(1, bytes, (size_t)len);
 }
 
-void a0_print_cstr(const char *s) { fputs(s, stdout); }
+void a0_print_cstr(const char *s) { a0_rt_write(1, (const uint8_t *)s, strlen(s)); }
 
-void a0_print_newline(void) { putchar('\n'); }
+void a0_print_newline(void) { a0_rt_write(1, (const uint8_t *)"\n", 1); }
 
-int32_t a0_putchar(int32_t c) { return putchar(c); }
+int32_t a0_putchar(int32_t c) {
+    uint8_t b = (uint8_t)c;
+    a0_rt_write(1, &b, 1);
+    return c;
+}
 
 void a0_eprint_bytes(const uint8_t *bytes, int64_t len) {
-    fflush(stdout);
-    if (len > 0) fwrite(bytes, 1, (size_t)len, stderr);
+    if (len > 0) a0_rt_write(2, bytes, (size_t)len);
 }
 
-void a0_eprint_cstr(const char *s) {
-    fflush(stdout);
-    fputs(s, stderr);
-}
+void a0_eprint_cstr(const char *s) { a0_rt_write(2, (const uint8_t *)s, strlen(s)); }
 
 /* ---- Memory ------------------------------------------------------------------------------- */
 

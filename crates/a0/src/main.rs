@@ -18,9 +18,10 @@ commands:
   fmt <file>                print the canonical text form
   lower <file.hir>          print the core IR a HIR module lowers to
   run <file> [-- args...]   interpret @main and exit with its status
-  build <file> [-o out] [--target T] [--no-opt]
-                            compile to a native executable (host target only)
-  obj <file> [-o out] [--target T] [--no-opt]
+  build <file> [-o out] [--target T] [--no-opt] [-g]
+                            compile to a native executable (host target only); -g describes
+                            it for gdb and lldb (Linux, macOS)
+  obj <file> [-o out] [--target T] [--no-opt] [-g]
                             compile to an object file for any supported target
   parse <grammar.a0g> <file>
                             parse a file with a grammar; print the tree or the errors
@@ -117,9 +118,18 @@ fn load_hir(path: &str, sources: &mut SourceMap) -> Result<a0_hir::HirModule, Ex
 
 /// Reads, parses and verifies an IR file (lowering HIR first), printing diagnostics on failure.
 fn load(path: &str, sources: &mut SourceMap) -> Result<Module, ExitCode> {
+    load_with(path, sources, a0_hir::LowerOptions::default())
+}
+
+/// [`load`], lowering HIR with `options` (debug information wants no inlining).
+fn load_with(
+    path: &str,
+    sources: &mut SourceMap,
+    options: a0_hir::LowerOptions,
+) -> Result<Module, ExitCode> {
     let mut m = if is_hir(path) {
         let hir = load_hir(path, sources)?;
-        a0_hir::lower(&hir).map_err(|d| report(sources, &d))?
+        a0_hir::lower_with(&hir, options).map_err(|d| report(sources, &d))?
     } else {
         let text = read(path)?;
         let id = sources.add(path, &text);
@@ -216,6 +226,7 @@ struct BuildArgs {
     output: Option<String>,
     target: Target,
     optimize: bool,
+    debug_info: bool,
 }
 
 fn parse_build_args(args: &[String]) -> Result<BuildArgs, String> {
@@ -223,6 +234,7 @@ fn parse_build_args(args: &[String]) -> Result<BuildArgs, String> {
     let mut output = None;
     let mut target = Target::host();
     let mut optimize = true;
+    let mut debug_info = false;
     let mut it = args.iter();
     while let Some(arg) = it.next() {
         match arg.as_str() {
@@ -232,6 +244,7 @@ fn parse_build_args(args: &[String]) -> Result<BuildArgs, String> {
                 target = Some(Target::parse(name)?);
             }
             "--no-opt" => optimize = false,
+            "-g" => debug_info = true,
             other if other.starts_with('-') => return Err(format!("unknown option {other}")),
             other => {
                 if file.replace(other.to_string()).is_some() {
@@ -245,6 +258,7 @@ fn parse_build_args(args: &[String]) -> Result<BuildArgs, String> {
         output,
         target: target.ok_or("the host is not a supported target; pass --target")?,
         optimize,
+        debug_info,
     })
 }
 
@@ -261,7 +275,12 @@ fn build(args: &[String], executable: bool) -> ExitCode {
         }
     };
     let mut sources = SourceMap::new();
-    let module = match load(&args.file, &mut sources) {
+    let options = if args.debug_info {
+        a0_hir::LowerOptions { optimize: false }
+    } else {
+        a0_hir::LowerOptions::default()
+    };
+    let module = match load_with(&args.file, &mut sources, options) {
         Ok(m) => m,
         Err(c) => return c,
     };
@@ -275,6 +294,7 @@ fn build(args: &[String], executable: bool) -> ExitCode {
             .unwrap_or_else(|| format!("{stem}{}", args.target.exe_suffix()));
         let opts = a0_native::BuildOptions {
             no_optimize: !args.optimize,
+            debug_info: args.debug_info,
             ..Default::default()
         };
         a0_native::build_executable(&module, args.target, std::path::Path::new(&output), &opts)
@@ -285,6 +305,7 @@ fn build(args: &[String], executable: bool) -> ExitCode {
         let opts = a0_native::CodegenOptions {
             optimize: args.optimize,
             entry_point: false,
+            debug_info: args.debug_info,
         };
         a0_native::compile_object(&module, args.target, &opts).and_then(|bytes| {
             std::fs::write(&output, bytes).map_err(|e| {

@@ -782,6 +782,7 @@ pub unsafe extern "C" fn a0_write_object(
         let opts = a0_native::CodegenOptions {
             optimize: true,
             entry_point: false,
+            debug_info: false,
         };
         let bytes = a0_native::compile_object(&m.module, target, &opts)?;
         std::fs::write(Path::new(path.as_ref()), bytes)

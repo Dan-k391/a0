@@ -29,8 +29,9 @@ defined by its grammar alone), `lox hir|ir file.lox`, `minnow hir|ir file.mn`, `
 printed at exit), `A0_OPT=0` (no HIR optimizer),
 `a0 explain E2001` (what an error code means), `A0_BLESS=1` (rewrite the tutorial's listings and the
 diagnostic snapshots after a deliberate change).
-Every language driver also has `lang lsp`, the language server (`docs/editors.md`); the VS Code
-extension in `editors/vscode` starts it.
+Every language driver also has `lang lsp`, the language server (`docs/editors.md`), and `lang dap`,
+the debugger (`docs/debugging.md`); the VS Code extension in `editors/vscode` starts both.
+`lang build -g` writes DWARF for gdb and lldb.
 
 ## Layer map and dependency rules
 
@@ -93,6 +94,8 @@ layer, decision D17). A new crate goes into the table above and into `[workspace
   wrappers generated from `a0rt.h`, so every function in the symbol table needs its prototype
   there. `cfg!` is fine for what the host can do (threads, stack); codegen still goes through
   `Target`.
+- Debuggers need spans on everything a frontend builds (a stale span puts code on another line)
+  and output that goes through `a0_rt_write` (C runtimes of languages included), D58.
 - Languages without host code (D55): `@hir` forms in `a0_hir::dsl`, run by `a0 lang`; Calc
   (`examples/calc`, tested by `crates/a0/tests/dsl.rs`) is the example. Keep the forms few.
 - Generalize only when two example languages need it (except the IR layers and the default runtime).
@@ -116,7 +119,9 @@ layer, decision D17). A new crate goes into the table above and into `[workspace
   stress too, optimized and not. The Lox suite must stay at all 241 passing in all six modes, and the tests of A0's extensions to
   Lox (`examples/lox/tests/a0`) with it.
 - Each example language has `tests/lsp.rs`: its server's outline, definitions, hovers,
-  diagnostics and quick fixes on a small program, through `a0_driver::lsp::session`.
+  diagnostics and quick fixes on a small program, through `a0_driver::lsp::session`; and
+  `tests/dap.rs`: a debugging session (breakpoint, stack, locals, steps) through
+  `a0_driver::dap::Client`.
 - Each example language has `tests/diagnostics/`: programs whose full output (rendered
   diagnostics, runtime errors) must match their `.out` files, natively too
   (`a0_driver::snapshots::check`; `A0_BLESS=1` rewrites them). A new kind of diagnostic or runtime
@@ -138,6 +143,7 @@ layer, decision D17). A new crate goes into the table above and into `[workspace
 | The standard library | `docs/std.md` |
 | Grammar DSL (including `@def`/`@scope`) | `docs/grammar.md` |
 | The language server or the editor extension | `docs/editors.md` |
+| The debugger (`dap.rs`, debug types, the runtime's hooks) or native debug information | `docs/debugging.md` |
 | Diagnostics: rendering, codes (`a0_diag::codes`), the builder's reporting API | `docs/diagnostics.md` (its code table is tested) |
 | A design choice with alternatives | a new `D<n>` entry in `docs/decisions.md` |
 | A milestone ends | `docs/milestones.md` (done / changed / open questions); `CHANGELOG.md` (under Unreleased) |

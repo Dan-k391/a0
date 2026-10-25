@@ -355,7 +355,7 @@ pub fn session_with_args(
 }
 
 /// Reads one `Content-Length`-framed message; `None` at the end of the input.
-fn read_message(input: &mut dyn BufRead) -> io::Result<Option<String>> {
+pub(crate) fn read_message(input: &mut dyn BufRead) -> io::Result<Option<String>> {
     let mut length = None;
     loop {
         let mut line = String::new();
