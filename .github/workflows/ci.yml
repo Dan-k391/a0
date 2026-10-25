@@ -51,6 +51,8 @@ jobs:
           import re
           log = open("test.log", encoding="utf-8", errors="replace").read()
           blocks = re.findall(r"---- (\S+) stdout ----\n(.*?)(?=\n---- |\nfailures:)", log, re.S)
+          # A test binary that crashed has no block: the end of the log says what happened.
+          blocks = blocks or [("the end of the log", "\n".join(log.splitlines()[-80:]))]
           for name, text in blocks[:10]:
               text = text[-6000:].replace("%", "%25").replace("\r", "").replace("\n", "%0A")
               print(f"::error title={name}::{text}")
