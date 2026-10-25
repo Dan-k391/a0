@@ -44,6 +44,11 @@ impl HirBuilder {
         }
     }
 
+    /// Whether a body is being built, as declaring locals needs.
+    pub fn in_body(&self) -> bool {
+        !self.body_stack.is_empty()
+    }
+
     /// The body being built (opened with [`HirBuilder::begin_body`]).
     pub fn current_body(&self) -> BodyId {
         match self.body_stack.last() {

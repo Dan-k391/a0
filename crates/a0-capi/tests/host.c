@@ -188,6 +188,225 @@ static void calc(const A0Grammar *g, const char *source) {
     a0_module_free(m);
 }
 
+/* ---- A language with variables, compiled to HIR by name: the builder resolves the names. ---- */
+
+static const char VARS[] =
+    "grammar vars;\n"
+    "skip /[ \\t\\n]+/;\n"
+    "token NUM /[0-9]+/;\n"
+    "token NAME /[a-z]+/;\n"
+    "program = (!EOF stmt)* EOF;\n"
+    "stmt @inline = let_stmt | print_stmt;\n"
+    "let_stmt = \"let\" name:NAME \"=\" value:expr \";\";\n"
+    "print_stmt = \"print\" value:expr \";\";\n"
+    "expr @inline = @prec atom ~ \"expected an expression\" {\n"
+    "    left \"+\" \"-\" => binary;\n"
+    "    left \"*\" \"/\" => binary;\n"
+    "};\n"
+    "atom = NUM | NAME | \"(\" inner:expr \")\";\n";
+
+static int is_kind(const A0Tree *t, A0Node n, const char *kind) {
+    size_t len;
+    const char *k = a0_tree_kind(t, n, &len);
+    return len == strlen(kind) && memcmp(k, kind, len) == 0;
+}
+
+/* Diagnostics point at the node being compiled. */
+static void at(A0HirBuilder *b, const A0Tree *t, A0Node n) {
+    uint32_t start, end;
+    if (a0_tree_span(t, n, &start, &end)) a0_hir_set_span(b, start, end);
+}
+
+static A0HirExpr vars_expr(A0HirBuilder *b, const A0Tree *t, A0Node n) {
+    size_t len;
+    const char *text;
+    if (is_kind(t, n, "binary")) {
+        A0HirExpr x = vars_expr(b, t, a0_tree_field(t, n, A0_STR("left")));
+        A0HirExpr y = vars_expr(b, t, a0_tree_field(t, n, A0_STR("right")));
+        const char *op = a0_tree_text(t, a0_tree_field(t, n, A0_STR("op")), &len);
+        at(b, t, n);
+        return a0_hir_binary(b, op, len, x, y);
+    }
+    if (a0_tree_field(t, n, A0_STR("inner")) != A0_NONE) {
+        return vars_expr(b, t, a0_tree_field(t, n, A0_STR("inner")));
+    }
+    at(b, t, n);
+    text = a0_tree_text(t, n, &len);
+    if (is_kind(t, a0_tree_child(t, n, 0), "NAME")) return a0_hir_name(b, text, len);
+    {
+        char digits[32];
+        if (len >= sizeof digits) len = sizeof digits - 1;
+        memcpy(digits, text, len);
+        digits[len] = 0;
+        return a0_hir_int(b, atoll(digits));
+    }
+}
+
+static void vars(const A0Grammar *g, const char *source) {
+    A0Diagnostics *d = NULL;
+    A0Tree *t = a0_grammar_parse(g, source, strlen(source), &d);
+    A0HirBuilder *b = a0_hir_builder_new(A0_STR("vars"));
+    A0HirType int_t = a0_hir_named_type(b, A0_STR("int"), NULL, 0);
+    A0HirFunc main_fn = a0_hir_declare_function(b, A0_STR("main"), NULL, 0);
+    A0HirBody body;
+    A0HirExpr stmts[64];
+    size_t count = 0;
+    uint32_t i;
+    A0Node root = a0_tree_root(t);
+    A0Hir *h;
+    A0Module *m;
+    int32_t status;
+    check("parsing vars", d);
+    a0_hir_set_signature(b, main_fn, NULL, NULL, 0, int_t);
+    body = a0_hir_function_body(b, main_fn);
+    a0_hir_begin_body(b, body);
+    for (i = 0; i < a0_tree_child_count(t, root) && count < 64; i++) {
+        A0Node s = a0_tree_child(t, root, i);
+        A0HirExpr value;
+        if (a0_tree_is_token(t, s)) continue;
+        value = vars_expr(b, t, a0_tree_field(t, s, A0_STR("value")));
+        at(b, t, s);
+        if (is_kind(t, s, "let_stmt")) {
+            size_t len;
+            const char *name = a0_tree_text(t, a0_tree_field(t, s, A0_STR("name")), &len);
+            stmts[count++] = a0_hir_let_named(b, name, len, a0_hir_fresh_type(b), value);
+        } else {
+            A0HirExpr line[2];
+            line[0] = a0_hir_builtin(b, A0_STR("str"), &value, 1);
+            line[1] = a0_hir_string(b, A0_STR("\n"));
+            line[0] = a0_hir_binary(b, A0_STR("+"), line[0], line[1]);
+            stmts[count++] = a0_hir_builtin(b, A0_STR("print"), line, 1);
+        }
+    }
+    a0_hir_set_root(b, body, a0_hir_block(b, stmts, count, a0_hir_int(b, 0)));
+    a0_hir_end_body(b);
+    a0_tree_free(t);
+    h = a0_hir_finish(b, &d);
+    if (h == NULL) {
+        size_t len;
+        uint32_t start = 0;
+        const char *message = a0_diagnostics_message(d, 0, &len);
+        a0_diagnostics_span(d, 0, &start, NULL);
+        printf("vars error at %u: %.*s\n", start, (int)len, message);
+        a0_diagnostics_free(d);
+        return;
+    }
+    m = a0_hir_lower(h, &d);
+    check("lowering vars", d);
+    a0_hir_free(h);
+    if (m == NULL) return;
+    printf("vars:\n");
+    fflush(stdout);
+    a0_run(m, NULL, 0, &status, &d);
+    check("running vars", d);
+    a0_module_free(m);
+}
+
+/* ---- HIR built by handle: a struct, `if let` and a closure ---- */
+
+/* print(str(e) + "\n") */
+static A0HirExpr print_line(A0HirBuilder *b, A0HirExpr e) {
+    A0HirExpr parts[2];
+    parts[0] = a0_hir_builtin(b, A0_STR("str"), &e, 1);
+    parts[1] = a0_hir_string(b, A0_STR("\n"));
+    parts[0] = a0_hir_binary(b, A0_STR("+"), parts[0], parts[1]);
+    return a0_hir_builtin(b, A0_STR("print"), parts, 1);
+}
+
+/* struct Box { value: int, next: Box? }
+ * fn main() -> int {
+ *   let inner = new Box { next: null, value: 2 };
+ *   let outer = new Box { value: 40, next: inner };
+ *   if let n = outer.next { print(str(n.value) + "\n"); }
+ *   let add = fn(x: int) -> int { x + outer.value };
+ *   print(str(add(2)) + "\n");
+ *   0
+ * } */
+static void boxes(void) {
+    A0HirBuilder *b = a0_hir_builder_new(A0_STR("boxes"));
+    A0HirStruct box = a0_hir_declare_struct(b, A0_STR("Box"), NULL, 0);
+    A0HirType int_t = a0_hir_named_type(b, A0_STR("int"), NULL, 0);
+    A0HirType box_t = a0_hir_struct_type(b, box, NULL, 0);
+    A0HirType maybe_box = a0_hir_nullable_type(b, box_t);
+    A0HirFunc main_fn = a0_hir_declare_function(b, A0_STR("main"), NULL, 0);
+    A0Str inner_fields[2] = {{A0_STR("next")}, {A0_STR("value")}};
+    A0Str outer_fields[2] = {{A0_STR("value")}, {A0_STR("next")}};
+    A0Str x_name[1] = {{A0_STR("x")}};
+    A0HirExpr values[2], stmts[5], next, then;
+    A0HirLocal n;
+    A0HirBody body, closure;
+    A0Diagnostics *d = NULL;
+    A0Hir *h;
+    A0Module *m;
+    int32_t status;
+
+    a0_hir_add_field(b, box, A0_STR("value"), int_t);
+    a0_hir_add_field(b, box, A0_STR("next"), maybe_box);
+    a0_hir_set_signature(b, main_fn, NULL, NULL, 0, int_t);
+    body = a0_hir_function_body(b, main_fn);
+    a0_hir_begin_body(b, body);
+
+    values[0] = a0_hir_null(b, maybe_box);
+    values[1] = a0_hir_int(b, 2);
+    stmts[0] = a0_hir_let_named(b, A0_STR("inner"), a0_hir_fresh_type(b),
+                                a0_hir_new_struct_named(b, box, inner_fields, values, 2));
+    values[0] = a0_hir_int(b, 40);
+    values[1] = a0_hir_name(b, A0_STR("inner"));
+    stmts[1] = a0_hir_let_named(b, A0_STR("outer"), a0_hir_fresh_type(b),
+                                a0_hir_new_struct_named(b, box, outer_fields, values, 2));
+
+    next = a0_hir_field_named(b, a0_hir_name(b, A0_STR("outer")), A0_STR("next"));
+    a0_hir_push_scope(b);
+    n = a0_hir_declare_if_let(b, A0_STR("n"), next);
+    then = print_line(b, a0_hir_field_named(b, a0_hir_name(b, A0_STR("n")), A0_STR("value")));
+    a0_hir_pop_scope(b);
+    stmts[2] = a0_hir_if_let(b, n, next, then, A0_NONE);
+
+    closure = a0_hir_new_closure_body(b, body, x_name, &int_t, 1, int_t);
+    a0_hir_begin_body(b, closure);
+    a0_hir_set_root(b, closure,
+                    a0_hir_binary(b, A0_STR("+"), a0_hir_name(b, A0_STR("x")),
+                                  a0_hir_field_named(b, a0_hir_name(b, A0_STR("outer")),
+                                                     A0_STR("value"))));
+    a0_hir_end_body(b);
+    stmts[3] = a0_hir_let_named(b, A0_STR("add"), a0_hir_fresh_type(b), a0_hir_lambda(b, closure));
+    values[0] = a0_hir_int(b, 2);
+    stmts[4] = print_line(b, a0_hir_call_named(b, A0_STR("add"), values, 1));
+
+    a0_hir_set_root(b, body, a0_hir_block(b, stmts, 5, a0_hir_int(b, 0)));
+    a0_hir_end_body(b);
+    h = a0_hir_finish(b, &d);
+    check("building boxes", d);
+    if (h == NULL) return;
+    m = a0_hir_lower(h, &d);
+    check("lowering boxes", d);
+    a0_hir_free(h);
+    if (m == NULL) return;
+    fflush(stdout);
+    a0_run(m, NULL, 0, &status, &d);
+    check("running boxes", d);
+    a0_module_free(m);
+}
+
+/* Bad handles and calls out of order come back as diagnostics, not crashes. */
+static void hir_misuse(void) {
+    A0HirBuilder *b = a0_hir_builder_new(A0_STR("bad"));
+    A0Diagnostics *d = NULL;
+    size_t len;
+    const char *message;
+    a0_hir_binary(b, A0_STR("+"), a0_hir_int(b, 1), 99999);
+    a0_hir_declare_local(b, A0_STR("x"), a0_hir_named_type(b, A0_STR("int"), NULL, 0));
+    if (a0_hir_finish(b, &d) != NULL || d == NULL) {
+        printf("HIR misuse was not reported\n");
+        failures++;
+        return;
+    }
+    message = a0_diagnostics_message(d, 0, &len);
+    printf("hir misuse: %d problems, first: %.*s\n", (int)a0_diagnostics_count(d), (int)len,
+           message);
+    a0_diagnostics_free(d);
+}
+
 /* ---- The high-level IR, from text ---- */
 
 static const char GREET[] =
@@ -258,6 +477,16 @@ int main(void) {
         }
         a0_hir_free(h);
     }
+
+    g = a0_grammar_new(VARS, sizeof VARS - 1, &d);
+    check("loading the vars grammar", d);
+    if (g != NULL) {
+        vars(g, "let x = 3 + 4; let y = x * 3; print x; print y;");
+        vars(g, "let a = 1; print b;");
+        a0_grammar_free(g);
+    }
+    boxes();
+    hir_misuse();
 
     printf("failures: %d\n", failures);
     return failures == 0 ? 0 : 1;

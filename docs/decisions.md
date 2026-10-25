@@ -342,6 +342,13 @@ findings, so the C side, like the Rust side, never crashes on misuse. A C progra
 (`tests/host.c`) exercises all of it and is compiled and run by the system C compiler in CI on every
 platform.
 
+The HIR builder is bound the same way (M17). Its Rust API trusts handles, which can only come from
+the builder there; the C layer checks each handle against the module's counts before calling in
+and reports a bad one, so the builder itself stays unchanged. `Item` parameters, the one
+data-carrying enum in its API, are a kind and a handle in C (as D2 proposed), operators and
+builtins are passed by their text-format names, and lists of names are arrays of `A0Str`. A test
+compares the header with the library's exports, so neither can gain a function the other lacks.
+
 ## D34. Nullable references are narrowed with `if let`, not by flow typing
 
 D23 left a frontend two ways to use a `T?`: `x!`, which panics on null, or a test followed by `x!`.

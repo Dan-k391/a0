@@ -14,6 +14,10 @@
 
 #![allow(clippy::missing_safety_doc)]
 
+mod hir;
+
+pub use hir::{A0HirBuilder, A0Str};
+
 use std::borrow::Cow;
 use std::ffi::{c_char, c_int};
 use std::path::Path;
@@ -852,6 +856,28 @@ pub unsafe extern "C" fn a0_tree_kind(t: *const A0Tree, n: u32, len: *mut usize)
 pub unsafe extern "C" fn a0_tree_text(t: *const A0Tree, n: u32, len: *mut usize) -> *const c_char {
     let s = unsafe { node(t, n) }.map_or("", |(t, n)| t.text(n));
     unsafe { give_str(s, len) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn a0_tree_span(
+    t: *const A0Tree,
+    n: u32,
+    start: *mut u32,
+    end: *mut u32,
+) -> c_int {
+    let Some((t, n)) = (unsafe { node(t, n) }) else {
+        return 0;
+    };
+    let span = t.span(n);
+    unsafe {
+        if !start.is_null() {
+            *start = span.start;
+        }
+        if !end.is_null() {
+            *end = span.end;
+        }
+    }
+    1
 }
 
 #[unsafe(no_mangle)]

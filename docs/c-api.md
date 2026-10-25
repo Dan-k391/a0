@@ -1,13 +1,15 @@
 # The C API
 
-`crates/a0-capi` makes A0's library crates usable from C (and anything that calls C): build core IR,
-print and parse it, run it in the interpreter, compile it to object files for any supported target
-or to an executable for the host, parse text with a grammar and walk the tree, and turn HIR text
-into runnable core IR. The header is `crates/a0-capi/include/a0.h`; it is the reference.
+`crates/a0-capi` makes A0's library crates usable from C (and anything that calls C): parse text with
+a grammar and walk the tree, build HIR (by name, with the builder resolving names and checking
+types, or by handle), build core IR, print and parse both, run modules in the interpreter, and
+compile them to object files for any supported target or to an executable for the host. The header
+is `crates/a0-capi/include/a0.h`; it is the reference.
 
-`crates/a0-capi/tests/host.c` is a complete C program that does all of that, including a small
-calculator language whose grammar is an A0 grammar and whose compiler is 40 lines of C. CI compiles
-it with the system C compiler and runs it on every platform.
+`crates/a0-capi/tests/host.c` is a complete C program that does all of that, including two small
+languages: a calculator compiled to core IR, and a language with variables compiled to HIR by name,
+whose unknown names the builder reports. CI compiles it with the system C compiler and runs it on
+every platform, and a test keeps the header and the library's exports identical.
 
 ## Building and linking
 
@@ -46,11 +48,15 @@ These follow decision D2 for every public API:
 - **Strings** go in as pointer and length (`A0_STR("iadd")` expands to both) and come out as a
   pointer and a length borrowed from the object they belong to, valid until it changes or is freed.
   Neither is NUL-terminated.
-- **Instructions and conditions** are named as in the text format (`"iadd"`, `"zext"`, `"slt"`),
-  types with the `A0Type` enum.
+- **Instructions, conditions, operators and builtins** are named as in the text formats
+  (`"iadd"`, `"slt"`, `"+"`, `"print"`); core IR types use the `A0Type` enum, HIR types are handles
+  (`a0_hir_named_type(b, A0_STR("int"), NULL, 0)`). Lists of names are arrays of `A0Str`
+  (`{A0_STR("x")}`), and a HIR item (struct, enum, function, ...) is a kind (`A0_HIR_STRUCT`) and
+  a handle.
 - **Errors** are diagnostics: functions that can fail take `A0Diagnostics **diags` and set it to the
   errors, or to NULL on success. Misusing a builder (an unknown instruction, a value from another
-  function) is recorded and reported by `a0_builder_finish`, never a crash.
+  function, a handle that does not exist, a local declared outside any body) is recorded and
+  reported by `a0_builder_finish` or `a0_hir_finish`, never a crash.
 
 ```c
 A0Builder *b = a0_builder_new(A0_STR("demo"));
@@ -72,9 +78,32 @@ a0_build_executable(m, A0_STR("demo"), &d);  /* ./demo prints 42 */
 a0_module_free(m);
 ```
 
+A frontend in C builds HIR the way Minnow does in Rust: open a function's body, then build its
+code by name, with spans so that errors point at the source.
+
+```c
+A0HirBuilder *b = a0_hir_builder_new(A0_STR("demo"));
+A0HirType int_t = a0_hir_named_type(b, A0_STR("int"), NULL, 0);
+A0HirFunc main_fn = a0_hir_declare_function(b, A0_STR("main"), NULL, 0);
+a0_hir_set_signature(b, main_fn, NULL, NULL, 0, int_t);
+A0HirBody body = a0_hir_function_body(b, main_fn);
+a0_hir_begin_body(b, body);
+A0HirExpr items[2];
+items[0] = a0_hir_let_named(b, A0_STR("x"), a0_hir_fresh_type(b), a0_hir_int(b, 42));
+A0HirExpr x = a0_hir_name(b, A0_STR("x"));              /* resolved by the builder */
+A0HirExpr text = a0_hir_builtin(b, A0_STR("str"), &x, 1);
+items[1] = a0_hir_builtin(b, A0_STR("print"), &text, 1);
+a0_hir_set_root(b, body, a0_hir_block(b, items, 2, a0_hir_int(b, 0)));
+a0_hir_end_body(b);
+
+A0Diagnostics *d = NULL;
+A0Hir *h = a0_hir_finish(b, &d);                        /* or NULL, with d */
+A0Module *m = a0_hir_lower(h, &d);                      /* then a0_run, a0_build_executable */
+```
+
 ## What is bound
 
-The core IR builder, modules and their text format, the interpreter (`a0_run`), the native backend
-(`a0_write_object`, `a0_build_executable`), grammars and syntax trees, and HIR from its text format
-(`a0_hir_parse`, `a0_hir_lower`). Not bound yet: the HIR builder, `a0-sema`, `SyntaxIndex` and the
-driver (D20). The runtime and the collector keep global state, so use A0 from one thread at a time.
+Grammars and syntax trees, the HIR builder (every function of `HirBuilder`, by handle and by name),
+HIR text, the core IR builder and text format, the interpreter (`a0_run`) and the native backend
+(`a0_write_object`, `a0_build_executable`). Not bound: `a0-sema`, `SyntaxIndex` and the driver
+(D20). The runtime and the collector keep global state, so use A0 from one thread at a time.

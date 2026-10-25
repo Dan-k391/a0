@@ -165,6 +165,8 @@ A0Node a0_tree_root(const A0Tree *t);
 const char *a0_tree_kind(const A0Tree *t, A0Node n, size_t *len);
 /* The source text the node covers. */
 const char *a0_tree_text(const A0Tree *t, A0Node n, size_t *len);
+/* The byte range of the source the node covers. Returns 0 for an invalid node. */
+int a0_tree_span(const A0Tree *t, A0Node n, uint32_t *start, uint32_t *end);
 int a0_tree_is_token(const A0Tree *t, A0Node n);
 uint32_t a0_tree_child_count(const A0Tree *t, A0Node n);
 A0Node a0_tree_child(const A0Tree *t, A0Node n, uint32_t i);
@@ -180,6 +182,208 @@ A0Hir *a0_hir_parse(const char *text, size_t len, A0Diagnostics **diags);
 /* Lowers (and optimizes) a HIR module with a `main` to core IR. */
 A0Module *a0_hir_lower(const A0Hir *h, A0Diagnostics **diags);
 void a0_hir_free(A0Hir *h);
+
+/* ---- Building HIR (docs/hir.md, "Building HIR from a frontend") --------------------------- *
+ *
+ * The builder infers and checks types and, through the by-name functions, resolves names, so a
+ * frontend needs no checker of its own. Handles: types, expressions, locals, structs, enums,
+ * functions, globals, externs, bodies and match arms are all uint32_t. Every handle is checked;
+ * a bad one, an unknown operator or builtin, or any type error is reported by a0_hir_finish.
+ * Spans set with a0_hir_set_span are byte offsets into the frontend's source text and appear in
+ * the diagnostics. */
+
+typedef struct A0HirBuilder A0HirBuilder;
+typedef uint32_t A0HirType;
+typedef uint32_t A0HirExpr;
+typedef uint32_t A0HirLocal;
+typedef uint32_t A0HirStruct;
+typedef uint32_t A0HirEnum;
+typedef uint32_t A0HirFunc;
+typedef uint32_t A0HirGlobal;
+typedef uint32_t A0HirExtern;
+typedef uint32_t A0HirBody;
+typedef uint32_t A0HirArm;
+
+/* A string in an array of names: { A0_STR("x") }. */
+typedef struct A0Str {
+    const char *ptr;
+    size_t len;
+} A0Str;
+
+/* What an item handle refers to (a0_hir_type_param, a0_hir_lookup_*). */
+enum { A0_HIR_STRUCT = 1, A0_HIR_ENUM = 2, A0_HIR_FUNC = 3, A0_HIR_GLOBAL = 4, A0_HIR_EXTERN = 5 };
+
+A0HirBuilder *a0_hir_builder_new(const char *module_name, size_t len);
+/* Continues building a parsed module (a prelude written in HIR text). Consumes `h`. */
+A0HirBuilder *a0_hir_builder_from(A0Hir *h);
+/* Frees a builder that will not be finished. */
+void a0_hir_builder_free(A0HirBuilder *b);
+/* Nodes built from now on are reported at start..end of the source. */
+void a0_hir_set_span(A0HirBuilder *b, uint32_t start, uint32_t end);
+void a0_hir_clear_span(A0HirBuilder *b);
+/* Checks the module and returns it, or NULL with *diags. Frees the builder either way. */
+A0Hir *a0_hir_finish(A0HirBuilder *b, A0Diagnostics **diags);
+
+/* Types. "unit", "bool", "int", "float", "string", "any" and the names of declared structs and
+ * enums are named types; `args` are type arguments (none: inferred). */
+A0HirType a0_hir_named_type(A0HirBuilder *b, const char *name, size_t len, const A0HirType *args,
+                            size_t arg_count);
+/* A type to infer from how it is used. */
+A0HirType a0_hir_fresh_type(A0HirBuilder *b);
+A0HirType a0_hir_array_type(A0HirBuilder *b, A0HirType elem);
+A0HirType a0_hir_map_type(A0HirBuilder *b, A0HirType key, A0HirType value);
+A0HirType a0_hir_fn_type(A0HirBuilder *b, const A0HirType *params, size_t param_count,
+                         A0HirType ret);
+/* T?, a reference that may be null. */
+A0HirType a0_hir_nullable_type(A0HirBuilder *b, A0HirType t);
+A0HirType a0_hir_struct_type(A0HirBuilder *b, A0HirStruct s, const A0HirType *args,
+                             size_t arg_count);
+A0HirType a0_hir_enum_type(A0HirBuilder *b, A0HirEnum e, const A0HirType *args, size_t arg_count);
+/* Type parameter `index` of a generic struct, enum or function. */
+A0HirType a0_hir_type_param(A0HirBuilder *b, uint32_t item_kind, uint32_t item, uint32_t index);
+A0HirType a0_hir_type_of(A0HirBuilder *b, A0HirExpr e);
+/* How diagnostics write a kind of type in the language's syntax: ("array", "[{}]"). */
+void a0_hir_set_type_syntax(A0HirBuilder *b, const char *tag, size_t tag_len, const char *template_,
+                            size_t template_len);
+
+/* Declarations, in any order. Type parameters are names; none for a plain item. */
+A0HirStruct a0_hir_declare_struct(A0HirBuilder *b, const char *name, size_t len,
+                                  const A0Str *type_params, size_t type_param_count);
+/* Returns the field's index. */
+uint32_t a0_hir_add_field(A0HirBuilder *b, A0HirStruct s, const char *name, size_t len,
+                          A0HirType type);
+A0HirEnum a0_hir_declare_enum(A0HirBuilder *b, const char *name, size_t len,
+                              const A0Str *type_params, size_t type_param_count);
+/* Returns the variant's index. */
+uint32_t a0_hir_add_variant(A0HirBuilder *b, A0HirEnum e, const char *name, size_t len,
+                            const A0HirType *fields, size_t field_count);
+A0HirGlobal a0_hir_declare_global(A0HirBuilder *b, const char *name, size_t len, A0HirType type);
+/* A C function (the runtime's, or a language's own runtime library). */
+A0HirExtern a0_hir_declare_extern(A0HirBuilder *b, const char *name, size_t len,
+                                  const A0HirType *params, size_t param_count, A0HirType ret);
+/* A function; give it its signature with a0_hir_set_signature (which may use its type
+ * parameters) and its code through a0_hir_function_body. */
+A0HirFunc a0_hir_declare_function(A0HirBuilder *b, const char *name, size_t len,
+                                  const A0Str *type_params, size_t type_param_count);
+void a0_hir_set_signature(A0HirBuilder *b, A0HirFunc f, const A0Str *param_names,
+                          const A0HirType *param_types, size_t param_count, A0HirType ret);
+A0HirBody a0_hir_function_body(A0HirBuilder *b, A0HirFunc f);
+/* The body of a closure created inside `parent` (make the closure with a0_hir_lambda). */
+A0HirBody a0_hir_new_closure_body(A0HirBuilder *b, A0HirBody parent, const A0Str *param_names,
+                                  const A0HirType *param_types, size_t param_count, A0HirType ret);
+A0HirLocal a0_hir_param(A0HirBuilder *b, A0HirBody body, uint32_t i);
+A0HirLocal a0_hir_new_local(A0HirBuilder *b, A0HirBody body, const char *name, size_t len,
+                            A0HirType type);
+/* The body's code: an expression, usually a block. */
+void a0_hir_set_root(A0HirBuilder *b, A0HirBody body, A0HirExpr root);
+/* The item a type or value name refers to, with its kind in *kind; A0_NONE if there is none. */
+uint32_t a0_hir_lookup_type(A0HirBuilder *b, const char *name, size_t len, uint32_t *kind);
+uint32_t a0_hir_lookup_value(A0HirBuilder *b, const char *name, size_t len, uint32_t *kind);
+
+/* Expressions. Optional operands (an if without else, a return without value, a block without
+ * a value) are A0_NONE. */
+A0HirExpr a0_hir_unit(A0HirBuilder *b);
+A0HirExpr a0_hir_bool(A0HirBuilder *b, int value);
+A0HirExpr a0_hir_int(A0HirBuilder *b, int64_t value);
+A0HirExpr a0_hir_float(A0HirBuilder *b, double value);
+A0HirExpr a0_hir_string(A0HirBuilder *b, const char *s, size_t len);
+/* null of a nullable type. */
+A0HirExpr a0_hir_null(A0HirBuilder *b, A0HirType type);
+A0HirExpr a0_hir_local(A0HirBuilder *b, A0HirLocal l);
+A0HirExpr a0_hir_global(A0HirBuilder *b, A0HirGlobal g);
+/* A function as a value (type arguments for a generic one, or none to infer them). */
+A0HirExpr a0_hir_func(A0HirBuilder *b, A0HirFunc f, const A0HirType *type_args, size_t count);
+/* `let l = init` (a statement of a block). */
+A0HirExpr a0_hir_let(A0HirBuilder *b, A0HirLocal l, A0HirExpr init);
+A0HirExpr a0_hir_set_local(A0HirBuilder *b, A0HirLocal l, A0HirExpr value);
+A0HirExpr a0_hir_set_global(A0HirBuilder *b, A0HirGlobal g, A0HirExpr value);
+A0HirExpr a0_hir_set_field(A0HirBuilder *b, A0HirExpr object, uint32_t field, A0HirExpr value);
+A0HirExpr a0_hir_set_field_named(A0HirBuilder *b, A0HirExpr object, const char *name, size_t len,
+                                 A0HirExpr value);
+A0HirExpr a0_hir_set_index(A0HirBuilder *b, A0HirExpr target, A0HirExpr index, A0HirExpr value);
+/* "-" or "!". */
+A0HirExpr a0_hir_unary(A0HirBuilder *b, const char *op, size_t len, A0HirExpr x);
+/* "+", "-", "*", "/", "%", "<", "<=", ">", ">=", "==", "!=", "&&", "||". */
+A0HirExpr a0_hir_binary(A0HirBuilder *b, const char *op, size_t len, A0HirExpr x, A0HirExpr y);
+A0HirExpr a0_hir_call(A0HirBuilder *b, A0HirFunc f, const A0HirType *type_args, size_t type_count,
+                      const A0HirExpr *args, size_t arg_count);
+A0HirExpr a0_hir_call_extern(A0HirBuilder *b, A0HirExtern x, const A0HirExpr *args,
+                             size_t arg_count);
+/* Calls a function value (a closure). */
+A0HirExpr a0_hir_call_value(A0HirBuilder *b, A0HirExpr callee, const A0HirExpr *args,
+                            size_t arg_count);
+/* A closure over a body from a0_hir_new_closure_body. */
+A0HirExpr a0_hir_lambda(A0HirBuilder *b, A0HirBody body);
+/* A struct value with every field in declaration order. */
+A0HirExpr a0_hir_new_struct(A0HirBuilder *b, A0HirStruct s, const A0HirType *type_args,
+                            size_t type_count, const A0HirExpr *fields, size_t field_count);
+A0HirExpr a0_hir_field(A0HirBuilder *b, A0HirExpr object, uint32_t field);
+A0HirExpr a0_hir_field_named(A0HirBuilder *b, A0HirExpr object, const char *name, size_t len);
+A0HirExpr a0_hir_variant(A0HirBuilder *b, A0HirEnum e, const A0HirType *type_args,
+                         size_t type_count, uint32_t variant, const A0HirExpr *args,
+                         size_t arg_count);
+/* A match arm: `variant` (A0_NONE for `_`), locals bound to its payload, the arm's value. */
+A0HirArm a0_hir_arm(A0HirBuilder *b, uint32_t variant, const A0HirLocal *binds, size_t bind_count,
+                    A0HirExpr body);
+A0HirExpr a0_hir_match(A0HirBuilder *b, A0HirExpr scrutinee, const A0HirArm *arms,
+                       size_t arm_count);
+A0HirExpr a0_hir_array(A0HirBuilder *b, const A0HirExpr *elems, size_t count);
+A0HirExpr a0_hir_new_array(A0HirBuilder *b, A0HirType array_type);
+A0HirExpr a0_hir_new_map(A0HirBuilder *b, A0HirType map_type);
+A0HirExpr a0_hir_index(A0HirBuilder *b, A0HirExpr target, A0HirExpr index);
+/* "len", "push", "pop", "has", "remove", "keys", "substr", "byte_at", "str", "print", "eprint",
+ * "exit", "panic", "clock" (docs/hir.md). */
+A0HirExpr a0_hir_builtin(A0HirBuilder *b, const char *name, size_t len, const A0HirExpr *args,
+                         size_t arg_count);
+/* `e as type`: conversions between int and float, and into and out of any. */
+A0HirExpr a0_hir_cast(A0HirBuilder *b, A0HirExpr e, A0HirType type);
+/* `e!`: the value of a nullable reference; stops the program if it is null. */
+A0HirExpr a0_hir_unwrap(A0HirBuilder *b, A0HirExpr e);
+/* `e is type`, for e of type any. */
+A0HirExpr a0_hir_is(A0HirBuilder *b, A0HirExpr e, A0HirType type);
+A0HirExpr a0_hir_if(A0HirBuilder *b, A0HirExpr cond, A0HirExpr then, A0HirExpr els);
+/* `if let l = value { then } else { els }`: `l` holds `value` in `then` when it is not null. */
+A0HirExpr a0_hir_if_let(A0HirBuilder *b, A0HirLocal l, A0HirExpr value, A0HirExpr then,
+                        A0HirExpr els);
+A0HirExpr a0_hir_while(A0HirBuilder *b, A0HirExpr cond, A0HirExpr body);
+A0HirExpr a0_hir_loop(A0HirBuilder *b, A0HirExpr body);
+A0HirExpr a0_hir_break(A0HirBuilder *b);
+A0HirExpr a0_hir_continue(A0HirBuilder *b);
+A0HirExpr a0_hir_return(A0HirBuilder *b, A0HirExpr value);
+/* Statements, then an optional value. */
+A0HirExpr a0_hir_block(A0HirBuilder *b, const A0HirExpr *items, size_t count, A0HirExpr tail);
+
+/* By name: scopes and name resolution, for frontends that leave them to A0. */
+/* Puts a body's parameters (and type parameters) in scope until a0_hir_end_body. */
+void a0_hir_begin_body(A0HirBuilder *b, A0HirBody body);
+void a0_hir_end_body(A0HirBuilder *b);
+void a0_hir_push_scope(A0HirBuilder *b);
+void a0_hir_pop_scope(A0HirBuilder *b);
+int a0_hir_is_declared_in_scope(A0HirBuilder *b, const char *name, size_t len);
+A0HirLocal a0_hir_declare_local(A0HirBuilder *b, const char *name, size_t len, A0HirType type);
+/* The binding of `if let name = value`, typed from the value; push a scope for it first. */
+A0HirLocal a0_hir_declare_if_let(A0HirBuilder *b, const char *name, size_t len, A0HirExpr value);
+/* `let name: type = value` with `name` in scope afterwards; `type` may be a0_hir_fresh_type. */
+A0HirExpr a0_hir_let_named(A0HirBuilder *b, const char *name, size_t len, A0HirType type,
+                           A0HirExpr value);
+A0HirLocal a0_hir_lookup_local(A0HirBuilder *b, const char *name, size_t len);
+/* A local, global or function by name; an unknown name is reported. */
+A0HirExpr a0_hir_name(A0HirBuilder *b, const char *name, size_t len);
+/* Calls a function, closure or builtin by name. */
+A0HirExpr a0_hir_call_named(A0HirBuilder *b, const char *name, size_t len, const A0HirExpr *args,
+                            size_t arg_count);
+A0HirExpr a0_hir_assign_named(A0HirBuilder *b, const char *name, size_t len, A0HirExpr value);
+/* Puts a generic item's type parameters in scope for a0_hir_named_type. */
+void a0_hir_bind_type_params(A0HirBuilder *b, uint32_t item_kind, uint32_t item);
+/* A struct value with fields given by name, in any order. */
+A0HirExpr a0_hir_new_struct_named(A0HirBuilder *b, A0HirStruct s, const A0Str *field_names,
+                                  const A0HirExpr *values, size_t count);
+A0HirExpr a0_hir_variant_named(A0HirBuilder *b, A0HirEnum e, const char *name, size_t len,
+                               const A0HirExpr *args, size_t arg_count);
+/* Reports a language's own error at the current span. */
+void a0_hir_report(A0HirBuilder *b, const char *message, size_t len);
+/* Stands in for an expression that could not be built; causes no further errors. */
+A0HirExpr a0_hir_error_expr(A0HirBuilder *b);
 
 #ifdef __cplusplus
 }

@@ -484,6 +484,41 @@ impl HirModule {
         self.locals.len() as u32
     }
 
+    // How many of each handle exist (a handle is valid below its count), for bindings that check
+    // handles they did not get from the builder.
+
+    pub fn type_count(&self) -> u32 {
+        self.types.len() as u32
+    }
+
+    pub fn struct_count(&self) -> u32 {
+        self.structs.len() as u32
+    }
+
+    pub fn enum_count(&self) -> u32 {
+        self.enums.len() as u32
+    }
+
+    pub fn global_count(&self) -> u32 {
+        self.globals.len() as u32
+    }
+
+    pub fn extern_count(&self) -> u32 {
+        self.externs.len() as u32
+    }
+
+    pub fn body_count(&self) -> u32 {
+        self.bodies.len() as u32
+    }
+
+    pub fn expr_count(&self) -> u32 {
+        self.exprs.len() as u32
+    }
+
+    pub fn arm_count(&self) -> u32 {
+        self.arms.len() as u32
+    }
+
     pub fn local_name(&self, l: LocalId) -> &str {
         &self.locals[l.index()].name
     }
