@@ -53,8 +53,16 @@ jobs:
           blocks = re.findall(r"---- (\S+) stdout ----\n(.*?)(?=\n---- |\nfailures:)", log, re.S)
           # A test binary that crashed has no block: the end of the log says what happened.
           blocks = blocks or [("the end of the log", "\n".join(log.splitlines()[-80:]))]
-          for name, text in blocks[:10]:
-              text = text[-6000:].replace("%", "%25").replace("\r", "").replace("\n", "%0A")
+          # Short annotations of printable text: GitHub drops long ones.
+          chunks = []
+          for name, text in blocks[:3]:
+              text = "".join(c for c in text if c == "\n" or c.isprintable())[-6000:]
+              lines = text.splitlines()
+              for i in range(0, len(lines), 12):
+                  chunks.append((name, "\n".join(lines[i:i + 12])))
+          for name, text in chunks[:10]:
+              text = text.replace("%", "%25").replace("\r", "").replace("\n", "%0A")
+              name = re.sub(r"[^A-Za-z0-9_ ]", "_", name)
               print(f"::error title={name}::{text}")
           EOF
 
