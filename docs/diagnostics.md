@@ -58,6 +58,9 @@ list matches it.
 | E1007 | missing fields |
 | E1008 | not a value |
 | E1009 | cannot assign |
+| E1010 | unknown module |
+| E1011 | private item |
+| E1012 | import cycle |
 | E2001 | mismatched types |
 | E2002 | wrong number of arguments |
 | E2003 | not a function |

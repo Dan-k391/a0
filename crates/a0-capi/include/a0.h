@@ -304,7 +304,8 @@ A0HirLocal a0_hir_new_local(A0HirBuilder *b, A0HirBody body, const char *name, s
                             A0HirType type);
 /* The body's code: an expression, usually a block. */
 void a0_hir_set_root(A0HirBuilder *b, A0HirBody body, A0HirExpr root);
-/* The item a type or value name refers to, with its kind in *kind; A0_NONE if there is none. */
+/* The item a type or value name visible in the current module refers to, with its kind in *kind;
+ * A0_NONE if there is none. */
 uint32_t a0_hir_lookup_type(A0HirBuilder *b, const char *name, size_t len, uint32_t *kind);
 uint32_t a0_hir_lookup_value(A0HirBuilder *b, const char *name, size_t len, uint32_t *kind);
 
@@ -412,6 +413,28 @@ A0HirExpr a0_hir_variant_named(A0HirBuilder *b, A0HirEnum e, const char *name, s
 void a0_hir_report(A0HirBuilder *b, const char *message, size_t len);
 /* Stands in for an expression that could not be built; causes no further errors. */
 A0HirExpr a0_hir_error_expr(A0HirBuilder *b);
+
+/* Modules (docs/hir.md, "Modules"). Items declared before the first module are the prelude, seen
+ * by every module; the root module's items keep their names, another's are `module.item`. */
+uint32_t a0_hir_begin_module(A0HirBuilder *b, const char *name, size_t len, int root);
+/* Whether the declarations that follow can be used from other modules (default true). */
+void a0_hir_set_public(A0HirBuilder *b, int is_public);
+/* Lets the current module use the public items of module `name` as `alias.item`. */
+void a0_hir_import_module(A0HirBuilder *b, const char *name, size_t len, const char *alias,
+                          size_t alias_len);
+/* Lets the current module use one public item of `module` by its name. */
+void a0_hir_import_item(A0HirBuilder *b, const char *module, size_t module_len, const char *name,
+                        size_t len);
+int a0_hir_is_module(A0HirBuilder *b, const char *alias, size_t len);
+/* `alias.name`, `alias.name(args)` and the type `alias.name<args>`; problems are reported. */
+A0HirExpr a0_hir_member(A0HirBuilder *b, const char *alias, size_t alias_len, const char *name,
+                        size_t len);
+A0HirExpr a0_hir_call_member(A0HirBuilder *b, const char *alias, size_t alias_len,
+                             const char *name, size_t len, const A0HirExpr *args,
+                             size_t arg_count);
+A0HirType a0_hir_member_type(A0HirBuilder *b, const char *alias, size_t alias_len,
+                             const char *name, size_t len, const A0HirType *args,
+                             size_t arg_count);
 
 #ifdef __cplusplus
 }

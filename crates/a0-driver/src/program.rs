@@ -1,0 +1,264 @@
+//! Programs of several files, for languages with modules ([`crate::Modules`]).
+//!
+//! The root file's imports (found with the grammar's `@import` annotations) are loaded, theirs in
+//! turn, and every file is compiled in dependency order into one HIR builder, each into a module of
+//! its own: the root file's names stay as they are, and another file's are `module.item`. A module
+//! name is resolved from the root file's directory (`text.json` is `text/json.<ext>` there); a
+//! string path from the importing file's. Imports may not form a cycle.
+
+use std::collections::HashMap;
+use std::path::{Component, Path, PathBuf};
+
+use a0_diag::codes as code;
+use a0_diag::{Diagnostic, Diagnostics, SourceId, SourceMap};
+use a0_hir::{HirBuilder, HirModule};
+use a0_syntax::{Grammar, Import, SyntaxTree};
+
+use crate::Modules;
+
+/// One file of a program.
+pub struct ProgramFile {
+    /// Absolute, without `.` and `..`.
+    pub path: PathBuf,
+    pub source: SourceId,
+    /// The module's name: the path from the root file's directory, with `.` between segments.
+    pub module: String,
+    pub tree: SyntaxTree,
+    /// Its imports, each with the index of the file it imports.
+    pub imports: Vec<(Import, usize)>,
+}
+
+/// The files of a program, in the order they are compiled: every file after the files it imports,
+/// so the root file last.
+pub struct Program {
+    pub files: Vec<ProgramFile>,
+}
+
+/// `path` made absolute, with `.` and `..` resolved without looking at the file system (so files
+/// that only exist in an editor resolve too).
+pub fn normalize(path: &Path) -> PathBuf {
+    let absolute = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
+    let mut out = PathBuf::new();
+    for c in absolute.components() {
+        match c {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                out.pop();
+            }
+            other => out.push(other),
+        }
+    }
+    out
+}
+
+/// Loads the program whose root file is `root` (as written by the user, which is how diagnostics
+/// name it; other files are named relative to it). `read` gives a file's text, or `None` if it
+/// cannot be read. Syntax errors in any file, missing modules and import cycles are reported.
+pub fn load(
+    grammar: &Grammar,
+    modules: &Modules,
+    root: &str,
+    read: &mut dyn FnMut(&Path) -> Option<String>,
+    sources: &mut SourceMap,
+) -> Result<Program, Diagnostics> {
+    let root_path = normalize(Path::new(root));
+    let root_dir = root_path
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_default();
+    let shown_dir = Path::new(root)
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_default();
+    let mut diags = Diagnostics::new();
+    let Some(text) = read(&root_path) else {
+        diags.error("io", &format!("cannot read {root}"), None);
+        return Err(diags);
+    };
+    // Every file found so far, by index: its path, its name in diagnostics and its text.
+    let mut found: Vec<(PathBuf, String, String)> = vec![(root_path, root.to_string(), text)];
+    let mut by_path: HashMap<PathBuf, usize> = HashMap::new();
+    by_path.insert(found[0].0.clone(), 0);
+    let mut files: Vec<ProgramFile> = Vec::new();
+    while files.len() < found.len() {
+        let index = files.len();
+        let (path, shown, text) = found[index].clone();
+        let source = sources.add(&shown, &text);
+        let (tree, parse) = grammar.parse(&text, source);
+        diags.extend(parse);
+        let dir = path.parent().map(Path::to_path_buf).unwrap_or_default();
+        let shown_base = Path::new(&shown)
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_default();
+        let mut imports = Vec::new();
+        for import in a0_syntax::imports(grammar, &tree) {
+            let (target, shown_target) = if import.literal {
+                let rel = Path::new(&import.file);
+                (normalize(&dir.join(rel)), display(&shown_base.join(rel)))
+            } else {
+                let rel = format!("{}.{}", import.file, modules.extension);
+                (
+                    normalize(&root_dir.join(&rel)),
+                    display(&shown_dir.join(&rel)),
+                )
+            };
+            if let Some(&known) = by_path.get(&target) {
+                imports.push((import, known));
+                continue;
+            }
+            match read(&target) {
+                Some(text) => {
+                    by_path.insert(target.clone(), found.len());
+                    imports.push((import, found.len()));
+                    found.push((target, shown_target, text));
+                }
+                None => diags.push(
+                    Diagnostic::error(
+                        code::UNKNOWN_MODULE,
+                        &format!("cannot find module `{}`", import.module),
+                    )
+                    .with_span(import.path_span)
+                    .with_primary_label("no file for this module")
+                    .with_note(&format!("looked for {shown_target}")),
+                ),
+            }
+        }
+        let module = module_name(&root_dir, &path, index);
+        files.push(ProgramFile {
+            path,
+            source,
+            module,
+            tree,
+            imports,
+        });
+    }
+    if diags.has_errors() {
+        return Err(diags);
+    }
+    let order = dependency_order(&files)?;
+    let new_index: HashMap<usize, usize> = order
+        .iter()
+        .enumerate()
+        .map(|(new, &old)| (old, new))
+        .collect();
+    let mut slots: Vec<Option<ProgramFile>> = files.into_iter().map(Some).collect();
+    let mut sorted = Vec::new();
+    for old in order {
+        let mut f = slots[old].take().unwrap();
+        for (_, target) in &mut f.imports {
+            *target = new_index[target];
+        }
+        sorted.push(f);
+    }
+    Ok(Program { files: sorted })
+}
+
+/// The name of the module in `path`: its path from `root_dir` without the extension, segments
+/// joined with `.`; a file outside the root directory is named after its stem, made unique.
+fn module_name(root_dir: &Path, path: &Path, index: usize) -> String {
+    let stem = path.with_extension("");
+    match stem.strip_prefix(root_dir) {
+        Ok(rel) => rel
+            .components()
+            .map(|c| c.as_os_str().to_string_lossy().into_owned())
+            .collect::<Vec<_>>()
+            .join("."),
+        Err(_) => format!(
+            "{}#{index}",
+            stem.file_name().unwrap_or_default().to_string_lossy()
+        ),
+    }
+}
+
+/// A path as diagnostics show it: with `/` on every system.
+fn display(p: &Path) -> String {
+    p.to_string_lossy().replace('\\', "/")
+}
+
+/// The files in compile order (each after what it imports), or the import cycle.
+fn dependency_order(files: &[ProgramFile]) -> Result<Vec<usize>, Diagnostics> {
+    #[derive(Clone, Copy, PartialEq)]
+    enum State {
+        New,
+        Open,
+        Done,
+    }
+    let mut state = vec![State::New; files.len()];
+    let mut order = Vec::new();
+    // (file, next import to look at)
+    let mut stack: Vec<(usize, usize)> = vec![(0, 0)];
+    state[0] = State::Open;
+    while let Some(&mut (f, ref mut next)) = stack.last_mut() {
+        let Some((import, target)) = files[f].imports.get(*next) else {
+            state[f] = State::Done;
+            order.push(f);
+            stack.pop();
+            continue;
+        };
+        *next += 1;
+        let target = *target;
+        match state[target] {
+            State::Done => {}
+            State::New => {
+                state[target] = State::Open;
+                stack.push((target, 0));
+            }
+            State::Open => {
+                // The files on the stack from `target` up import each other in a circle.
+                let start = stack.iter().position(|&(g, _)| g == target).unwrap();
+                let chain: Vec<&str> = stack[start..]
+                    .iter()
+                    .map(|&(g, _)| files[g].module.as_str())
+                    .chain([files[target].module.as_str()])
+                    .collect();
+                let mut d = Diagnostic::error(
+                    code::IMPORT_CYCLE,
+                    &format!("import cycle: {}", chain.join(" -> ")),
+                )
+                .with_span(import.path_span)
+                .with_primary_label("this import closes the cycle");
+                for &(g, i) in &stack[start..stack.len() - 1] {
+                    let (other, _) = &files[g].imports[i - 1];
+                    d = d.with_label(other.path_span, "imported here");
+                }
+                return Err(d.into());
+            }
+        }
+    }
+    Ok(order)
+}
+
+/// Compiles a loaded program into one HIR module.
+pub fn compile(program: &Program, modules: &Modules, name: &str) -> Result<HirModule, Diagnostics> {
+    let (m, diags) = analyze(program, modules, name);
+    if diags.has_errors() {
+        Err(diags)
+    } else {
+        Ok(m)
+    }
+}
+
+/// Compiles a loaded program, keeping the module even when it has errors (for the language
+/// server).
+pub fn analyze(program: &Program, modules: &Modules, name: &str) -> (HirModule, Diagnostics) {
+    let mut b = HirBuilder::new(name);
+    (modules.start)(&mut b);
+    let root = program.files.len() - 1;
+    for (i, file) in program.files.iter().enumerate() {
+        b.set_span(None);
+        b.begin_module(&file.module, i == root);
+        for (import, target) in &file.imports {
+            let module = &program.files[*target].module;
+            b.set_span(Some(import.span));
+            b.import_module(module, &import.alias);
+            for (item, span) in &import.names {
+                b.set_span(Some(*span));
+                b.import_item(module, item);
+            }
+        }
+        b.set_public(true);
+        (modules.compile)(&mut b, &file.tree);
+    }
+    b.finish_keeping()
+}

@@ -1,0 +1,4 @@
+// Modules may not import each other in a circle.
+import lib.back;
+
+fn main() {}

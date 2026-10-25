@@ -1,0 +1,9 @@
+// Another module's items are used through the name it is imported as, and only if they are public.
+import lib.counter;
+
+fn main() {
+  print(counter.next(1));
+  print(counter.step());
+  print(counter.nxt(2));
+  print(conter.next(3));
+}

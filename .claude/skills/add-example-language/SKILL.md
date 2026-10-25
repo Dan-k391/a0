@@ -40,7 +40,11 @@ output, and report errors with source locations.
    grammar text for the language server, and for a C runtime its host symbols and libraries) and
    `.main()`. The driver provides `run`, `build`, `ir`, `hir`, `lsp` and `explain`, renders
    diagnostics (`codes`: A0's, hidden, or the language's own) and maps failures to the exit codes. Do not write a driver by hand. Errors in the language's own format
-   (`CompileError::Messages`) carry spans so editors can place them.
+   (`CompileError::Messages`) carry spans so editors can place them. For programs of several
+   files, mark the import rule `@import` (`docs/grammar.md`), split `compile` into a `start` and a
+   per-file `compile_file` that declares with `set_public` and reaches other modules with
+   `member`/`call_member`/`member_type` (`docs/hir.md`, "Modules"), and set `modules` to an
+   `a0_driver::Modules`; the driver and the language server then load the imported files.
 6. `examples/foo/tests/` - programs with expected output, run both interpreted and as native
    executables (copy the harness in `examples/kaleidoscope/tests/kaleidoscope.rs`), plus
    diagnostic tests that check message text and `file:line:col`, `tests/diagnostics/` with

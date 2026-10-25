@@ -218,6 +218,8 @@ pub struct Grammar {
     /// Per kind: whether its nodes are `@scope`s, and what they declare (`@def`).
     pub(crate) scopes: Vec<bool>,
     pub(crate) definitions: Vec<Option<Definition>>,
+    /// Per kind: whether its nodes import a module (`@import`).
+    pub(crate) imports: Vec<bool>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -283,6 +285,11 @@ impl Grammar {
     /// What nodes of this kind declare (`@def`).
     pub fn definition(&self, kind: KindId) -> Option<Definition> {
         self.definitions.get(kind.0 as usize).copied().flatten()
+    }
+
+    /// Whether nodes of this kind import a module (`@import`).
+    pub fn is_import(&self, kind: KindId) -> bool {
+        self.imports.get(kind.0 as usize).copied().unwrap_or(false)
     }
 }
 
@@ -493,6 +500,7 @@ enum Item {
         recover: Option<(SyncTokens, SyncTokens)>,
         scope: bool,
         def: Option<DefAttr>,
+        import: bool,
         body: RuleBody,
     },
 }
@@ -638,11 +646,16 @@ impl DslParser {
         let mut recover = None;
         let mut scope = false;
         let mut def = None;
+        let mut import = false;
         while let Tok::Attr(a) = self.peek().clone() {
             match a.as_str() {
                 "inline" => {
                     self.bump();
                     inline = true;
+                }
+                "import" => {
+                    self.bump();
+                    import = true;
                 }
                 "scope" => {
                     self.bump();
@@ -703,6 +716,7 @@ impl DslParser {
             recover,
             scope,
             def,
+            import,
             body,
         })
     }
@@ -1029,14 +1043,15 @@ impl Builder {
                 recover,
                 scope,
                 def,
+                import,
                 body,
                 ..
             } = item
             else {
                 continue;
             };
-            if scope || def.is_some() {
-                annotations.push((rname.clone(), span, scope, def));
+            if scope || def.is_some() || import {
+                annotations.push((rname.clone(), span, scope, def, import));
             }
             let Some(&rid) = self.rule_map.get(&rname) else {
                 continue;
@@ -1064,7 +1079,7 @@ impl Builder {
         }
 
         self.validate(&rules);
-        let (scopes, definitions) = self.annotations(&rules, annotations);
+        let (scopes, definitions, imports) = self.annotations(&rules, annotations);
         if self.diags.has_errors() {
             return Err(self.diags);
         }
@@ -1108,28 +1123,42 @@ impl Builder {
             std_fields,
             scopes,
             definitions,
+            imports,
         })
     }
 
-    /// Checks `@scope` and `@def` and indexes them by node kind.
+    /// Checks `@scope`, `@def` and `@import` and indexes them by node kind.
+    #[allow(clippy::type_complexity)]
     fn annotations(
         &mut self,
         rules: &[Rule],
-        annotations: Vec<(String, Span, bool, Option<DefAttr>)>,
-    ) -> (Vec<bool>, Vec<Option<Definition>>) {
+        annotations: Vec<(String, Span, bool, Option<DefAttr>, bool)>,
+    ) -> (Vec<bool>, Vec<Option<Definition>>, Vec<bool>) {
         let mut scopes = vec![false; self.kinds.len()];
         let mut definitions = vec![None; self.kinds.len()];
-        for (rname, span, scope, def) in annotations {
+        let mut imports = vec![false; self.kinds.len()];
+        for (rname, span, scope, def, import) in annotations {
             let Some(kind) = self.rule_map.get(&rname).and_then(|&r| rules[r].kind) else {
                 self.error(
                     Some(span),
                     &format!(
-                        "'{rname}' is @inline, so it has no nodes to mark with @scope or @def"
+                        "'{rname}' is @inline, so it has no nodes to mark with @scope, @def or \
+                         @import"
                     ),
                 );
                 continue;
             };
             scopes[kind.0 as usize] = scope;
+            if import {
+                if self.field_map.contains_key("path") {
+                    imports[kind.0 as usize] = true;
+                } else {
+                    self.error(
+                        Some(span),
+                        "@import reads the module from a field called 'path', and there is none",
+                    );
+                }
+            }
             let Some(def) = def else { continue };
             let Some(symbol) = SymbolKind::from_name(&def.kind) else {
                 let names: Vec<&str> = SymbolKind::ALL.iter().map(|k| k.name()).collect();
@@ -1162,7 +1191,7 @@ impl Builder {
                 each: def.field.is_some(),
             });
         }
-        (scopes, definitions)
+        (scopes, definitions, imports)
     }
 
     fn pattern(&mut self, pat: &str, span: Span) -> Option<regex::Node> {

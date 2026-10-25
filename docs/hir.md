@@ -197,6 +197,28 @@ types in the language's syntax and `set_term` names its concepts; `set_name_span
 `set_param_span` say where names and parameters are, for fixes and related locations. Item names are free: one that is a HIR keyword
 (`map`) or not an identifier is written in backquotes in the text format.
 
+## Modules
+
+A program can have several files, each a module of one HIR module. A language opts in by giving the
+driver an `a0_driver::Modules` (its file extension, a `start` that sets up the builder, and a
+`compile` for one file) and marking its import rule `@import` in its grammar. The driver then loads
+the main file and everything it imports, rejects import cycles and missing files, and compiles the
+files in dependency order, each after `begin_module`, with its imports already in scope:
+
+- Module 0 is the prelude, everything declared before the first `begin_module`; every module sees
+  it. The main file's items keep their names (its `main` is the entry point); another module's are
+  `module.item` in the HIR, the IR and stack traces (`text.json.parse`).
+- `set_public(bool)` says whether the declarations that follow can be used from other modules (the
+  default is public; Minnow makes items private unless they are `pub`).
+- `import_module(name, alias)` lets the current module use `alias.item`; `import_item(module, name)`
+  imports one item by its name. The driver calls both from the `@import` rules.
+- By-name helpers (`name`, `call_named`, `named_type`, `lookup_type_name`) see the module's own
+  items, the items it imported by name and the prelude. `member`, `call_member`, `member_type` and
+  `member_item` reach `alias.item`; `is_module(alias)` tells a frontend that `alias.item` is not a
+  field access. A private item, an unknown one and an unknown module are reported (E1011, E1001
+  with a suggestion, E1010).
+- `finish_keeping` returns the module with its diagnostics even when it has errors, for tools.
+
 ## Text format
 
 The examples above are the text format. `print(parse(text))` is canonical and

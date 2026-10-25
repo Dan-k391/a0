@@ -187,14 +187,20 @@ impl HirBuilder {
 
     /// What a name in scope is, as in "a variable".
     fn kind_of_name(&self, name: &str) -> String {
+        if self.lookup_local(name).is_none()
+            && self.is_module(name)
+            && self.visible(name, false).is_none()
+        {
+            return "a module".to_string();
+        }
         let term = if self.lookup_local(name).is_some() {
             Term::Variable
         } else {
-            match self.m.lookup_value(name) {
+            match self.visible(name, false) {
                 Some(Item::Global(_)) => return "a global".to_string(),
                 Some(_) => Term::Function,
                 None if Builtin::from_name(name).is_some() => Term::Function,
-                None => match self.m.lookup_type(name) {
+                None => match self.visible(name, true) {
                     Some(Item::Struct(_)) => Term::Struct,
                     Some(Item::Enum(_)) => Term::Enum,
                     _ => return "a type".to_string(),
@@ -212,12 +218,18 @@ impl HirBuilder {
 
     /// The names a value can be referred to by here: locals (innermost first), globals and
     /// functions, and, for calls, C functions and builtins.
-    fn value_candidates(&self, calls: bool) -> Vec<&str> {
-        let mut out = self.names.visible_names();
-        for (name, item) in &self.m.value_names {
-            let ok = match item {
-                Item::Global(_) | Item::Func(_) => true,
-                Item::Extern(_) => calls,
+    fn value_candidates(&self, calls: bool, globals_only: bool) -> Vec<String> {
+        let mut out: Vec<String> = self
+            .names
+            .visible_names()
+            .into_iter()
+            .map(str::to_string)
+            .collect();
+        for name in self.visible_names(false) {
+            let ok = match self.visible(&name, false) {
+                Some(Item::Global(_)) => true,
+                Some(Item::Func(_)) => !globals_only,
+                Some(Item::Extern(_)) => calls,
                 _ => false,
             };
             if ok {
@@ -225,11 +237,15 @@ impl HirBuilder {
             }
         }
         if calls {
-            out.extend(BUILTINS.iter().copied());
+            out.extend(BUILTINS.iter().map(|b| b.to_string()));
         }
-        // Items come from a map; sort them so that suggestions do not depend on its order.
-        let locals = self.names.visible_names().len();
-        out[locals..].sort_unstable();
+        // A misspelled module before `.`: the frontend took it for a value.
+        out.extend(
+            self.m.modules[self.module.index()]
+                .imports
+                .iter()
+                .map(|(alias, ..)| alias.clone()),
+        );
         out
     }
 
@@ -244,7 +260,7 @@ impl HirBuilder {
         if let Some(l) = self.lookup_local(name) {
             return self.local(l);
         }
-        match self.m.lookup_value(name) {
+        match self.visible(name, false) {
             Some(Item::Global(g)) => self.global(g),
             Some(Item::Func(f)) => self.func(f),
             Some(Item::Extern(_)) => {
@@ -261,11 +277,7 @@ impl HirBuilder {
                 self.error_expr()
             }
             _ => {
-                let candidates: Vec<String> = self
-                    .value_candidates(false)
-                    .into_iter()
-                    .map(str::to_string)
-                    .collect();
+                let candidates = self.value_candidates(false, false);
                 let candidates: Vec<&str> = candidates.iter().map(String::as_str).collect();
                 self.unknown(code::UNKNOWN_NAME, "name", name, &candidates);
                 self.error_expr()
@@ -280,7 +292,7 @@ impl HirBuilder {
             let c = self.local(l);
             return self.call_value(c, args);
         }
-        match self.m.lookup_value(name) {
+        match self.visible(name, false) {
             Some(Item::Func(f)) => self.call(f, args),
             Some(Item::Extern(x)) => self.call_extern(x, args),
             Some(Item::Global(g)) => {
@@ -290,11 +302,7 @@ impl HirBuilder {
             _ => match Builtin::from_name(name) {
                 Some(op) => self.builtin(op, args),
                 None => {
-                    let candidates: Vec<String> = self
-                        .value_candidates(true)
-                        .into_iter()
-                        .map(str::to_string)
-                        .collect();
+                    let candidates = self.value_candidates(true, false);
                     let candidates: Vec<&str> = candidates.iter().map(String::as_str).collect();
                     let what = self.m.term(Term::Function);
                     self.unknown(code::UNKNOWN_NAME, &what, name, &candidates);
@@ -309,7 +317,7 @@ impl HirBuilder {
         if let Some(l) = self.lookup_local(name) {
             return self.set_local(l, value);
         }
-        match self.m.lookup_value(name) {
+        match self.visible(name, false) {
             Some(Item::Global(g)) => self.set_global(g, value),
             Some(Item::Func(f)) => {
                 let function = self.m.term(Term::Function);
@@ -331,21 +339,7 @@ impl HirBuilder {
                 self.error_expr()
             }
             _ => {
-                let mut candidates: Vec<String> = self
-                    .names
-                    .visible_names()
-                    .into_iter()
-                    .map(str::to_string)
-                    .collect();
-                let mut globals: Vec<String> = self
-                    .m
-                    .value_names
-                    .iter()
-                    .filter(|(_, i)| matches!(i, Item::Global(_)))
-                    .map(|(n, _)| n.clone())
-                    .collect();
-                globals.sort_unstable();
-                candidates.extend(globals);
+                let candidates = self.value_candidates(false, true);
                 let candidates: Vec<&str> = candidates.iter().map(String::as_str).collect();
                 self.unknown(code::UNKNOWN_NAME, "name", name, &candidates);
                 self.error_expr()
@@ -384,20 +378,23 @@ impl HirBuilder {
         if let Some(t) = primitive {
             return t;
         }
-        let item = match self.m.lookup_type(name) {
+        let item = match self.visible(name, true) {
             Some(item) => item,
             None => {
                 let mut candidates: Vec<String> =
                     self.type_scope.iter().map(|(n, _)| n.clone()).collect();
-                let mut declared: Vec<String> = self.m.type_names.keys().cloned().collect();
-                declared.sort_unstable();
-                candidates.extend(declared);
+                candidates.extend(self.visible_names(true));
                 candidates.extend(["bool", "int", "float", "string", "any"].map(str::to_string));
                 let candidates: Vec<&str> = candidates.iter().map(String::as_str).collect();
                 self.unknown(code::UNKNOWN_TYPE, "type", name, &candidates);
                 return self.fresh_type();
             }
         };
+        self.instantiate_named(item, args)
+    }
+
+    /// The type of a struct or enum with type arguments (inferred ones if `args` is empty).
+    pub(crate) fn instantiate_named(&mut self, item: Item, args: &[TypeId]) -> TypeId {
         let args = if args.is_empty() {
             (0..self.m.type_params(item).len())
                 .map(|_| self.fresh_type())

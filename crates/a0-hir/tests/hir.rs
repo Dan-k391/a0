@@ -496,3 +496,69 @@ fn warnings_are_found_only_when_turned_on() {
     let errors = b.finish().unwrap_err();
     assert!(errors.as_slice().iter().all(|d| d.is_error()), "{errors:?}");
 }
+
+#[test]
+fn modules_have_their_own_names_and_hide_private_items() {
+    let mut b = HirBuilder::new("program");
+    // A library module with a public and a private function.
+    b.begin_module("lib", false);
+    let body = |b: &mut HirBuilder, f: FuncId, value: i64| {
+        let body = b.function_body(f);
+        let v = b.int(value);
+        b.set_root(body, v);
+    };
+    let public = b.declare_function("answer", &[], &[], TypeId::INT);
+    body(&mut b, public, 42);
+    b.set_public(false);
+    let private = b.declare_function("secret", &[], &[], TypeId::INT);
+    body(&mut b, private, 7);
+    // The root module imports it as `l` and declares a function of the same name as the private one.
+    b.begin_module("main", true);
+    b.import_module("lib", "l");
+    let own = b.declare_function("secret", &[], &[], TypeId::INT);
+    body(&mut b, own, 1);
+    let main = b.declare_function("main", &[], &[], TypeId::INT);
+    let mbody = b.function_body(main);
+    b.begin_body(mbody);
+    let answer = b.call_member("l", "answer", &[]);
+    let mine = b.call_named("secret", &[]);
+    let sum = b.binary(BinOp::Add, answer, mine);
+    b.end_body();
+    b.set_root(mbody, sum);
+    let m = b.finish().unwrap();
+    assert!(m.lookup_value("lib.answer").is_some() && m.lookup_value("secret").is_some());
+    assert_eq!(m.func_name(public), "lib.answer");
+
+    // Private items and unknown ones are reported.
+    let mut b = HirBuilder::new("program");
+    b.begin_module("lib", false);
+    b.set_public(false);
+    let hidden = b.declare_function("hidden", &[], &[], TypeId::INT);
+    body(&mut b, hidden, 0);
+    b.begin_module("main", true);
+    b.import_module("lib", "lib");
+    b.import_module("nowhere", "n");
+    let main = b.declare_function("main", &[], &[], TypeId::INT);
+    let mbody = b.function_body(main);
+    b.begin_body(mbody);
+    let a = b.call_member("lib", "hidden", &[]);
+    let c = b.call_member("lib", "hiden", &[]);
+    let sum = b.binary(BinOp::Add, a, c);
+    b.end_body();
+    b.set_root(mbody, sum);
+    let codes: Vec<String> = b
+        .finish()
+        .unwrap_err()
+        .as_slice()
+        .iter()
+        .map(|d| format!("{} {}", d.code, d.message))
+        .collect();
+    assert_eq!(
+        codes,
+        [
+            "E1010 unknown module `nowhere`",
+            "E1011 `hidden` is private to module `lib`",
+            "E1001 module `lib` has no public `hiden`",
+        ]
+    );
+}

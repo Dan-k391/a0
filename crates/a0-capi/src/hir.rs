@@ -806,7 +806,7 @@ pub unsafe extern "C" fn a0_hir_lookup_type(
     let name = unsafe { text(name, len) };
     unsafe {
         with(b, |h| {
-            let (k, id) = split_item(h.b.module().lookup_type(&name)?);
+            let (k, id) = split_item(h.b.lookup_type_name(&name)?);
             if !kind.is_null() {
                 *kind = k;
             }
@@ -825,7 +825,7 @@ pub unsafe extern "C" fn a0_hir_lookup_value(
     let name = unsafe { text(name, len) };
     unsafe {
         with(b, |h| {
-            let (k, id) = split_item(h.b.module().lookup_value(&name)?);
+            let (k, id) = split_item(h.b.lookup_value_name(&name)?);
             if !kind.is_null() {
                 *kind = k;
             }
@@ -1591,6 +1591,123 @@ pub unsafe extern "C" fn a0_hir_variant_named(
             let e = h.en(e)?;
             let args = h.es(items(args, count))?;
             Some(h.b.variant_named(e, &name, &args).0)
+        })
+    }
+}
+
+// ------------------------------------------------------------------------------------- modules
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn a0_hir_begin_module(
+    b: *mut A0HirBuilder,
+    name: *const c_char,
+    len: usize,
+    root: c_int,
+) -> u32 {
+    let name = unsafe { text(name, len) };
+    unsafe { with(b, |h| Some(h.b.begin_module(&name, root != 0).0)) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn a0_hir_set_public(b: *mut A0HirBuilder, public: c_int) {
+    unsafe {
+        with_unit(b, |h| {
+            h.b.set_public(public != 0);
+            Some(())
+        })
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn a0_hir_import_module(
+    b: *mut A0HirBuilder,
+    name: *const c_char,
+    len: usize,
+    alias: *const c_char,
+    alias_len: usize,
+) {
+    let (name, alias) = unsafe { (text(name, len), text(alias, alias_len)) };
+    unsafe {
+        with_unit(b, |h| {
+            h.b.import_module(&name, &alias);
+            Some(())
+        })
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn a0_hir_import_item(
+    b: *mut A0HirBuilder,
+    module: *const c_char,
+    module_len: usize,
+    name: *const c_char,
+    len: usize,
+) {
+    let (module, name) = unsafe { (text(module, module_len), text(name, len)) };
+    unsafe {
+        with_unit(b, |h| {
+            h.b.import_item(&module, &name);
+            Some(())
+        })
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn a0_hir_is_module(
+    b: *mut A0HirBuilder,
+    alias: *const c_char,
+    len: usize,
+) -> c_int {
+    let alias = unsafe { text(alias, len) };
+    unsafe { b.as_ref() }.is_some_and(|h| h.b.is_module(&alias)) as c_int
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn a0_hir_member(
+    b: *mut A0HirBuilder,
+    alias: *const c_char,
+    alias_len: usize,
+    name: *const c_char,
+    len: usize,
+) -> u32 {
+    let (alias, name) = unsafe { (text(alias, alias_len), text(name, len)) };
+    unsafe { with(b, |h| Some(h.b.member(&alias, &name).0)) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn a0_hir_call_member(
+    b: *mut A0HirBuilder,
+    alias: *const c_char,
+    alias_len: usize,
+    name: *const c_char,
+    len: usize,
+    args: *const u32,
+    count: usize,
+) -> u32 {
+    let (alias, name) = unsafe { (text(alias, alias_len), text(name, len)) };
+    unsafe {
+        with(b, |h| {
+            let args = h.es(items(args, count))?;
+            Some(h.b.call_member(&alias, &name, &args).0)
+        })
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn a0_hir_member_type(
+    b: *mut A0HirBuilder,
+    alias: *const c_char,
+    alias_len: usize,
+    name: *const c_char,
+    len: usize,
+    args: *const u32,
+    count: usize,
+) -> u32 {
+    let (alias, name) = unsafe { (text(alias, alias_len), text(name, len)) };
+    unsafe {
+        with(b, |h| {
+            let args = h.ts(items(args, count))?;
+            Some(h.b.member_type(&alias, &name, &args).0)
         })
     }
 }

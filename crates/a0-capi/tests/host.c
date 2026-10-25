@@ -389,6 +389,90 @@ static void boxes(void) {
     a0_module_free(m);
 }
 
+/* fn twice(x: int) -> int { x * 2 } in module `lib`, used from the root module as `lib.twice`;
+ * `lib.hidden`, which is private, is reported. */
+static void modules(void) {
+    A0HirBuilder *b = a0_hir_builder_new(A0_STR("modules"));
+    A0HirType int_t = a0_hir_named_type(b, A0_STR("int"), NULL, 0);
+    A0Str x_name[1] = {{A0_STR("x")}};
+    A0HirFunc f;
+    A0HirBody body;
+    A0HirExpr arg, call, stmts[1];
+    A0Diagnostics *d = NULL;
+    A0Hir *h;
+    A0Module *m;
+    int32_t status;
+    size_t len;
+    const char *message;
+
+    a0_hir_begin_module(b, A0_STR("lib"), 0);
+    f = a0_hir_declare_function(b, A0_STR("twice"), NULL, 0);
+    a0_hir_set_signature(b, f, x_name, &int_t, 1, int_t);
+    body = a0_hir_function_body(b, f);
+    a0_hir_begin_body(b, body);
+    a0_hir_set_root(b, body,
+                    a0_hir_binary(b, A0_STR("*"), a0_hir_name(b, A0_STR("x")), a0_hir_int(b, 2)));
+    a0_hir_end_body(b);
+    a0_hir_set_public(b, 0);
+    f = a0_hir_declare_function(b, A0_STR("hidden"), NULL, 0);
+    a0_hir_set_signature(b, f, NULL, NULL, 0, int_t);
+    body = a0_hir_function_body(b, f);
+    a0_hir_begin_body(b, body);
+    a0_hir_set_root(b, body, a0_hir_int(b, 1));
+    a0_hir_end_body(b);
+
+    a0_hir_begin_module(b, A0_STR("main"), 1);
+    a0_hir_import_module(b, A0_STR("lib"), A0_STR("lib"));
+    f = a0_hir_declare_function(b, A0_STR("main"), NULL, 0);
+    a0_hir_set_signature(b, f, NULL, NULL, 0, int_t);
+    body = a0_hir_function_body(b, f);
+    a0_hir_begin_body(b, body);
+    arg = a0_hir_int(b, 21);
+    call = a0_hir_call_member(b, A0_STR("lib"), A0_STR("twice"), &arg, 1);
+    stmts[0] = print_line(b, call);
+    a0_hir_set_root(b, body, a0_hir_block(b, stmts, 1, a0_hir_int(b, 0)));
+    a0_hir_end_body(b);
+    printf("modules: lib is a module: %d\n", a0_hir_is_module(b, A0_STR("lib")));
+    h = a0_hir_finish(b, &d);
+    check("building modules", d);
+    if (h == NULL) return;
+    m = a0_hir_lower(h, &d);
+    check("lowering modules", d);
+    a0_hir_free(h);
+    if (m == NULL) return;
+    fflush(stdout);
+    a0_run(m, NULL, 0, &status, &d);
+    check("running modules", d);
+    a0_module_free(m);
+
+    b = a0_hir_builder_new(A0_STR("private"));
+    int_t = a0_hir_named_type(b, A0_STR("int"), NULL, 0);
+    a0_hir_begin_module(b, A0_STR("lib"), 0);
+    a0_hir_set_public(b, 0);
+    f = a0_hir_declare_function(b, A0_STR("hidden"), NULL, 0);
+    a0_hir_set_signature(b, f, NULL, NULL, 0, int_t);
+    body = a0_hir_function_body(b, f);
+    a0_hir_begin_body(b, body);
+    a0_hir_set_root(b, body, a0_hir_int(b, 1));
+    a0_hir_end_body(b);
+    a0_hir_begin_module(b, A0_STR("main"), 1);
+    a0_hir_import_module(b, A0_STR("lib"), A0_STR("lib"));
+    f = a0_hir_declare_function(b, A0_STR("main"), NULL, 0);
+    a0_hir_set_signature(b, f, NULL, NULL, 0, int_t);
+    body = a0_hir_function_body(b, f);
+    a0_hir_begin_body(b, body);
+    a0_hir_set_root(b, body, a0_hir_call_member(b, A0_STR("lib"), A0_STR("hidden"), NULL, 0));
+    a0_hir_end_body(b);
+    if (a0_hir_finish(b, &d) != NULL || d == NULL) {
+        printf("a private item was not reported\n");
+        failures++;
+        return;
+    }
+    message = a0_diagnostics_message(d, 0, &len);
+    printf("modules: %.*s\n", (int)len, message);
+    a0_diagnostics_free(d);
+}
+
 /* Bad handles and calls out of order come back as diagnostics, not crashes. */
 static void hir_misuse(void) {
     A0HirBuilder *b = a0_hir_builder_new(A0_STR("bad"));
@@ -487,6 +571,7 @@ int main(void) {
         a0_grammar_free(g);
     }
     boxes();
+    modules();
     hir_misuse();
 
     printf("failures: %d\n", failures);

@@ -17,6 +17,7 @@ fn main() -> ExitCode {
         libraries: Some(|| vec![kaleidoscope::runtime_library()]),
         grammar: Some(kaleidoscope::GRAMMAR),
         codes: Codes::A0,
+        modules: None,
     }
     .main()
 }

@@ -54,6 +54,12 @@ codes! {
         "The name refers to something that can be called but not used as a value, such as a function written in C.";
     NOT_ASSIGNABLE = "E1009", "cannot assign",
         "Only variables, globals, fields and elements can be assigned; a function's name cannot.";
+    UNKNOWN_MODULE = "E1010", "unknown module",
+        "No module of this name is imported here, or no file holds it. A module is imported by the file that uses it, and its file is found from the module's name.";
+    PRIVATE = "E1011", "private item",
+        "The item belongs to another module and is not public there, so only that module can use it. Make it public in its module, or use something that is.";
+    IMPORT_CYCLE = "E1012", "import cycle",
+        "Modules import each other in a circle, so none of them can be compiled before the others. Move what they share into a module that both import.";
 
     MISMATCHED_TYPES = "E2001", "mismatched types",
         "A value has a different type than the place it is used requires. The message says which type was expected and which was found, and points at where the expectation comes from: a declared type, a parameter, a field or a function's result.";

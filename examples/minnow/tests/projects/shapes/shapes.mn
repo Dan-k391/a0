@@ -1,0 +1,15 @@
+import text.util;
+
+pub struct Point { x: int, y: int }
+pub enum Shape { Square(int), Dot }
+
+pub fn area(p: Point) -> int {
+  return util.twice(p.x * p.y) / 2;
+}
+
+pub fn describe(s: Shape) -> string {
+  return match s {
+    Square(n) => "square " + str(n),
+    Dot => "dot",
+  };
+}

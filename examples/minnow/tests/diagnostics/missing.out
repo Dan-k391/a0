@@ -1,0 +1,10 @@
+$ minnow run missing.mn
+--- stderr
+error[E1010]: cannot find module `lib.nothing`
+ --> missing.mn:2:8
+  |
+2 | import lib.nothing;
+  |        ^^^^^^^^^^^ no file for this module
+  |
+  = note: looked for lib/nothing.mn
+--- exit 1

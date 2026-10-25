@@ -190,3 +190,45 @@ fn warnings_are_diagnostics_too() {
     assert_eq!(d.get("code").as_str(), Some("W0001"));
     assert_eq!(start(d), (1, 6));
 }
+
+#[test]
+fn programs_of_several_files_are_analyzed_together() {
+    let dir = std::env::temp_dir().join(format!("minnow-lsp-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("util.mn"),
+        "pub fn twice(x: int) -> int {\n  return x * 2;\n}\n\npub fn broken() -> int {\n  return \"no\";\n}\n",
+    )
+    .unwrap();
+    let main = "import util;\n\nfn main() {\n  print(util.twice(21));\n}\n";
+    let uri = a0_driver::lsp::path_to_uri(&dir.join("main.mn"));
+    let minnow = Path::new(env!("CARGO_BIN_EXE_minnow"));
+    let messages = session(minnow, &uri, main, &[("textDocument/definition", 3, 14)]).unwrap();
+    std::fs::remove_dir_all(&dir).ok();
+    // The imported file's error is published for that file, and the main file has none.
+    let published: Vec<(&str, usize)> = messages
+        .iter()
+        .filter(|m| m.get("method").as_str() == Some("textDocument/publishDiagnostics"))
+        .map(|m| {
+            let p = m.get("params");
+            (
+                p.get("uri").as_str().unwrap(),
+                p.get("diagnostics").as_array().len(),
+            )
+        })
+        .collect();
+    assert!(published.contains(&(uri.as_str(), 0)), "{published:?}");
+    assert!(
+        published
+            .iter()
+            .any(|(u, n)| u.ends_with("/util.mn") && *n == 1),
+        "{published:?}"
+    );
+    // `util.twice` goes to the function in util.mn.
+    let target = &result(&messages, 1).as_array()[0];
+    assert!(
+        target.get("uri").as_str().unwrap().ends_with("/util.mn"),
+        "{target}"
+    );
+    assert_eq!(start(target), (0, 7));
+}

@@ -38,21 +38,17 @@ pub fn grammar() -> Grammar {
     }
 }
 
-/// Compiles a program to HIR. `source` is the id of `text` in the caller's source map.
+/// Compiles a one-file program to HIR. `source` is the id of `text` in the caller's source map.
+/// Programs of several files go through the driver, which calls [`start`] and [`compile_file`].
 pub fn compile(text: &str, source: SourceId) -> Result<HirModule, Diagnostics> {
     let (tree, diags) = grammar().parse(text, source);
     if diags.has_errors() {
         return Err(diags);
     }
-    let mut c = Compiler {
-        tree: &tree,
-        b: HirBuilder::new("minnow"),
-    };
-    c.b.set_type_syntax(TypeTag::Array, "[{}]");
-    c.b.enable_warning(Warning::UnusedVariable);
-    c.b.enable_warning(Warning::UnreachableCode);
-    c.program();
-    let m = c.b.finish()?;
+    let mut b = HirBuilder::new("minnow");
+    start(&mut b);
+    compile_file(&mut b, &tree);
+    let m = b.finish()?;
     let entry = a0_hir::check_entry(&m);
     if entry.has_errors() {
         Err(entry)
@@ -61,9 +57,21 @@ pub fn compile(text: &str, source: SourceId) -> Result<HirModule, Diagnostics> {
     }
 }
 
+/// Sets up a builder for a Minnow program: how types are written, and the warnings.
+pub fn start(b: &mut HirBuilder) {
+    b.set_type_syntax(TypeTag::Array, "[{}]");
+    b.enable_warning(Warning::UnusedVariable);
+    b.enable_warning(Warning::UnreachableCode);
+}
+
+/// Compiles one file of a program into the builder's current module.
+pub fn compile_file(b: &mut HirBuilder, tree: &SyntaxTree) {
+    Compiler { tree, b }.program();
+}
+
 struct Compiler<'a> {
     tree: &'a SyntaxTree,
-    b: HirBuilder,
+    b: &'a mut HirBuilder,
 }
 
 impl<'a> Compiler<'a> {
@@ -123,12 +131,19 @@ impl<'a> Compiler<'a> {
     // ---------------------------------------------------------------- items
 
     fn program(&mut self) {
-        let items = self.tree.nodes(self.tree.root());
+        // Imports are the driver's business: it puts the modules in scope.
+        let items: Vec<NodeId> = self
+            .tree
+            .nodes(self.tree.root())
+            .into_iter()
+            .filter(|&i| self.kind(i) != "import_decl")
+            .collect();
         // Types first, so that declarations can use them in any order.
         for &item in &items {
             let name = self.text(self.field(item, "name"));
             let params = self.type_params(item);
             self.at_name(item);
+            self.b.set_public(self.opt(item, "pub").is_some());
             match self.kind(item) {
                 "struct_decl" => drop(self.b.declare_generic_struct(name, &params)),
                 "enum_decl" => drop(self.b.declare_generic_enum(name, &params)),
@@ -138,7 +153,8 @@ impl<'a> Compiler<'a> {
         let mut funcs = Vec::new();
         for &item in &items {
             let name = self.text(self.field(item, "name"));
-            match (self.kind(item), self.b.module().lookup_type(name)) {
+            self.b.set_public(self.opt(item, "pub").is_some());
+            match (self.kind(item), self.b.lookup_type_name(name)) {
                 ("struct_decl", Some(Item::Struct(s))) => {
                     self.b.bind_type_params(Item::Struct(s));
                     for f in self.tree.nodes_of_kind(item, "field") {
@@ -245,8 +261,11 @@ impl<'a> Compiler<'a> {
                     .map(|a| self.ty(a))
                     .collect();
                 self.at(base);
-                self.b
-                    .named_type(self.text(self.field(base, "name")), &args)
+                let name = self.text(self.field(base, "name"));
+                match self.opt(base, "module") {
+                    Some(m) => self.b.member_type(self.text(m), name, &args),
+                    None => self.b.named_type(name, &args),
+                }
             }
         };
         if self.opt(node, "nullable").is_none() {
@@ -496,8 +515,12 @@ impl<'a> Compiler<'a> {
             }
             "call" => self.call(node),
             "get" => {
-                let o = sub(self, "operand");
                 let name = self.field(node, "name");
+                if let Some(alias) = self.module_alias(self.field(node, "operand")) {
+                    self.at(name);
+                    return self.b.member(alias, self.text(name));
+                }
+                let o = sub(self, "operand");
                 self.at(name);
                 self.b.field_named(o, self.text(name))
             }
@@ -511,7 +534,18 @@ impl<'a> Compiler<'a> {
                 self.at(node);
                 let enum_node = self.field(node, "enum");
                 let ename = self.text(enum_node);
-                match self.b.module().lookup_type(ename) {
+                let found = match self.opt(node, "module") {
+                    Some(m) => {
+                        self.at(enum_node);
+                        let item = self.b.member_item(self.text(m), ename, true);
+                        if item.is_none() {
+                            return self.b.error_expr();
+                        }
+                        item
+                    }
+                    None => self.b.lookup_type_name(ename),
+                };
+                match found {
                     Some(Item::Enum(e)) => {
                         let name = self.field(node, "name");
                         self.b.set_name_span(Some(self.tree.span(name)));
@@ -583,7 +617,18 @@ impl<'a> Compiler<'a> {
         self.at(node);
         let name = self.field(node, "name");
         let sname = self.text(name);
-        match self.b.module().lookup_type(sname) {
+        let found = match self.opt(node, "module") {
+            Some(m) => {
+                self.at(name);
+                let item = self.b.member_item(self.text(m), sname, true);
+                if item.is_none() {
+                    return self.b.error_expr();
+                }
+                item
+            }
+            None => self.b.lookup_type_name(sname),
+        };
+        match found {
             Some(Item::Struct(s)) => self.b.new_struct_named(s, &names, &values),
             Some(_) => {
                 self.at(name);
@@ -599,9 +644,28 @@ impl<'a> Compiler<'a> {
         }
     }
 
+    /// The module alias `n` names, if it is a name that is an imported module (and not a local).
+    fn module_alias(&self, n: NodeId) -> Option<&'a str> {
+        let n = self.unwrap_primary(n);
+        let text = self.text(n);
+        (self.kind(n) == "name_expr"
+            && self.b.lookup_local(text).is_none()
+            && self.b.is_module(text))
+        .then_some(text)
+    }
+
     fn call(&mut self, node: NodeId) -> ExprId {
         let callee = self.unwrap_primary(self.field(node, "operand"));
         let args = self.args(node);
+        // `json.parse(text)`: a function of an imported module.
+        if self.kind(callee) == "get"
+            && let Some(alias) = self.module_alias(self.field(callee, "operand"))
+        {
+            let name = self.field(callee, "name");
+            self.at(node);
+            self.b.set_name_span(Some(self.tree.span(name)));
+            return self.b.call_member(alias, self.text(name), &args);
+        }
         if self.kind(callee) != "name_expr" {
             let c = self.expr(callee);
             self.at(node);

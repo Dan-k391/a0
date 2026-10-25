@@ -24,6 +24,7 @@
 
 pub mod json;
 pub mod lsp;
+pub mod program;
 pub mod snapshots;
 
 use std::io::{BufRead, Write};
@@ -64,6 +65,20 @@ impl Message {
             span,
         }
     }
+}
+
+/// How a language with modules compiles a program of several files (`program.rs`): the root file
+/// and the files it imports (through the grammar's `@import` rules), each into a module of one HIR
+/// builder.
+#[derive(Clone, Copy)]
+pub struct Modules {
+    /// The extension of its source files, without the dot (`"mn"`).
+    pub extension: &'static str,
+    /// Prepares the builder before any file is compiled (type syntax, terms, warnings).
+    pub start: fn(&mut a0_hir::HirBuilder),
+    /// Compiles one file into the builder's current module; its imports are already in scope.
+    /// Reports problems through the builder.
+    pub compile: fn(&mut a0_hir::HirBuilder, &a0_syntax::SyntaxTree),
 }
 
 /// How the driver shows the codes of diagnostics.
@@ -145,6 +160,9 @@ pub struct Language {
     pub grammar: Option<&'static str>,
     /// How error codes are shown.
     pub codes: Codes,
+    /// For a language whose programs have several files: how to compile them. `compile` is then
+    /// only used for single files given by text (the C API, tests).
+    pub modules: Option<Modules>,
 }
 
 /// A parsed command line.
@@ -220,8 +238,14 @@ impl Language {
             }
         };
         let mut sources = SourceMap::new();
-        let id = sources.add(&inv.file, &text);
-        let program = match (self.compile)(&text, id) {
+        let compiled = match self.modules {
+            Some(modules) => self.compile_program(&modules, &inv.file, &text, &mut sources),
+            None => {
+                let id = sources.add(&inv.file, &text);
+                (self.compile)(&text, id)
+            }
+        };
+        let program = match compiled {
             Ok(p) => p,
             Err(CompileError::Diagnostics(d)) => {
                 let d = self.codes.apply(&d);
@@ -298,6 +322,44 @@ impl Language {
             }
             Command::Hir | Command::Lsp | Command::Explain => unreachable!("handled above"),
         }
+    }
+
+    /// Compiles the program whose root file is `root` (with text `text`), loading the files it
+    /// imports from disk, and checks its entry point.
+    fn compile_program(
+        &self,
+        modules: &Modules,
+        root: &str,
+        text: &str,
+        sources: &mut SourceMap,
+    ) -> Result<Program, CompileError> {
+        let Some(grammar) = self
+            .grammar
+            .map(|g| a0_syntax::Grammar::from_str(g, SourceId(u32::MAX)))
+        else {
+            panic!("{}: a language with modules needs its grammar", self.name);
+        };
+        let grammar = grammar.unwrap_or_else(|d| panic!("{}: {}", self.name, d.summary()));
+        let root_path = program::normalize(Path::new(root));
+        let mut read = |p: &Path| {
+            if *p == root_path {
+                Some(text.to_string())
+            } else {
+                std::fs::read_to_string(p).ok()
+            }
+        };
+        let loaded = program::load(&grammar, modules, root, &mut read, sources)
+            .map_err(CompileError::Diagnostics)?;
+        let name = Path::new(root)
+            .file_stem()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let m = program::compile(&loaded, modules, &name).map_err(CompileError::Diagnostics)?;
+        let entry = a0_hir::check_entry(&m);
+        if entry.has_errors() {
+            return Err(CompileError::Diagnostics(entry));
+        }
+        Ok(Program::Hir(m))
     }
 
     /// Serves the Language Server Protocol until the client exits or the input ends; returns the
@@ -389,6 +451,7 @@ mod tests {
             libraries: None,
             grammar: None,
             codes: Codes::A0,
+            modules: None,
         }
     }
 

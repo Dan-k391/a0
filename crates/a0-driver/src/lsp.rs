@@ -10,13 +10,14 @@
 use std::collections::HashMap;
 use std::io::{self, BufRead, Write};
 use std::panic::{AssertUnwindSafe, catch_unwind};
+use std::path::{Path, PathBuf};
 
 use a0_diag::{Diagnostic, Fix, Severity, SourceId, SourceMap, Span};
 use a0_hir::{HirModule, Item};
 use a0_syntax::{Grammar, SymbolKind, SyntaxIndex, TokenClass};
 
 use crate::json::Json;
-use crate::{CompileError, Language, Program};
+use crate::{CompileError, Language, Program, program};
 
 /// Semantic token types, in the order of the legend sent to the client.
 const TOKEN_TYPES: [&str; 17] = [
@@ -141,12 +142,17 @@ struct Document {
     /// The suggested fixes of its diagnostics: the diagnostic's range (byte offsets), the
     /// diagnostic as published, and the fix.
     fixes: Vec<(u32, u32, Json, Fix)>,
+    /// The texts of the program's files and their URIs (the document's own is `source`).
+    sources: SourceMap,
+    files: Vec<(SourceId, String)>,
 }
 
 struct Server<'a> {
     lang: &'a Language,
     grammar: Option<Grammar>,
     docs: HashMap<String, Document>,
+    /// Per document: the other files its program's last analysis published diagnostics for.
+    reported: HashMap<String, Vec<String>>,
     out: &'a mut dyn Write,
 }
 
@@ -166,6 +172,7 @@ pub(crate) fn serve(lang: &Language, input: &mut dyn BufRead, output: &mut dyn W
         lang,
         grammar,
         docs: HashMap::new(),
+        reported: HashMap::new(),
         out: output,
     };
     let mut shut_down = false;
@@ -449,30 +456,89 @@ impl Server<'_> {
         Some((doc, offset))
     }
 
-    /// Analyzes a new version of a document and publishes its diagnostics.
+    /// Analyzes a new version of a document and publishes its diagnostics. For a language with
+    /// modules the document is the root of a program: the files it imports are read from open
+    /// documents or from disk, and their diagnostics are published too.
     fn update(&mut self, uri: &str, text: String) {
         let mut sources = SourceMap::new();
-        let source = sources.add(uri, &text);
+        let source = SourceId(0);
+        let mut files: Vec<(SourceId, String)> = Vec::new();
+        // What is known about a program with errors still helps (types, definitions).
+        let mut partial: Option<HirModule> = None;
+        // A compiler bug must not take the editor's language support down with it.
+        let compiled = match (self.lang.modules, self.grammar.as_ref(), uri_to_path(uri)) {
+            (Some(modules), Some(grammar), Some(path)) => {
+                let open: HashMap<PathBuf, String> = self
+                    .docs
+                    .iter()
+                    .filter_map(|(u, d)| {
+                        Some((program::normalize(&uri_to_path(u)?), d.text.clone()))
+                    })
+                    .collect();
+                let root = program::normalize(&path);
+                let mut read = |p: &Path| {
+                    if *p == root {
+                        Some(text.clone())
+                    } else {
+                        open.get(p)
+                            .cloned()
+                            .or_else(|| std::fs::read_to_string(p).ok())
+                    }
+                };
+                let root_name = path.to_string_lossy().into_owned();
+                catch_unwind(AssertUnwindSafe(|| -> Result<Program, CompileError> {
+                    let loaded =
+                        program::load(grammar, &modules, &root_name, &mut read, &mut sources)
+                            .map_err(CompileError::Diagnostics)?;
+                    files = loaded
+                        .files
+                        .iter()
+                        .map(|f| (f.source, path_to_uri(&f.path)))
+                        .collect();
+                    let (m, diags) = program::analyze(&loaded, &modules, self.lang.name);
+                    if diags.has_errors() {
+                        partial = Some(m);
+                        return Err(CompileError::Diagnostics(diags));
+                    }
+                    Ok(Program::Hir(m))
+                }))
+            }
+            _ => {
+                sources.add(uri, &text);
+                let compile = self.lang.compile;
+                catch_unwind(AssertUnwindSafe(|| compile(&text, source)))
+            }
+        };
+        if sources.is_empty() {
+            sources.add(uri, &text);
+        }
+        if !files.iter().any(|(id, _)| *id == source) {
+            files.push((source, uri.to_string()));
+        }
         let lines = Lines::new(&text);
         let index = self.grammar.as_ref().map(|g| {
             let (tree, _) = g.parse(&text, source);
             SyntaxIndex::new(g, &tree)
         });
-        let compile = self.lang.compile;
-        // A compiler bug must not take the editor's language support down with it.
-        let compiled = catch_unwind(AssertUnwindSafe(|| compile(&text, source)));
-        let mut diagnostics = Vec::new();
+        // Per file of the program: its diagnostics.
+        let mut published: HashMap<String, Vec<Json>> = HashMap::new();
+        published.insert(uri.to_string(), Vec::new());
         let mut fixes = Vec::new();
-        let mut hir = None;
-        let diagnostic = |span: Option<(u32, u32)>, severity: u32, message: &str| {
-            let (start, end) = span.unwrap_or((0, 0));
+        let mut hir;
+        let file_of = |id: SourceId| files.iter().find(|(s, _)| *s == id).map(|(_, u)| u.clone());
+        let range_of = |id: SourceId, start: u32, end: u32| {
+            let text = sources.text(id);
+            Lines::new(text).range(text, start, end)
+        };
+        let diagnostic = |range: Json, severity: u32, message: &str| {
             Json::object([
-                ("range", lines.range(&text, start, end)),
+                ("range", range),
                 ("severity", severity.into()),
                 ("source", self.lang.name.into()),
                 ("message", message.into()),
             ])
         };
+        hir = partial;
         let (ds, messages) = match compiled {
             Ok(Ok(Program::Hir(m))) => {
                 let warnings = m.warnings().clone();
@@ -485,57 +551,65 @@ impl Server<'_> {
             Err(panic) => (None, Some(Err(panic))),
         };
         if let Some(ds) = ds {
-            {
-                for d in self.lang.codes.apply(&ds).as_slice() {
-                    let span = match d.span {
-                        Some(s) if s.source == source => Some((s.start, s.end)),
-                        Some(_) => continue,
-                        None => None,
-                    };
-                    let severity = match d.severity {
-                        Severity::Error => 1,
-                        Severity::Warning => 2,
-                        Severity::Note => 3,
-                    };
-                    let mut json = diagnostic(span, severity, &full_message(d));
-                    if let Json::Object(fields) = &mut json {
-                        if !d.code.is_empty() {
-                            fields.push(("code".to_string(), d.code.as_str().into()));
-                        }
-                        let related: Vec<Json> = d
-                            .labels
-                            .iter()
-                            .filter(|l| l.span.source == source)
-                            .map(|l| {
-                                let range = lines.range(&text, l.span.start, l.span.end);
-                                Json::object([
-                                    (
-                                        "location",
-                                        Json::object([("uri", uri.into()), ("range", range)]),
-                                    ),
-                                    ("message", l.message.as_str().into()),
-                                ])
-                            })
-                            .collect();
-                        if !related.is_empty() {
-                            fields.push(("relatedInformation".to_string(), related.into()));
-                        }
+            for d in self.lang.codes.apply(&ds).as_slice() {
+                let (file, span) = match d.span {
+                    Some(s) => match file_of(s.source) {
+                        Some(f) => (f, Some(s)),
+                        None => continue,
+                    },
+                    None => (uri.to_string(), None),
+                };
+                let severity = match d.severity {
+                    Severity::Error => 1,
+                    Severity::Warning => 2,
+                    Severity::Note => 3,
+                };
+                let range = match span {
+                    Some(s) => range_of(s.source, s.start, s.end),
+                    None => lines.range(&text, 0, 0),
+                };
+                let mut json = diagnostic(range, severity, &full_message(d));
+                if let Json::Object(fields) = &mut json {
+                    if !d.code.is_empty() {
+                        fields.push(("code".to_string(), d.code.as_str().into()));
                     }
-                    let (start, end) = span.unwrap_or((0, 0));
+                    let related: Vec<Json> = d
+                        .labels
+                        .iter()
+                        .filter_map(|l| {
+                            let file = file_of(l.span.source)?;
+                            let range = range_of(l.span.source, l.span.start, l.span.end);
+                            Some(Json::object([
+                                (
+                                    "location",
+                                    Json::object([("uri", file.into()), ("range", range)]),
+                                ),
+                                ("message", l.message.as_str().into()),
+                            ]))
+                        })
+                        .collect();
+                    if !related.is_empty() {
+                        fields.push(("relatedInformation".to_string(), related.into()));
+                    }
+                }
+                if span.is_none_or(|s| s.source == source) {
+                    let (start, end) = span.map_or((0, 0), |s| (s.start, s.end));
                     for fix in &d.fixes {
                         if fix.edits.iter().all(|e| e.span.source == source) {
                             fixes.push((start, end, json.clone(), fix.clone()));
                         }
                     }
-                    diagnostics.push(json);
                 }
+                published.entry(file).or_default().push(json);
             }
         }
+        let mine = published.entry(uri.to_string()).or_default();
         match messages {
             None => {}
             Some(Ok(ms)) => {
                 for m in ms {
-                    diagnostics.push(diagnostic(m.span.map(|s| (s.start, s.end)), 1, &m.text));
+                    let (start, end) = m.span.map_or((0, 0), |s| (s.start, s.end));
+                    mine.push(diagnostic(lines.range(&text, start, end), 1, &m.text));
                 }
             }
             Some(Err(panic)) => {
@@ -544,8 +618,8 @@ impl Server<'_> {
                     .map(String::as_str)
                     .or_else(|| panic.downcast_ref::<&str>().copied())
                     .unwrap_or("a panic");
-                diagnostics.push(diagnostic(
-                    None,
+                mine.push(diagnostic(
+                    lines.range(&text, 0, 0),
                     1,
                     &format!("internal error in the {} compiler: {what}", self.lang.name),
                 ));
@@ -560,9 +634,26 @@ impl Server<'_> {
                 hir,
                 source,
                 fixes,
+                sources,
+                files,
             },
         );
-        self.publish(uri, diagnostics);
+        // Files this program's last analysis reported on and this one does not are now clean.
+        let before = self.reported.remove(uri).unwrap_or_default();
+        for old in before {
+            published.entry(old).or_default();
+        }
+        let others: Vec<String> = published.keys().filter(|u| *u != uri).cloned().collect();
+        self.reported.insert(uri.to_string(), others);
+        let mut published: Vec<(String, Vec<Json>)> = published.into_iter().collect();
+        published.sort_by(|a, b| a.0.cmp(&b.0));
+        for (file, diagnostics) in published {
+            // An open document of its own publishes its own diagnostics.
+            if file != uri && self.docs.contains_key(&file) {
+                continue;
+            }
+            self.publish(&file, diagnostics);
+        }
     }
 
     /// Quick fixes for the diagnostics in the requested range: their suggested edits.
@@ -643,7 +734,7 @@ impl Server<'_> {
             return Json::Null;
         };
         let uri = params.get("textDocument").get("uri").clone();
-        let locations: Vec<Json> = index
+        let mut locations: Vec<Json> = index
             .targets(t)
             .iter()
             .map(|&s| {
@@ -654,6 +745,20 @@ impl Server<'_> {
                 ])
             })
             .collect();
+        // Names the grammar cannot resolve, such as another module's items: the HIR knows what the
+        // innermost expression around them refers to.
+        if locations.is_empty()
+            && let Some(m) = &doc.hir
+            && let Some(span) = referenced_item_span(m, doc.source, offset)
+            && let Some((_, file)) = doc.files.iter().find(|(id, _)| *id == span.source)
+        {
+            let text = doc.sources.text(span.source);
+            let range = Lines::new(text).range(text, span.start, span.end);
+            locations.push(Json::object([
+                ("uri", file.as_str().into()),
+                ("range", range),
+            ]));
+        }
         if locations.is_empty() {
             Json::Null
         } else {
@@ -694,6 +799,73 @@ impl Server<'_> {
             ("range", doc.lines.range(&doc.text, token.start, token.end)),
         ])
     }
+}
+
+/// Where the item that the innermost expression around `offset` (in file `source`) refers to is
+/// declared: the function it calls, the struct it builds, the global it reads.
+fn referenced_item_span(m: &HirModule, source: SourceId, offset: u32) -> Option<Span> {
+    let mut best: Option<(u32, Item)> = None;
+    for e in 0..m.expr_count() {
+        let e = a0_hir::ExprId(e);
+        let Some(span) = m.expr_span(e) else { continue };
+        if span.source != source || offset < span.start || offset > span.end {
+            continue;
+        }
+        let Some(item) = m.expr_item(e) else { continue };
+        if best.is_none_or(|(len, _)| span.len() < len) {
+            best = Some((span.len(), item));
+        }
+    }
+    best.and_then(|(_, item)| m.item_span(item))
+}
+
+/// The file a `file:` URI names (`file:///D:/a0/x.mn` is `D:/a0/x.mn`, `file:///home/x.mn` is
+/// `/home/x.mn`), percent-escapes decoded.
+pub fn uri_to_path(uri: &str) -> Option<PathBuf> {
+    let rest = uri.strip_prefix("file://")?;
+    let mut bytes = Vec::new();
+    let raw = rest.as_bytes();
+    let mut i = 0;
+    while i < raw.len() {
+        if raw[i] == b'%'
+            && i + 2 < raw.len()
+            && let Ok(b) = u8::from_str_radix(&rest[i + 1..i + 3], 16)
+        {
+            bytes.push(b);
+            i += 3;
+            continue;
+        }
+        bytes.push(raw[i]);
+        i += 1;
+    }
+    let path = String::from_utf8(bytes).ok()?;
+    // `/D:/a0/x.mn`: a drive letter after the slash is a Windows path.
+    let path = match path.as_bytes() {
+        [b'/', d, b':', ..] if d.is_ascii_alphabetic() => path[1..].to_string(),
+        _ => path,
+    };
+    Some(PathBuf::from(path))
+}
+
+/// The `file:` URI of a path, the way editors write it.
+pub fn path_to_uri(path: &Path) -> String {
+    let text = path.to_string_lossy().replace('\\', "/");
+    let mut out = String::from("file://");
+    if !text.starts_with('/') {
+        out.push('/');
+    }
+    for c in text.chars() {
+        match c {
+            'A'..='Z' | 'a'..='z' | '0'..='9' | '/' | '-' | '_' | '.' | '~' | ':' => out.push(c),
+            c => {
+                let mut buf = [0; 4];
+                for b in c.encode_utf8(&mut buf).bytes() {
+                    out.push_str(&format!("%{b:02X}"));
+                }
+            }
+        }
+    }
+    out
 }
 
 /// A diagnostic's message as an editor shows it: the message, what is wrong at its span, then its
@@ -939,6 +1111,7 @@ mod tests {
             libraries: None,
             grammar: Some(GRAMMAR),
             codes: crate::Codes::A0,
+            modules: None,
         }
     }
 

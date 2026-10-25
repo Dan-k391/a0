@@ -8,6 +8,10 @@ APIs. `docs/milestones.md` has the details of each step, with measurements.
 
 ### Added
 
+- **Modules**: programs of several files, with imports found through the grammar (`@import`),
+  visibility (`set_public`, Minnow's `pub`), qualified names in the IR and stack traces, errors for
+  missing modules, private items and import cycles, and the language server analyzing a program's
+  files together (diagnostics per file, go-to-definition across files).
 - **Runtime errors** report what failed with its values (`index out of bounds: the length is 3 but
   the index is 3`), then the stack of source-level functions, inlined ones included, identically in
   the interpreter and native code, optimized or not, at no cost to programs that do not fail.

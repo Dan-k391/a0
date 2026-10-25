@@ -14,7 +14,12 @@ pub fn print_module(m: &HirModule) -> String {
         out: String::new(),
     };
     let _ = writeln!(p.out, "module {};", quote(&m.name));
-    for item in m.items() {
+    // Types first, as the text format declares them before anything that uses them; otherwise
+    // in declaration order, so printing what was parsed gives the same text.
+    let is_type = |i: &&Item| matches!(i, Item::Struct(_) | Item::Enum(_));
+    let types = m.items().iter().filter(is_type);
+    let rest = m.items().iter().filter(|i| !is_type(i));
+    for item in types.chain(rest) {
         p.out.push('\n');
         p.item(*item);
     }

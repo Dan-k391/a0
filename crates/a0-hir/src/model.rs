@@ -38,6 +38,22 @@ handle!(
     /// One arm of a `match`.
     ArmId
 );
+handle!(
+    /// A module of a program (one file); module 0 is the prelude, which every module sees.
+    ModuleId
+);
+
+/// A module of a multi-file program (`modules.rs`).
+#[derive(Clone)]
+pub(crate) struct ModuleDef {
+    pub name: String,
+    /// Whether its items are named `module.item` (every module but the root file and the prelude).
+    pub qualified: bool,
+    /// The modules it imports: the name it gives each, the module, and where.
+    pub imports: Vec<(String, ModuleId, Option<Span>)>,
+    /// Items it imports by name: the name, and the value and the type it may be.
+    pub uses: Vec<(String, Option<Item>, Option<Item>)>,
+}
 
 impl TypeId {
     pub const UNIT: TypeId = TypeId(0);
@@ -449,6 +465,10 @@ pub struct HirModule {
     pub(crate) terms: Vec<(Term, String)>,
     /// The warnings found when the module was finished.
     pub(crate) warnings: a0_diag::Diagnostics,
+    /// The modules of a multi-file program (the prelude first), and the module each item belongs to,
+    /// with whether it is public.
+    pub(crate) modules: Vec<ModuleDef>,
+    pub(crate) item_home: HashMap<Item, (ModuleId, bool)>,
     /// The calls the optimizer inlined, and the site each copied expression came from.
     pub(crate) inline_sites: Vec<InlineSite>,
     pub(crate) inline_of: HashMap<ExprId, u32>,
@@ -482,6 +502,13 @@ impl HirModule {
             warnings: a0_diag::Diagnostics::new(),
             inline_sites: Vec::new(),
             inline_of: HashMap::new(),
+            modules: vec![ModuleDef {
+                name: String::new(),
+                qualified: false,
+                imports: Vec::new(),
+                uses: Vec::new(),
+            }],
+            item_home: HashMap::new(),
             unchecked_casts: HashSet::new(),
             items: Vec::new(),
             type_names: HashMap::new(),
@@ -548,6 +575,23 @@ impl HirModule {
         &self.items
     }
 
+    /// The module an item belongs to, and whether it is public.
+    pub fn home(&self, item: Item) -> (ModuleId, bool) {
+        self.item_home
+            .get(&item)
+            .copied()
+            .unwrap_or((ModuleId(0), true))
+    }
+
+    pub fn module_count(&self) -> u32 {
+        self.modules.len() as u32
+    }
+
+    pub fn module_name(&self, m: ModuleId) -> &str {
+        &self.modules[m.index()].name
+    }
+
+    /// A type by its name in the HIR (`json.Value` for an item of module `json`).
     pub fn lookup_type(&self, name: &str) -> Option<Item> {
         self.type_names.get(name).copied()
     }
@@ -640,6 +684,19 @@ impl HirModule {
 
     pub fn expr_type(&self, e: ExprId) -> TypeId {
         self.exprs[e.index()].ty
+    }
+
+    /// The declared item an expression refers to: the function it calls or takes as a value, the
+    /// global it reads or writes, the C function it calls, the struct or enum it builds.
+    pub fn expr_item(&self, e: ExprId) -> Option<Item> {
+        Some(match &self.exprs[e.index()].kind {
+            ExprKind::Call(f, ..) | ExprKind::Func(f, _) => Item::Func(*f),
+            ExprKind::Global(g) | ExprKind::SetGlobal(g, _) => Item::Global(*g),
+            ExprKind::CallExtern(x, _) => Item::Extern(*x),
+            ExprKind::New(s, _) => Item::Struct(*s),
+            ExprKind::Variant(en, ..) => Item::Enum(*en),
+            _ => return None,
+        })
     }
 
     pub fn expr_span(&self, e: ExprId) -> Option<Span> {

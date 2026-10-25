@@ -130,3 +130,21 @@ parameters @def(parameter: param) = param:IDENTIFIER ("," param:IDENTIFIER)*;
 var_decl @def(variable) = "var" name:IDENTIFIER ("=" init:expression)? ";";
 block @scope = "{" (!"}" !EOF declaration)* "}";
 ```
+
+## Imports: `@import`
+
+`@import` marks the rule that imports a module, so that the driver can load a program's files, and
+the language server analyze them, with no code from the language (`docs/hir.md`, "Modules").
+
+- The `path` field names the module: a string literal is a file path relative to the importing file
+  (`"lib/json.mn"`), anything else a module name whose segments are separated by `.`, `::` or `/`
+  (`text.json`), found from the program's main file's directory (`text/json.mn` there).
+- An optional `alias` field is the name the importing file uses for the module (by default the last
+  segment); `name` fields import single items by their names.
+
+```
+import_decl @import = "import" path:module_path ("as" alias:NAME)? ";";
+module_path = NAME ("." NAME)*;
+```
+
+`a0_syntax::imports(&grammar, &tree)` lists a file's imports.

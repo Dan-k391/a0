@@ -511,3 +511,20 @@ five) and interpreted. A first version was 3.6% slower: the failing functions fo
 messages in place, and the stack buffer this gave them (with MSVC's stack checks) cost every call;
 formatting now happens in separate cold functions. A stack overflow prints no trace, as Rust does:
 it would repeat one call thousands of times, and its depth differs between the backends.
+
+## D46. Modules are files compiled into one HIR module, found through the grammar
+
+Programs of several files could have been compiled file by file and linked, or as one module
+with a namespace per file. A0 does the second: the driver loads the main file and, transitively,
+what it imports, and compiles every file into one HIR builder, each after `begin_module`. Types
+and functions then cross files with no interface files or linking, and the optimizer and
+monomorphization see the whole program. Imports are found from a grammar annotation (`@import`,
+whose `path` field names the module) rather than from the compiler, so the driver can load files
+before compiling any, and the language server and DSLs with no host code get modules too. A
+module name is resolved from the main file's directory, so a file is the same module whoever
+imports it; a string path is relative to the importing file. Cycles are rejected: they would need
+declarations collected across files before any is compiled, and the languages that motivate
+modules do not need them. Module 0 is the prelude every module sees; the main file's names stay
+as they are so its `main` is the entry point, and other modules' items are `module.item`, which is
+also how stack traces name them. Visibility is the builder's: `set_public` before declarations,
+checked on `alias.item` and on imports by name.

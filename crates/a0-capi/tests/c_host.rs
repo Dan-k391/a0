@@ -108,6 +108,8 @@ fn a_c_program_builds_runs_and_compiles_modules() {
          vars:\n7\n21\n\
          vars error at 17: [E1001] unknown name `b`\n\
          2\n42\n\
+         modules: lib is a module: 1\n42\n\
+         modules: `hidden` is private to module `lib`\n\
          hir misuse: 2 problems, first: 99999 is not a valid expression handle\n\
          failures: 0\n",
         version = env!("CARGO_PKG_VERSION"),

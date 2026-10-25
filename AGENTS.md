@@ -70,6 +70,10 @@ layer, decision D17). A new crate goes into the table above and into `[workspace
   keep it small, on by default, behavior-preserving, and leave per-function optimization to
   Cranelift.
 - Every target-dependent choice goes through `a0_target::Target`; never `cfg!` in codegen.
+- Programs of several files are the driver's (`a0-driver/src/program.rs`, D46): it finds imports
+  through the grammar's `@import` rules and compiles every file into one HIR builder, a module
+  each. Languages never read files themselves; the language server does the same with open
+  documents.
 - Generalize only when two example languages need it (except the IR layers and the default runtime).
 - Rust edition 2024, rustfmt defaults, clippy clean. Comments explain why, not what; match the
   surrounding density. C code: C11, `a0_` prefix for runtime symbols, no global state without a reason.

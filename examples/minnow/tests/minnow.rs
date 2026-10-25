@@ -51,6 +51,8 @@ fn run(cmd: &mut Command) -> Output {
     }
 }
 
+/// The one-file programs in `tests/programs` and the `main.mn` of each program of several files in
+/// `tests/projects`.
 fn programs() -> Vec<PathBuf> {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/programs");
     let mut files: Vec<PathBuf> = std::fs::read_dir(dir)
@@ -58,6 +60,10 @@ fn programs() -> Vec<PathBuf> {
         .map(|e| e.unwrap().path())
         .filter(|p| p.extension().is_some_and(|x| x == "mn"))
         .collect();
+    let projects = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/projects");
+    for entry in std::fs::read_dir(projects).unwrap() {
+        files.push(entry.unwrap().path().join("main.mn"));
+    }
     files.sort();
     assert!(files.len() >= 5, "the test programs are missing");
     files
@@ -389,10 +395,21 @@ fn errors_do_not_cascade() {
 #[test]
 fn emitted_hir_round_trips_through_text() {
     for f in programs() {
-        let text = std::fs::read_to_string(&f).unwrap();
+        // Through the driver's loader, so programs of several files are one module too.
         let mut sm = SourceMap::new();
-        let id = sm.add("test.mn", &text);
-        let printed = minnow::compile(&text, id).unwrap().to_string();
+        let modules = a0_driver::Modules {
+            extension: "mn",
+            start: minnow::start,
+            compile: minnow::compile_file,
+        };
+        let root = f.to_string_lossy().into_owned();
+        let mut read = |p: &Path| std::fs::read_to_string(p).ok();
+        let program =
+            a0_driver::program::load(&minnow::grammar(), &modules, &root, &mut read, &mut sm)
+                .unwrap();
+        let printed = a0_driver::program::compile(&program, &modules, "test")
+            .unwrap()
+            .to_string();
         let hir_id = sm.add("test.hir", &printed);
         let reparsed = match a0_hir::parse(&printed, hir_id) {
             Ok(m) => m,

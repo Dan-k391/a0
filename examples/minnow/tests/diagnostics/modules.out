@@ -1,0 +1,25 @@
+$ minnow run modules.mn
+--- stderr
+error[E1011]: `step` is private to module `lib.counter`
+ --> modules.mn:6:17
+  |
+6 |   print(counter.step());
+  |                 ^^^^ private
+  |
+ ::: lib/counter.mn:5:4
+  |
+5 | fn step() -> int {
+  |    ---- declared here without being public
+
+error[E1001]: module `lib.counter` has no public `nxt`
+ --> modules.mn:7:17
+  |
+7 |   print(counter.nxt(2));
+  |                 ^^^ help: a public item with a similar name exists: `next`
+
+error[E1001]: unknown name `conter`
+ --> modules.mn:8:9
+  |
+8 |   print(conter.next(3));
+  |         ^^^^^^ help: a module with a similar name exists: `counter`
+--- exit 1

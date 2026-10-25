@@ -13,22 +13,30 @@ unknown "unexpected character";
 
 program = (!EOF item)* EOF;
 
-item @inline @recover(before "struct" "enum" "fn") = struct_decl | enum_decl | fn_decl;
+item @inline @recover(before "import" "pub" "struct" "enum" "fn")
+    = import_decl | struct_decl | enum_decl | fn_decl;
+
+// `import text.json;` (the file `text/json.mn` next to the program's main file) makes the module's
+// public items `json.item`; `import text.json as j;` makes them `j.item`.
+import_decl @import
+    = "import" path:module_path ~ "expected a module name" ("as" alias:NAME ~ "expected a name")?
+      ";" ~ "expected ';'";
+module_path = NAME ("." NAME)*;
 
 struct_decl @def(struct)
-    = "struct" name:NAME ~ "expected a struct name" type_params? "{" ~ "expected '{'"
+    = pub:"pub"? "struct" name:NAME ~ "expected a struct name" type_params? "{" ~ "expected '{'"
       (field ("," field)* ","?)? "}" ~ "expected '}'";
 field @def(field)
     = name:NAME ~ "expected a field name" ":" ~ "expected ':'" type:type ~ "expected a type";
 
 enum_decl @def(enum)
-    = "enum" name:NAME ~ "expected an enum name" type_params? "{" ~ "expected '{'"
+    = pub:"pub"? "enum" name:NAME ~ "expected an enum name" type_params? "{" ~ "expected '{'"
       (variant ("," variant)* ","?)? "}" ~ "expected '}'";
 variant @def(variant)
     = name:NAME ~ "expected a variant name" ("(" type:type ("," type:type)* ")" ~ "expected ')'")?;
 
 fn_decl @def(function) @scope
-    = "fn" name:NAME ~ "expected a function name" type_params? "(" ~ "expected '('"
+    = pub:"pub"? "fn" name:NAME ~ "expected a function name" type_params? "(" ~ "expected '('"
       (param ("," param)*)? ")" ~ "expected ')'" ("->" ret:type ~ "expected a type")?
       body:block ~ "expected '{'";
 param @def(parameter)
@@ -41,7 +49,7 @@ base_type @inline = array_type | fn_type | named_type;
 array_type = "[" elem:type ~ "expected a type" "]" ~ "expected ']'";
 fn_type = "fn" "(" ~ "expected '('" (param_type:type ("," param_type:type)*)? ")" ~ "expected ')'"
           ("->" ret:type ~ "expected a type")?;
-named_type = name:NAME ("<" targ:type ~ "expected a type" ("," targ:type)* ">" ~ "expected '>'")?;
+named_type = (module:NAME ".")? name:NAME ("<" targ:type ~ "expected a type" ("," targ:type)* ">" ~ "expected '>'")?;
 
 block @scope = "{" (!"}" !EOF stmt)* "}" ~ "expected '}'";
 
@@ -88,7 +96,7 @@ args = arg:expr ("," arg:expr)*;
 primary = literal | array_lit | new_expr | closure | match_expr | variant_expr | paren | name_expr;
 literal = "true" | "false" | "null" | INT | FLOAT | STRING;
 array_lit = "[" args:args? "]" ~ "expected ']'";
-new_expr = "new" name:NAME ~ "expected a struct name" "{" ~ "expected '{'"
+new_expr = "new" (module:NAME ".")? name:NAME ~ "expected a struct name" "{" ~ "expected '{'"
            (field_init ("," field_init)* ","?)? "}" ~ "expected '}'";
 field_init = name:NAME ~ "expected a field name" ":" ~ "expected ':'" value:expr;
 closure @scope
@@ -100,6 +108,6 @@ arm @scope
     = pattern:pattern "=>" ~ "expected '=>'" (body:block | body:expr) ~ "expected an expression";
 pattern @def(variable: bind)
     = "_" | variant:NAME ("(" bind:NAME ("," bind:NAME)* ")" ~ "expected ')'")?;
-variant_expr = enum:NAME "::" name:NAME ~ "expected a variant name" ("(" args:args? ")" ~ "expected ')'")?;
+variant_expr = (module:NAME ".")? enum:NAME "::" name:NAME ~ "expected a variant name" ("(" args:args? ")" ~ "expected ')'")?;
 paren = "(" inner:expr ")" ~ "expected ')'";
 name_expr = NAME;

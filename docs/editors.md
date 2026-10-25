@@ -14,6 +14,11 @@ Protocol on stdin and stdout. A language needs no code for it. It passes its gra
 | Go to definition | `@def` and `@scope`: lexical resolution, every member of that name after `.` or `::` |
 | Hover | the declaration's first line and kind, plus its type when the compiler builds HIR with spans (Minnow: `variable total: int`) |
 
+For a language with modules, a document is analyzed as the main file of its program: the files it
+imports are read from documents open in the editor or from disk, their diagnostics are published
+for them, and go-to-definition on another module's item (`util.twice`) opens that file. Types on
+hover and definitions keep working while the program has errors.
+
 The server keeps whole documents (full sync), re-analyzes a document when it changes, and survives
 a panicking compiler by reporting it as a diagnostic. Positions are UTF-16 code units, as the protocol
 requires. Tests drive it with `a0_driver::lsp::session` (see `examples/*/tests/lsp.rs`).

@@ -200,6 +200,9 @@ pub struct HirBuilder {
     deferred: Vec<(ExprId, TypeId)>,
     /// The warnings the language turned on.
     warnings: Vec<Warning>,
+    /// The module declarations go into, and whether they are public (`modules.rs`).
+    pub(crate) module: ModuleId,
+    pub(crate) public: bool,
     // State of the name-based helpers in `frontend.rs`.
     /// Locals by name.
     pub(crate) names: Scopes,
@@ -226,6 +229,8 @@ impl HirBuilder {
             name_spans: HashMap::new(),
             deferred: Vec::new(),
             warnings: Vec::new(),
+            module: ModuleId(0),
+            public: true,
             names: Scopes::new(),
             shadow_scopes: Vec::new(),
             body_stack: Vec::new(),
@@ -295,7 +300,19 @@ impl HirBuilder {
     }
 
     /// Finishes inference, checks the module and returns it, or every problem found.
-    pub fn finish(mut self) -> Result<HirModule, Diagnostics> {
+    pub fn finish(self) -> Result<HirModule, Diagnostics> {
+        let (m, diags) = self.finish_keeping();
+        if diags.has_errors() {
+            Err(diags)
+        } else {
+            Ok(m)
+        }
+    }
+
+    /// Like [`HirBuilder::finish`], but returns the module even when it has errors, for tools that
+    /// show what is known about a program being edited (types on hover, definitions). A module
+    /// with errors must not be lowered.
+    pub fn finish_keeping(mut self) -> (HirModule, Diagnostics) {
         self.solve_deferred();
         self.report_unresolved();
         self.resolve_all();
@@ -311,12 +328,10 @@ impl HirBuilder {
         }
         // As rustc does, warnings wait until the program has no errors: an error often makes code
         // look unused or unreachable.
-        if diags.has_errors() {
-            Err(diags)
-        } else {
+        if !diags.has_errors() {
             self.m.warnings = warnings;
-            Ok(self.m)
         }
+        (self.m, diags)
     }
 
     fn find_warnings(&self) -> Diagnostics {
@@ -651,19 +666,25 @@ impl HirBuilder {
         }
     }
 
+    /// Registers a type in the current module; `name` is its name there.
     fn add_type_name(&mut self, name: &str, item: Item) {
         self.item_name(name);
-        if let Some(first) = self.m.type_names.insert(name.to_string(), item) {
+        let key = self.qualified(name);
+        if let Some(first) = self.m.type_names.insert(key, item) {
             self.declared_twice(&format!("the type `{name}`"), self.m.item_span(first));
         }
+        self.m.item_home.insert(item, (self.module, self.public));
         self.m.items.push(item);
     }
 
+    /// Registers a function, global or C function in the current module.
     fn add_value_name(&mut self, name: &str, item: Item) {
         self.item_name(name);
-        if let Some(first) = self.m.value_names.insert(name.to_string(), item) {
+        let key = self.qualified(name);
+        if let Some(first) = self.m.value_names.insert(key, item) {
             self.declared_twice(&format!("`{name}`"), self.m.item_span(first));
         }
+        self.m.item_home.insert(item, (self.module, self.public));
         self.m.items.push(item);
     }
 
@@ -694,7 +715,7 @@ impl HirBuilder {
         let s = StructId(self.m.structs.len() as u32);
         let type_params = self.type_param_names(type_params);
         self.m.structs.push(StructDef {
-            name: name.to_string(),
+            name: self.qualified(name),
             type_params,
             fields: Vec::new(),
             field_spans: Vec::new(),
@@ -733,7 +754,7 @@ impl HirBuilder {
         let e = EnumId(self.m.enums.len() as u32);
         let type_params = self.type_param_names(type_params);
         self.m.enums.push(EnumDef {
-            name: name.to_string(),
+            name: self.qualified(name),
             type_params,
             variants: Vec::new(),
             span: self.span,
@@ -780,7 +801,7 @@ impl HirBuilder {
         }
         let g = GlobalId(self.m.globals.len() as u32);
         self.m.globals.push(GlobalDef {
-            name: name.to_string(),
+            name: self.qualified(name),
             ty,
             span: self.span,
         });
@@ -830,7 +851,7 @@ impl HirBuilder {
         let body = BodyId(self.m.bodies.len() as u32);
         let type_params = self.type_param_names(type_params);
         self.m.funcs.push(FuncDef {
-            name: name.to_string(),
+            name: self.qualified(name),
             type_params,
             body,
             span: self.span,
