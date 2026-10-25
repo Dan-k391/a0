@@ -5,7 +5,7 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use object::{Object, ObjectSection};
+use object::{Object, ObjectSection, ObjectSymbol};
 
 const PROGRAM: &str = "module \"lines\";
 
@@ -36,8 +36,13 @@ fn a0(dir: &Path, args: &[&str]) -> std::process::Output {
         .unwrap()
 }
 
-/// The functions an object's DWARF names, and the (file, line) pairs its line table has.
-fn read_dwarf(bytes: &[u8]) -> (Vec<String>, Vec<(String, u64)>) {
+/// A function's name and address, or a line table row's file, line and address, as written in an
+/// object (before relocation).
+type Function = (String, u64);
+type Row = (String, u64, u64);
+
+/// The functions an object's DWARF names, and the rows its line table has.
+fn read_dwarf(bytes: &[u8]) -> (Vec<Function>, Vec<Row>) {
     let file = object::File::parse(bytes).unwrap();
     let load = |id: gimli::SectionId| -> Result<std::borrow::Cow<[u8]>, gimli::Error> {
         let name = if file.format() == object::BinaryFormat::MachO {
@@ -61,9 +66,11 @@ fn read_dwarf(bytes: &[u8]) -> (Vec<String>, Vec<(String, u64)>) {
         while let Some(entry) = entries.next_dfs().unwrap() {
             if entry.tag() == gimli::DW_TAG_subprogram
                 && let Some(name) = entry.attr_value(gimli::DW_AT_name)
+                && let Some(gimli::AttributeValue::Addr(low)) =
+                    entry.attr_value(gimli::DW_AT_low_pc)
             {
                 let name = dwarf.attr_string(&unit, name).unwrap();
-                names.push(name.to_string_lossy().into_owned());
+                names.push((name.to_string_lossy().into_owned(), low));
             }
         }
         let Some(program) = unit.line_program.clone() else {
@@ -73,7 +80,11 @@ fn read_dwarf(bytes: &[u8]) -> (Vec<String>, Vec<(String, u64)>) {
         while let Some((header, row)) = lines.next_row().unwrap() {
             if let (Some(line), Some(file)) = (row.line(), row.file(header)) {
                 let path = dwarf.attr_string(&unit, file.path_name()).unwrap();
-                rows.push((path.to_string_lossy().into_owned(), line.get()));
+                rows.push((
+                    path.to_string_lossy().into_owned(),
+                    line.get(),
+                    row.address(),
+                ));
             }
         }
     }
@@ -107,16 +118,47 @@ fn objects_describe_functions_and_lines_for_debuggers() {
             String::from_utf8_lossy(&out.stderr)
         );
         let bytes = std::fs::read(dir.join("lines.o")).unwrap();
-        let (names, rows) = read_dwarf(&bytes);
+        let (functions, rows) = read_dwarf(&bytes);
+        let names: Vec<&str> = functions.iter().map(|(n, _)| n.as_str()).collect();
         assert!(
-            names.contains(&"norm".to_string()) && names.contains(&"main".to_string()),
+            names.contains(&"norm") && names.contains(&"main"),
             "{target}: {names:?}"
         );
         for line in [3, 4, 5, 9, 10] {
             assert!(
                 rows.iter()
-                    .any(|(file, l)| file.ends_with("lines.hir") && *l == line),
+                    .any(|(file, l, _)| file.ends_with("lines.hir") && *l == line),
                 "{target}: no row for line {line} in {rows:?}"
+            );
+        }
+        // dsymutil and lldb read Mach-O debug addresses as written: each must be where the
+        // function is in the object, and line 4 must be inside `norm`. (ELF addresses are 0 until
+        // the linker relocates them.)
+        if target.ends_with("macos") {
+            let file = object::File::parse(&*bytes).unwrap();
+            let symbol = |name: &str| {
+                file.symbols()
+                    .find(|s| s.name() == Ok(name))
+                    .map(|s| s.address())
+                    .unwrap_or_else(|| panic!("{target}: no symbol {name}"))
+            };
+            let norm = symbol("_hir.norm");
+            assert!(
+                functions.contains(&("norm".to_string(), norm))
+                    && functions.contains(&("main".to_string(), symbol("_hir.main"))),
+                "{target}: {functions:?}"
+            );
+            // Mach-O symbols have no sizes: `norm` ends where the next symbol starts.
+            let end = file
+                .symbols()
+                .map(|s| s.address())
+                .filter(|&a| a > norm)
+                .min()
+                .unwrap();
+            let line4 = rows.iter().find(|(_, l, _)| *l == 4).unwrap().2;
+            assert!(
+                (norm..end).contains(&line4),
+                "{target}: line 4 at {line4:#x}, norm at {norm:#x}..{end:#x}"
             );
         }
         // Without -g there is no debug information.

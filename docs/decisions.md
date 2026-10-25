@@ -692,7 +692,9 @@ The goal also asks for debug information for the platform's debugger where feasi
 reports a source location for every instruction it emits (A0 already gave it each call's, for
 traces), which is enough for DWARF line tables and subprograms: `-g` writes them with `gimli` (already
 a dependency of Cranelift, now a direct one of `a0-native` with its `write` feature) into ELF and
-Mach-O objects, relocated against the functions, and runs `dsymutil` on macOS. Not done: variables,
+Mach-O objects, relocated against the functions (on Mach-O against the code section, with each
+function's address in the object written in place: dsymutil and lldb read the written value, as
+LLVM's own objects have it), and runs `dsymutil` on macOS. Not done: variables,
 whose locations would come from Cranelift's value labels and need location lists; and Windows, whose
 debuggers read PDB, a format of its own (CodeView) that no library we use writes. `lang dap` covers
 both.

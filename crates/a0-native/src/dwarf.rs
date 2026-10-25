@@ -107,6 +107,29 @@ pub(crate) fn emit(
     functions: &[Function],
     dir: &str,
 ) -> Result<(), String> {
+    // dsymutil and lldb take the addresses written in Mach-O debug sections as they are, as
+    // addresses within the object, and use a relocation only to learn which section an address
+    // is in (LLVM writes them that way too). The object writer places the code, so write the
+    // object once to learn where each function went; debug sections come after it and leave
+    // that in place.
+    let macho = obj.format() == object::BinaryFormat::MachO;
+    let mut addresses = vec![0; functions.len()];
+    if macho {
+        use object::{Object as _, ObjectSection as _};
+        let bytes = obj.write().map_err(|e| e.to_string())?;
+        let file = object::File::parse(&*bytes).map_err(|e| e.to_string())?;
+        for (i, f) in functions.iter().enumerate() {
+            let symbol = obj.symbol(f.symbol);
+            let object::write::SymbolSection::Section(section) = symbol.section else {
+                return Err(format!("{} is not in a section", f.name));
+            };
+            let name = obj.section(section).name().unwrap_or_default();
+            let Some(placed) = file.section_by_name(name) else {
+                return Err(format!("no section {name} in the object"));
+            };
+            addresses[i] = placed.address() + symbol.value;
+        }
+    }
     let encoding = Encoding {
         format: Format::Dwarf32,
         version: 4,
@@ -216,7 +239,6 @@ pub(crate) fn emit(
 
     // Mach-O does not link DWARF: debuggers read it from the object files, so offsets between its
     // sections need no relocations there. ELF linkers concatenate the sections of every object.
-    let macho = obj.format() == object::BinaryFormat::MachO;
     let segment = obj
         .segment_name(object::write::StandardSegment::Debug)
         .to_vec();
@@ -235,15 +257,22 @@ pub(crate) fn emit(
         obj.set_section_data(section, s.data.slice().to_vec(), 1);
         ids.push((*id, section));
     }
-    let symbols: Vec<SymbolId> = functions.iter().map(|f| f.symbol).collect();
     for (id, s) in &written {
         let section = ids.iter().find(|(g, _)| g == id).map(|&(_, s)| s).unwrap();
         for &(offset, size, target, addend) in &s.relocations {
-            let symbol = match target {
-                Target::Symbol(i) => symbols[i],
+            let (symbol, addend) = match target {
+                Target::Symbol(i) if macho => {
+                    let object::write::SymbolSection::Section(code) =
+                        obj.symbol(functions[i].symbol).section
+                    else {
+                        unreachable!("checked above");
+                    };
+                    (obj.section_symbol(code), addresses[i] as i64 + addend)
+                }
+                Target::Symbol(i) => (functions[i].symbol, addend),
                 Target::Section(_) if macho => continue,
                 Target::Section(g) => match ids.iter().find(|(other, _)| *other == g) {
-                    Some(&(_, other)) => obj.section_symbol(other),
+                    Some(&(_, other)) => (obj.section_symbol(other), addend),
                     None => continue,
                 },
             };
