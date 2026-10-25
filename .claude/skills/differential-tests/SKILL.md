@@ -14,6 +14,7 @@ description: Run and debug A0's differential tests, which require the interprete
 | Kaleidoscope `examples/kaleidoscope/tests/programs/*.k` | `examples/kaleidoscope/tests/kaleidoscope.rs` | interpreted, native, interpreted + `A0_GC_STRESS=1` |
 | Minnow `examples/minnow/tests/programs/*.mn` | `examples/minnow/tests/minnow.rs` | interpreted, native, interpreted + `A0_GC_STRESS=1` |
 | Lox official suite | `examples/lox/tests/suite.rs` | interpreted, native, interpreted + `A0_GC_STRESS=1` |
+| Random HIR programs (seeded generator) | `crates/a0/tests/random.rs` | all three, optimized and not, compared with each other |
 
 Every HIR-based mode runs twice: optimized (the default) and with `A0_OPT=0`. A difference between
 the two is an optimizer bug: compare `a0 lower prog.hir` with and without `A0_OPT=0`, and shrink the
@@ -21,6 +22,7 @@ program until one rewrite in `crates/a0-hir/src/opt.rs` explains it.
 
 ```
 cargo test -p a0 --test programs
+A0_RANDOM_PROGRAMS=500 A0_RANDOM_SEED=1000 cargo test -p a0 --test random   # fuzz longer
 cargo test -p kaleidoscope
 cargo test -p minnow
 cargo test -p lox --test suite -- --nocapture          # prints the pass counts
@@ -36,6 +38,15 @@ cargo test -p lox --test suite suite_native -- --exact # one mode
 - Minnow: `// expect: <line>`, `// expect-stderr: <line>`, `// expect-exit: <code>`.
 - Lox: the book's comments (`// expect: `, `// Error ...`, `// [line N] Error ...`,
   `// expect runtime error: `), checked exactly like `tool/bin/test.dart`.
+
+## Random programs
+
+The generator in `crates/a0/tests/random.rs` writes well-typed programs (helpers that inline,
+`any`, closures, loops, recursion with fuel, runtime errors at the end); the reference is the
+unoptimized interpreter, and a program that does not compile is a generator bug. A failing program
+is kept and named; `A0_RANDOM_KEEP=1` keeps them all. To shrink one, delete statements and replace
+expressions by leaves of the same type while the difference persists (deleting blindly makes
+programs ill-typed, which hides the bug behind a type error).
 
 ## Reproduce one failure by hand
 

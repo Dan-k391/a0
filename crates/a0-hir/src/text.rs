@@ -700,8 +700,12 @@ impl TextParser<'_> {
                 if let Some(bind) = self.field(node, "bind") {
                     let value = self.expr(self.field(node, "value").unwrap())?;
                     let name = self.text(bind).to_string();
-                    // The binding's type is the value's without `?`, settled when the node is typed.
-                    let lt = self.b.fresh_type();
+                    // The binding's type is the value's without `?`, known in the body unless the
+                    // value's type is still open (then it is settled when the node is typed).
+                    let lt = match self.b.module().kind(self.b.type_of(value)) {
+                        TypeKind::Nullable(inner) => *inner,
+                        _ => self.b.fresh_type(),
+                    };
                     self.at(bind);
                     let l = self.b.new_local(self.body.unwrap(), &name, lt);
                     self.scopes.push(ScopeKind::Block);

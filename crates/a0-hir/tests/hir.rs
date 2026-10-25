@@ -366,6 +366,23 @@ fn the_optimizer_inlines_small_functions_and_folds_any_tests() {
 }
 
 #[test]
+fn if_let_bindings_have_their_type_in_the_body() {
+    // A `match` needs its scrutinee's enum while it is parsed, and here that depends on `r`.
+    parse_ok(
+        "module \"m\";
+enum E { A, B }
+struct R { n: int }
+fn main() -> int {
+  let e = E::A;
+  if let r = null<R> {
+    match (if let q = (r as R?) { e } else { e }) { A => 1, _ => 2, }
+  } else { 0 }
+}
+",
+    );
+}
+
+#[test]
 fn inlining_is_bounded_along_call_chains() {
     // Each helper calls the previous one twice: inlining everything would double the code at every
     // step. A callee is measured after its own inlining, so every few helpers the chain stays a call

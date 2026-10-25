@@ -74,6 +74,9 @@ layer, decision D17). A new crate goes into the table above and into `[workspace
   and run interpreted, natively, and interpreted with `A0_GC_STRESS=1`, each with the HIR optimizer
   on and off (`A0_OPT=0`) (`crates/a0/tests/programs.rs`). Add a program there for any new IR, HIR,
   optimizer or runtime behavior.
+- **Random programs**: `crates/a0/tests/random.rs` generates seeded HIR programs and requires the
+  six modes to agree (`A0_RANDOM_PROGRAMS`, `A0_RANDOM_SEED` to fuzz longer). When the optimizer or
+  lowering learns something new, teach the generator to produce it.
 - HIR text must round-trip: `print(parse(print(m))) == print(m)` is tested for every corpus file.
 - Example languages test interpreted and native output (`examples/*/tests`), all three under GC
   stress too, optimized and not. The Lox suite must stay at all 241 passing in all six modes.

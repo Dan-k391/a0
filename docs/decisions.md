@@ -398,3 +398,17 @@ is more, the rule GCC uses for large functions; a limit relative to the size alo
 in long straight-line code such as a loop of 30 calls. The Lox suite compiles as fast as before
 (3.2 s with the optimizer, 2.3 s without), the benchmarks run as fast, and a chain of 40 helpers
 (`tests/hir/inline_chain.hir`), which did not finish before, compiles in a fifth of a second.
+
+## D38. Random programs are HIR text, checked against each other
+
+The optimizer and lowering are tested by hand-written programs whose output is known. To find what
+nobody thought to write, `crates/a0/tests/random.rs` generates programs from a seed and requires the
+six modes (interpreted, native, GC stress; optimized and not) to print the same and exit the same
+way, with the unoptimized interpreter as the reference, so no expected output is needed. The
+generator writes HIR text rather than calling the builder: a failing program is then a file that
+`a0 run` reproduces and that can be shrunk by hand. Programs are well-typed by construction and
+terminate by construction (loop counters nothing else assigns, recursion only on a fuel parameter
+that decreases, a budget of calls per function), so a program that does not compile or a run that
+differs is a bug. The generator is part of the test (about 700 lines, no dependency), with its own
+small PRNG. Its first run found a bug: the text format gave an `if let` binding no type until the
+whole `if let` was typed, so a `match` in its body could not find its enum.
