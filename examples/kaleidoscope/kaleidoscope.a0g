@@ -1,5 +1,7 @@
 // Kaleidoscope, the language of LLVM's tutorial (chapters 1-7): doubles only, functions, externs,
-// if/then/else, for/in loops, mutable variables (var/in and '='), and user-defined operators.
+// if/then/else, for/in, mutable variables (var/in and '='), and user-defined operators.
+// The ANCHOR lines mark what docs/tutorial.md quotes.
+// ANCHOR: tokens
 grammar kaleidoscope;
 
 skip /[ \t\r\n]+/;
@@ -9,7 +11,9 @@ token IDENT /[A-Za-z][A-Za-z0-9]*/;
 // Every other single character is an operator character, as in the tutorial's lexer.
 token OPCHAR /[^ \t\r\n0-9A-Za-z#(),;.]/;
 unknown "unexpected character";
+// ANCHOR_END: tokens
 
+// ANCHOR: items
 program = (!EOF item)* EOF;
 
 item @inline @recover(after ";" before "def" "extern")
@@ -19,34 +23,55 @@ definition @def(function) @scope = "def" proto:prototype body:expr;
 external @def(function) = "extern" proto:prototype;
 toplevel = expr:expr;
 
-prototype = "binary" op:opchar ~ "expected an operator character after 'binary'"
+prototype = name:IDENT ~ "expected a function name in prototype"
+            "(" ~ "expected '(' in prototype" params:params ")" ~ "expected ')' in prototype"
+          // ANCHOR_END: items
+          // ANCHOR: prototype_operators
+          | "binary" op:opchar ~ "expected an operator character after 'binary'"
             precedence:NUMBER?
             "(" ~ "expected '(' in prototype" params:params ")" ~ "expected ')' in prototype"
           | "unary" op:opchar ~ "expected an operator character after 'unary'"
             "(" ~ "expected '(' in prototype" params:params ")" ~ "expected ')' in prototype"
-          | name:IDENT ~ "expected a function name in prototype"
-            "(" ~ "expected '(' in prototype" params:params ")" ~ "expected ')' in prototype";
+          // ANCHOR_END: prototype_operators
+          // ANCHOR: items_end
+          ;
 
 params @def(parameter: param) = param:IDENT*;
+// ANCHOR_END: items_end
 
-opchar @inline = OPCHAR | "=";
-
+// ANCHOR: expressions
 // Binary operators are user-definable, so expressions are parsed as a flat chain
 // `operand (op operand)*` and the compiler resolves precedence with the operator table in effect.
 expr = operand:operand (op:opchar operand:operand)*;
+opchar @inline = OPCHAR | "=";
 
-operand @inline = unary | primary;
+operand @inline = primary
+                // ANCHOR_END: expressions
+                // ANCHOR: operand_unary
+                | unary
+                // ANCHOR_END: operand_unary
+                // ANCHOR: primary
+                ;
 
-unary = op:OPCHAR operand:operand;
-
-primary @inline = number | call | variable | paren | if_expr | for_expr | var_expr ;
+primary @inline = number | call | variable | paren
+                // ANCHOR_END: primary
+                // ANCHOR: primary_control
+                | if_expr | for_expr
+                // ANCHOR_END: primary_control
+                // ANCHOR: primary_var
+                | var_expr
+                // ANCHOR_END: primary_var
+                // ANCHOR: atoms
+                ;
 
 number = NUMBER;
 call = callee:IDENT "(" args:args? ")" ~ "expected ')' or ',' in argument list";
 variable = IDENT;
 args = arg:expr ("," arg:expr)*;
 paren = "(" inner:expr ")" ~ "expected ')'";
+// ANCHOR_END: atoms
 
+// ANCHOR: control
 if_expr = "if" cond:expr "then" ~ "expected 'then'" then:expr "else" ~ "expected 'else'" else:expr;
 
 for_expr @def(variable: var) @scope
@@ -55,8 +80,15 @@ for_expr @def(variable: var) @scope
       "," ~ "expected ',' after the start value" end:expr
       ("," step:expr)?
       "in" ~ "expected 'in' after the loop header" body:expr;
+// ANCHOR_END: control
 
+// ANCHOR: unary
+unary = op:OPCHAR operand:operand;
+// ANCHOR_END: unary
+
+// ANCHOR: variables
 var_expr @scope
     = "var" binding:var_binding ("," binding:var_binding)*
       "in" ~ "expected 'in' after 'var'" body:expr;
 var_binding @def(variable) = name:IDENT ~ "expected an identifier after 'var'" ("=" init:expr)?;
+// ANCHOR_END: variables

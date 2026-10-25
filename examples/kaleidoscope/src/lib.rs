@@ -10,14 +10,13 @@
 //! `=` give mutable variables; `def binary| 5 (a b)` and `def unary!(v)` define operators, which may
 //! be used only after their definition. Top-level expressions run in order when the program starts.
 
+// ANCHOR: uses
 use std::collections::{HashMap, HashSet};
 
 use a0_diag::{Diagnostics, SourceId};
 use a0_hir::{BinOp, BodyId, ExprId, FuncId, HirBuilder, HirModule, TypeId, UnOp};
 use a0_syntax::{Grammar, NodeId, Operand, SyntaxTree, resolve_precedence};
-
-/// The precedence of a binary operator that does not give one.
-pub const DEFAULT_PRECEDENCE: i32 = 30;
+// ANCHOR_END: uses
 
 // ANCHOR: grammar
 /// The Kaleidoscope grammar.
@@ -169,7 +168,11 @@ impl Compiler<'_> {
             None => Vec::new(),
         };
         let name = match self.text(self.tree.child(proto, 0)) {
+            // ANCHOR_END: functions
+            // ANCHOR: prototype_operator
             kind @ ("binary" | "unary") => self.operator(proto, kind, params.len())?,
+            // ANCHOR_END: prototype_operator
+            // ANCHOR: functions_rest
             _ => self.text(self.field(proto, "name")).to_string(),
         };
         if name == "main" {
@@ -240,7 +243,7 @@ impl Compiler<'_> {
         self.b.set_root(body, root);
     }
 }
-// ANCHOR_END: functions
+// ANCHOR_END: functions_rest
 
 // ANCHOR: expr
 impl Compiler<'_> {
@@ -324,9 +327,13 @@ impl Compiler<'_> {
         }
         let step = steps[operand.index as usize];
         let op = ops[step.op as usize];
+        // ANCHOR_END: chain
+        // ANCHOR: chain_assign
         if self.text(op) == "=" {
             return self.assign(steps, operands, ops, step);
         }
+        // ANCHOR_END: chain_assign
+        // ANCHOR: chain_end
         let l = self.combine(steps, operands, ops, step.left);
         let r = self.combine(steps, operands, ops, step.right);
         self.at(op);
@@ -340,11 +347,8 @@ impl Compiler<'_> {
                 let (no, yes) = (self.b.float(0.0), self.b.float(1.0));
                 self.b.if_(ge, no, Some(yes))
             }
-            // ANCHOR_END: chain
-            // ANCHOR: chain_user
+            // Any other operator is a function: `def binary| (a b)` (chapter 5 of the tutorial).
             op => self.b.call_named(&format!("binary{op}"), &[l, r]),
-            // ANCHOR_END: chain_user
-            // ANCHOR: chain_end
         }
     }
 }
@@ -414,6 +418,9 @@ impl Compiler<'_> {
 // ANCHOR_END: control
 
 // ANCHOR: operators
+/// The precedence of a binary operator that does not give one.
+pub const DEFAULT_PRECEDENCE: i32 = 30;
+
 impl Compiler<'_> {
     /// The name of an operator a prototype defines (`binary|`, `unary!`), after checking its
     /// operands and precedence. A binary operator's precedence takes effect at once, so its own

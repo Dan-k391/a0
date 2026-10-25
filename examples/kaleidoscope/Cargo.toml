@@ -6,6 +6,7 @@ edition.workspace = true
 license.workspace = true
 build = "build.rs"
 
+# ANCHOR: deps
 [dependencies]
 a0-driver.workspace = true
 a0-diag.workspace = true
@@ -14,6 +15,7 @@ a0-syntax.workspace = true
 a0-interp.workspace = true
 a0-native.workspace = true
 a0-runtime.workspace = true
+# ANCHOR_END: deps
 
 [dev-dependencies]
 a0-ir.workspace = true

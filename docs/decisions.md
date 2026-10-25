@@ -371,3 +371,16 @@ inlined. What it kept is what is Kaleidoscope's own: operator precedence decided
 code free of the collector's costs, lowering skips the shadow-stack frame of a body that has no
 reference or `any` value at all (no such local, capture or expression), so such functions make no
 runtime calls; `fib` runs as fast as from the core IR, and a loop calling an operator 40% faster.
+
+## D36. The tutorial is cut from the code and checked by a test
+
+A tutorial whose code is typed into Markdown drifts from the code it describes. Every listing in
+`docs/tutorial.md` instead names a file and `ANCHOR` regions of it (`rust
+file=examples/kaleidoscope/src/lib.rs anchor=control`), and `examples/kaleidoscope/tests/tutorial.rs`
+checks that each listing is exactly that code, that the listings together show every line of the
+compiler, grammar, runtime and command, and that every command in a `console` block prints what
+the block shows; `A0_BLESS=1` rewrites them after a change. Later chapters add code rather than
+change earlier listings: `match` arms and grammar alternatives that a chapter introduces have
+regions of their own, so the program as it stands after each chapter builds and runs (checked by
+hand for chapters 3 to 5 when the tutorial was written). This is mdBook's anchor convention without
+mdBook, since the tutorial is plain Markdown that GitHub renders.

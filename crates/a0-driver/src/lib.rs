@@ -5,7 +5,8 @@
 //!
 //! ```text
 //! lang run <file> [args...]      interpret the program
-//! lang build <file> [-o output]  compile it to a native executable for the host
+//! lang build <file> [-o output]  compile it to a native executable for the host (`.exe` added
+//!                                on Windows)
 //! lang ir <file>                 print the core IR
 //! lang hir <file>                print the HIR (languages that compile to the HIR)
 //! lang lsp                       serve the Language Server Protocol on stdin and stdout
@@ -123,6 +124,19 @@ pub enum Command {
     Lsp,
 }
 
+/// Where `build` writes the executable: `-o`'s name, or the source file's stem, with the platform's
+/// suffix added when the name has none (Windows cannot run `fib`, only `fib.exe`).
+fn executable_name(file: &str, output: Option<&str>, suffix: &str) -> String {
+    match output {
+        Some(o) if Path::new(o).extension().is_some() => o.to_string(),
+        Some(o) => format!("{o}{suffix}"),
+        None => {
+            let stem = Path::new(file).file_stem().unwrap_or_default();
+            format!("{}{suffix}", stem.to_string_lossy())
+        }
+    }
+}
+
 impl Language {
     /// Runs the driver on the process's command line.
     pub fn main(&self) -> ExitCode {
@@ -204,10 +218,7 @@ impl Language {
                     eprintln!("{}: native code is not supported on this host", self.name);
                     return ExitCode::from(self.exit_codes.internal);
                 };
-                let output = inv.output.unwrap_or_else(|| {
-                    let stem = Path::new(&inv.file).file_stem().unwrap_or_default();
-                    format!("{}{}", stem.to_string_lossy(), target.exe_suffix())
-                });
+                let output = executable_name(&inv.file, inv.output.as_deref(), target.exe_suffix());
                 let mut opts = a0_native::BuildOptions::default();
                 if let Some(libraries) = self.libraries {
                     opts.link.libraries = libraries();
@@ -337,6 +348,20 @@ mod tests {
                 "{bad:?} should not parse"
             );
         }
+    }
+
+    #[test]
+    fn executables_get_the_platform_suffix() {
+        assert_eq!(executable_name("dir/fib.k", None, ".exe"), "fib.exe");
+        assert_eq!(
+            executable_name("fib.k", Some("out/fast"), ".exe"),
+            "out/fast.exe"
+        );
+        assert_eq!(
+            executable_name("fib.k", Some("fast.bin"), ".exe"),
+            "fast.bin"
+        );
+        assert_eq!(executable_name("fib.k", Some("fast"), ""), "fast");
     }
 
     #[test]

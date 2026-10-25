@@ -79,6 +79,10 @@ layer, decision D17). A new crate goes into the table above and into `[workspace
   stress too, optimized and not. The Lox suite must stay at all 241 passing in all six modes.
 - Each example language has `tests/lsp.rs`: its server's outline, definitions, hovers and
   diagnostics on a small program, through `a0_driver::lsp::session`.
+- `docs/tutorial.md` is checked against Kaleidoscope (`examples/kaleidoscope/tests/tutorial.rs`):
+  listings are `ANCHOR` regions of the code, together they must show all of it, and its commands
+  are run. After changing Kaleidoscope, run `A0_BLESS=1 cargo test -p kaleidoscope --test tutorial`
+  to rewrite the listings and outputs, then reread the prose around them.
 - Object emission is checked for every supported target except aarch64-windows (out of scope).
 - Runtime or GC changes: run the Lox suite under GC stress, and prove the stress test still fails
   when roots are broken if you touch rooting.

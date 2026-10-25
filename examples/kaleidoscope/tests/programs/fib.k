@@ -1,4 +1,4 @@
-# Chapter 7 of the tutorial: recursive and iterative fib, ':' as a sequencing operator.
+# LLVM's chapter 7: recursive and iterative fib, ':' as a sequencing operator.
 # expect: 6765.000000
 # expect: 55.000000
 # expect: 832040.000000
