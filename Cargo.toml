@@ -12,6 +12,7 @@ members = [
     "crates/a0-hir",
     "crates/a0-build",
     "crates/a0-driver",
+    "crates/a0-capi",
     "examples/kaleidoscope",
     "examples/lox",
     "examples/minnow",
@@ -36,6 +37,7 @@ a0-sema = { path = "crates/a0-sema" }
 a0-hir = { path = "crates/a0-hir" }
 a0-build = { path = "crates/a0-build" }
 a0-driver = { path = "crates/a0-driver" }
+a0-capi = { path = "crates/a0-capi" }
 
 [profile.dev]
 opt-level = 1

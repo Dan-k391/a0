@@ -526,13 +526,36 @@ One entry per milestone: what was done, what changed along the way, and open que
 - None. Resolution is lexical (a member name refers to every member of that name); renaming,
   completion and find-references are not implemented and can be built on `SyntaxIndex`.
 
+## M16. The C API
+
+**Done**
+
+- `a0-capi` (D33, `docs/c-api.md`, `include/a0.h`): 65 functions over the core IR builder,
+  modules and their text format, the interpreter, the native backend (objects for any supported
+  target, executables for the host), grammars and syntax trees, and HIR text.
+- `tests/host.c`, a C program that uses only the header: it builds a recursive function and a loop
+  with the builder, prints the module and parses it back, runs it, writes an aarch64-linux object
+  and a host executable (which the test then runs), shows that builder misuse comes back as
+  diagnostics, compiles a calculator language (an A0 grammar plus 40 lines of C that walk the tree
+  and emit IR), and runs a HIR program. `tests/c_host.rs` compiles it with the system C compiler,
+  links it with the static library, and checks its output, in CI on every platform.
+- D2 revised: the line holds; four clarifications (text returned from cached `String`s, opcodes by
+  name, consuming methods, `Clone` where C reuses an object).
+
+**Changed**
+
+- `a0_ir::Module` is `Clone`, `SyntaxTree` has `node_count` and `field_name`, for the binding.
+
+**Open questions**
+
+- None. The HIR builder and `SyntaxIndex` are not bound yet; D2 says how they would be.
+
 ## Overall open questions
 
 These need a decision from you:
 
-1. **C-bindable APIs** (M1, D2): is the interpretation in D2 the intended line?
-2. **Flow typing for nullable references** (M11): add it, or keep `x!`?
+1. **Flow typing for nullable references** (M11): add it, or keep `x!`?
 
 Settled since earlier milestones: aarch64-windows is out of scope; the collector lives in `a0rt`
 (D16); linking on Linux and macOS is tested in CI on every push (M8); a reusable language driver
-exists (M7).
+exists (M7); D2's line for C-bindable APIs held when the library was bound in C (M16).

@@ -23,6 +23,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "a0-capi"
+version = "0.1.0"
+dependencies = [
+ "a0-diag",
+ "a0-hir",
+ "a0-interp",
+ "a0-ir",
+ "a0-native",
+ "a0-runtime",
+ "a0-syntax",
+ "cc",
+]
+
+[[package]]
 name = "a0-diag"
 version = "0.1.0"
 

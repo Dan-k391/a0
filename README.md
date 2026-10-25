@@ -37,6 +37,7 @@ it directly.
 | 13. An optimizer of our own, on by default | done: inlining, `any` folding, cleanup; `A0_OPT=0` turns it off |
 | 14. Native Lox at least as fast as its hand-written runtime | done: 0.30 to 0.97 of the old time on every benchmark |
 | 15. A language server for every language | done: `lang lsp` from grammar annotations; a VS Code extension |
+| 16. The C API | done: `a0-capi` and a C program that builds, runs and compiles modules, in CI everywhere |
 
 `docs/milestones.md` has the summary of each milestone and the open questions.
 
@@ -55,6 +56,7 @@ it directly.
 | `crates/a0-runtime` | The C runtime (`include/a0rt.h`, `c/`) and its Rust build glue |
 | `crates/a0-build` | Build-script helper for languages that ship a C runtime library (Kaleidoscope) |
 | `crates/a0-driver` | The command-line driver every example language uses (run, build, ir, hir, lsp) |
+| `crates/a0-capi` | The C API: a static library and `include/a0.h` |
 | `crates/a0` | The `a0` command-line tool |
 | `examples/kaleidoscope` | Kaleidoscope (LLVM's tutorial language) end to end |
 | `examples/lox` | Lox (Crafting Interpreters) end to end, with the official test suite |
@@ -64,6 +66,7 @@ it directly.
 | `AGENTS.md`, `.claude/skills` | How to work on A0: commands, layer rules, conventions, workflows |
 | `docs/ir.md`, `docs/hir.md`, `docs/grammar.md` | Core IR, high-level IR and grammar DSL |
 | `docs/editors.md` | The language server every language gets, and editor setup |
+| `docs/c-api.md` | Using A0 from C |
 | `docs/decisions.md`, `docs/milestones.md` | Design decisions; milestone summaries and open questions |
 
 ## Building and testing

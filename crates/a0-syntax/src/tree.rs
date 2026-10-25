@@ -46,6 +46,15 @@ impl SyntaxTree {
         self.root
     }
 
+    /// The number of nodes; `NodeId`s are below it.
+    pub fn node_count(&self) -> u32 {
+        self.nodes.len() as u32
+    }
+
+    pub fn field_name(&self, field: FieldId) -> &str {
+        &self.names.fields[field.0 as usize]
+    }
+
     pub fn source(&self) -> SourceId {
         self.source
     }

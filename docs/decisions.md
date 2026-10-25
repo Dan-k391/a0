@@ -20,6 +20,18 @@ signatures: types with lifetime parameters, generic parameters or trait objects,
 enums carrying data. Plain `#[repr(u8)]` enums are fine. `Option<T>` and `Result<T, Diagnostics>`
 are used where a C API would use a sentinel or a status code plus an out-parameter.
 
+Revised in M16, after binding the core IR, interpreter, native backend, grammar and HIR text APIs in
+C (`a0-capi`, D33): the line holds, and binding was mechanical, about 15 lines of C API per Rust
+function at most. Four clarifications came out of it. Text a Rust API produces as an owned `String`
+(a module printed, diagnostics summarized) is kept in the C wrapper object and returned borrowed, so
+APIs may return `String` where they compute text. Enums with many variants that have a text form
+(opcodes, comparison conditions) are bound by their names, which cannot drift from the Rust side.
+A method that takes `self` (`Builder::finish`) consumes the C object. And an object C must keep using
+after an operation that takes ownership needs `Clone` (`Module` gained it for `a0_run`). Not yet
+bound, and slightly outside the line where they are: the HIR builder, whose `Item` enum carries
+data (a binding would split it into a kind and a handle), and `SyntaxIndex`, whose `IndexedToken`
+holds an `Option` (a binding would use `A0_NONE`).
+
 ## D3. Structured IR with mutable variables
 
 The IR has no basic blocks: `if`/`loop` own nested regions, values are lexically scoped, and mutable
@@ -315,3 +327,16 @@ dependencies outside the workspace. The server is single-threaded, keeps whole d
 re-analyzes a document on every change; the example languages compile in milliseconds, so there is
 no need yet for incremental analysis or cancellation. Editors are reached through the protocol only:
 `editors/vscode` is a generic client that starts `<command> lsp` for configured file types.
+
+## D33. The C API is a static library over the library crates, with names for opcodes
+
+`a0-capi` binds the library crates, not the driver (D20): a C host builds and verifies core IR,
+prints and parses it, runs it in the interpreter, compiles it to objects or executables, parses
+with grammars, and lowers HIR text. It is a static library, so a host links one file plus the system
+libraries Rust needs, and nothing has to be installed at run time; a shared library would add a
+loader path to every platform's setup. Instructions and conditions are passed by their text-format
+names, types by a small enum. Mistakes C can make with a builder (an unknown name, a bad type
+code) are recorded and reported by `a0_builder_finish` with the builder's and the verifier's
+findings, so the C side, like the Rust side, never crashes on misuse. A C program in the test suite
+(`tests/host.c`) exercises all of it and is compiled and run by the system C compiler in CI on every
+platform.

@@ -16,6 +16,7 @@ pub(crate) struct Signature {
     pub ret: Option<Type>,
 }
 
+#[derive(Clone)]
 pub(crate) struct FuncData {
     pub name: String,
     pub sig: SigId,
@@ -23,12 +24,14 @@ pub(crate) struct FuncData {
     pub span: Option<Span>,
 }
 
+#[derive(Clone)]
 pub(crate) struct BodyData {
     pub params: Vec<Value>,
     pub vars: Vec<Var>,
     pub entry: Region,
 }
 
+#[derive(Clone)]
 pub(crate) enum GlobalInit {
     /// Read-only bytes (`data`).
     Data(Vec<u8>),
@@ -36,6 +39,7 @@ pub(crate) enum GlobalInit {
     Scalar(Type, u64),
 }
 
+#[derive(Clone)]
 pub(crate) struct GlobalData {
     pub name: String,
     pub init: GlobalInit,
@@ -48,6 +52,7 @@ pub(crate) enum ValueDef {
     Inst(Inst),
 }
 
+#[derive(Clone)]
 pub(crate) struct ValueData {
     pub ty: Type,
     pub name: Option<String>,
@@ -55,12 +60,14 @@ pub(crate) struct ValueData {
     pub def: ValueDef,
 }
 
+#[derive(Clone)]
 pub(crate) struct VarData {
     pub ty: Type,
     pub name: Option<String>,
     pub func: FuncId,
 }
 
+#[derive(Clone)]
 pub(crate) struct InstData {
     pub opcode: Opcode,
     pub result: Value,
@@ -75,6 +82,7 @@ pub(crate) struct InstData {
     pub span: Option<Span>,
 }
 
+#[derive(Clone)]
 pub(crate) struct RegionData {
     pub insts: Vec<Inst>,
     pub func: FuncId,
@@ -90,6 +98,7 @@ pub enum Item {
 }
 
 /// An IR module. Build one with [`crate::Builder`] or [`crate::parse`].
+#[derive(Clone)]
 pub struct Module {
     pub(crate) name: String,
     pub(crate) items: Vec<Item>,

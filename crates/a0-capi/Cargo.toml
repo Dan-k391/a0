@@ -1,0 +1,21 @@
+[package]
+name = "a0-capi"
+description = "A0's C API: build, run and compile modules from C (include/a0.h)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+crate-type = ["staticlib", "rlib"]
+
+[dependencies]
+a0-diag.workspace = true
+a0-ir.workspace = true
+a0-interp.workspace = true
+a0-native.workspace = true
+a0-runtime.workspace = true
+a0-syntax.workspace = true
+a0-hir.workspace = true
+
+[dev-dependencies]
+cc = "1.2"

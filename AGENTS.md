@@ -37,6 +37,7 @@ extension in `editors/vscode` starts it.
 | runtime | `a0-runtime` (C in `include/`, `c/`; Rust glue) | nothing |
 | backends | `a0-interp`, `a0-native` | `a0-ir`, `a0-runtime`, `a0-target`, `a0-diag` |
 | tools | `a0` (CLI), `a0-build` (build-script helper), `a0-driver` (language drivers) | anything |
+| C API | `a0-capi` (`include/a0.h`) | library crates, not the tools |
 | examples | `examples/*` | anything |
 | editors | `editors/vscode` (an extension that starts `lang lsp`; JavaScript) | nothing in Rust |
 
