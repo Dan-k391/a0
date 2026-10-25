@@ -724,3 +724,19 @@ run -` in a process of its own, and shows the output beyond what was shown befor
 earlier statements run again (output is not repeated, other side effects are), and an input costs
 a run of the whole session. Inputs that fail are dropped, so the session always runs; the grammar
 tells declarations from statements and unfinished lines, so a language needs at most one line.
+
+## D62. The benchmark is a script over pinned references, outside CI
+
+The benchmark should be small, honest and reproducible. `bench/run.py` (Python 3, which the
+bindings' tests already need) builds A0's languages and the references, checks that every
+implementation prints the same, and reports medians of wall-clock times. The references are
+fetched at pinned versions rather than copied into the repository: clox at a fixed commit of
+Crafting Interpreters, and the Kaleidoscope tutorial's chapter 7 at the tag of the installed LLVM,
+since it must build against that LLVM. Lox uses the book's own benchmark programs, and Go is the
+garbage-collected reference for Minnow.
+
+LLVM's tutorial is a JIT that compiles a function when a call first needs it. So its compile time
+is the same program with its calls doing no work, and its run time is the rest of the full run.
+The script runs on Linux and macOS, not in CI: timings on shared runners are noise, and the goal
+is a picture rather than a gate. Rejected: a timing tool such as hyperfine (one more thing to
+install, for medians that the script takes itself), and copying the references' sources.

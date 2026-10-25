@@ -6,6 +6,12 @@ APIs. `docs/milestones.md` has the details of each step, with measurements.
 
 ## [Unreleased]
 
+### Added
+
+- **A benchmark** (`docs/benchmarks.md`, `bench/run.py`): Kaleidoscope against LLVM's tutorial,
+  Minnow against C (clang -O0 and -O2) and Go, Lox against clox; compile and run times with the
+  optimizer on and off, medians of repeated runs, every tool's version, and where A0 loses and why.
+
 ## [0.4.0] - 2026-10-25
 
 Tooling for language users: every language gets a debugger, native debug information, a REPL, and

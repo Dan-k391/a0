@@ -1,0 +1,319 @@
+#!/usr/bin/env python3
+"""A0's benchmark (docs/benchmarks.md): builds A0's languages and the references, checks that they
+print the same, and times compiling and running each program, reporting medians.
+
+    python3 bench/run.py [--runs N] [--out target/bench/results.md]
+
+Needs, besides Rust: clang, llvm-config (LLVM's development files, for LLVM's own Kaleidoscope)
+and Go. On Ubuntu: `sudo apt install clang llvm-dev zlib1g-dev libzstd-dev golang-go`. The
+reference sources are fetched at pinned versions: clox from Crafting Interpreters, and the
+Kaleidoscope tutorial's chapter 7 from the LLVM release that is installed. Linux and macOS.
+"""
+
+import argparse
+import os
+import platform
+import re
+import shutil
+import statistics
+import subprocess
+import sys
+import time
+import urllib.request
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+BENCH = ROOT / "bench"
+WORK = ROOT / "target" / "bench"
+CLOX_COMMIT = "4a840f70f69c6ddd17cfef4f6964f8e1bcd8c3d4"
+CLOX_FILES = [
+    "chunk.c", "chunk.h", "common.h", "compiler.c", "compiler.h", "debug.c", "debug.h", "main.c",
+    "memory.c", "memory.h", "object.c", "object.h", "scanner.c", "scanner.h", "table.c", "table.h",
+    "value.c", "value.h", "vm.c", "vm.h",
+]
+# The book's benchmarks but string_equality, which clox rejects (more than 256 constants in a
+# chunk), and zoo_batch, which runs for a fixed time instead of a fixed amount of work.
+LOX_PROGRAMS = ["fib", "binary_trees", "method_call", "invocation", "equality", "zoo"]
+NATIVE = ["fib", "sieve", "nbody", "binarytrees"]
+# Each Kaleidoscope program's last line with the same calls doing no work, for LLVM's tutorial:
+# its JIT compiles a function when a call first needs it, so the calls must stay.
+TRIVIAL = {
+    "fib": "printd(fib(1));",
+    "mandel": "printd(mandelsum(0, 0, 0, 0.003, 0.0025));",
+}
+
+
+def sh(cmd, **kw):
+    return subprocess.run(cmd, check=True, capture_output=True, text=True, **kw)
+
+
+def first_line(cmd):
+    try:
+        out = subprocess.run(cmd, capture_output=True, text=True)
+        return (out.stdout or out.stderr).strip().splitlines()[0]
+    except OSError:
+        return None
+
+
+def timed(cmd, runs, env=None, stdin=None, expect=None):
+    """The median wall time of `runs` runs of `cmd`, and its output (checked against `expect`)."""
+    times = []
+    out = None
+    for _ in range(runs):
+        start = time.perf_counter()
+        r = subprocess.run(cmd, capture_output=True, text=True, env={**os.environ, **(env or {})},
+                           input=stdin)
+        times.append(time.perf_counter() - start)
+        if r.returncode != 0:
+            raise RuntimeError(f"{cmd} failed:\n{r.stdout}{r.stderr}")
+        out = r.stdout
+    if expect is not None and out != expect:
+        raise RuntimeError(f"{cmd} printed\n{out}\ninstead of\n{expect}")
+    return statistics.median(times), out
+
+
+def fetch(url, path):
+    if not path.exists():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with urllib.request.urlopen(url) as r:
+            path.write_bytes(r.read())
+
+
+def code_lines(paths, comment):
+    """Lines that are neither blank nor only a comment."""
+    n = 0
+    block = False
+    for p in paths:
+        for line in Path(p).read_text().splitlines():
+            s = line.strip()
+            if block:
+                block = "*/" not in s
+                continue
+            if not s or any(s.startswith(c) for c in comment):
+                continue
+            if s.startswith("/*"):
+                block = "*/" not in s
+                continue
+            n += 1
+    return n
+
+
+def ms(seconds):
+    return f"{seconds * 1000:.0f} ms" if seconds < 10 else f"{seconds:.1f} s"
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--runs", type=int, default=5)
+    parser.add_argument("--out", default=str(WORK / "results.md"))
+    args = parser.parse_args()
+    runs = args.runs
+    WORK.mkdir(parents=True, exist_ok=True)
+    for tool in ["clang", "clang++", "llvm-config", "go", "cargo"]:
+        if shutil.which(tool) is None:
+            sys.exit(f"bench: {tool} is missing (see the top of this file)")
+
+    print("building A0's languages (release)", file=sys.stderr)
+    sh(["cargo", "build", "--release", "--locked", "-p", "a0", "-p", "minnow", "-p", "lox", "-p",
+        "kaleidoscope"], cwd=ROOT)
+    target = Path(os.environ.get("CARGO_TARGET_DIR", ROOT / "target")) / "release"
+    a0, minnow, lox, kaleidoscope = (str(target / n) for n in ("a0", "minnow", "lox", "kaleidoscope"))
+
+    # References.
+    clox_dir = WORK / "clox"
+    for f in CLOX_FILES:
+        fetch(f"https://raw.githubusercontent.com/munificent/craftinginterpreters/{CLOX_COMMIT}/c/{f}",
+              clox_dir / f)
+    clox = str(WORK / "clox-bin")
+    clox_flags = ["-O2", "-std=c99", "-w"]
+    sh(["clang", *clox_flags, *[str(clox_dir / f) for f in CLOX_FILES if f.endswith(".c")], "-o", clox])
+    llvm_version = sh(["llvm-config", "--version"]).stdout.strip()
+    tutorial = f"https://raw.githubusercontent.com/llvm/llvm-project/llvmorg-{llvm_version}/llvm/examples/Kaleidoscope"
+    toy_dir = WORK / f"kaleidoscope-llvm-{llvm_version}"
+    fetch(f"{tutorial}/Chapter7/toy.cpp", toy_dir / "toy.cpp")
+    fetch(f"{tutorial}/include/KaleidoscopeJIT.h", toy_dir / "include" / "KaleidoscopeJIT.h")
+    toy = str(WORK / "kaleidoscope-llvm")
+    llvm_flags = sh(["llvm-config", "--cxxflags", "--ldflags", "--system-libs", "--libs", "core",
+                     "orcjit", "native"]).stdout.split()
+    toy_build = ["clang++", "-O2", "-rdynamic", f"-I{toy_dir / 'include'}", str(toy_dir / "toy.cpp"),
+                 *llvm_flags, "-o", toy]
+    sh(toy_build)
+
+    report = []
+    w = report.append
+    w("## Tools\n")
+    w(f"- Machine: {platform.machine()}, {platform.platform()}, {os.cpu_count()} threads")
+    try:
+        cpu = [l for l in Path("/proc/cpuinfo").read_text().splitlines() if l.startswith("model name")]
+        if cpu:
+            w(f"- CPU: {cpu[0].split(':', 1)[1].strip()}")
+    except OSError:
+        pass
+    git = sh(["git", "describe", "--always", "--dirty"], cwd=ROOT).stdout.strip()
+    w(f"- A0: {git}, {first_line(['rustc', '--version'])}, Cranelift 0.137, release build")
+    w(f"- {first_line(['clang', '--version'])}")
+    w(f"- `cc`, which A0 links with: {first_line(['cc', '--version'])}")
+    w(f"- LLVM {llvm_version} (the Kaleidoscope tutorial, chapter 7, built with `clang++ -O2`)")
+    w(f"- {first_line(['go', 'version'])}")
+    w(f"- clox at craftinginterpreters {CLOX_COMMIT[:12]}, built with `clang {' '.join(clox_flags)}`")
+    w(f"- Times are medians of {runs} runs (wall clock); compile times include linking.\n")
+
+    # Kaleidoscope: A0 against LLVM's tutorial.
+    w("## Kaleidoscope: A0 against LLVM's tutorial\n")
+    a0_k = [ROOT / "examples/kaleidoscope/kaleidoscope.a0g", *sorted((ROOT / "examples/kaleidoscope/src").glob("*.rs")),
+            *sorted((ROOT / "examples/kaleidoscope/runtime").glob("*.c")), ROOT / "examples/kaleidoscope/build.rs"]
+    loc_a0 = code_lines(a0_k, ["//", "#"])
+    loc_llvm = code_lines([toy_dir / "toy.cpp", toy_dir / "include" / "KaleidoscopeJIT.h"], ["//"])
+    w(f"Lines of code (without blank lines and comments): A0's Kaleidoscope {loc_a0} (grammar, "
+      f"compiler, driver, runtime); LLVM's chapter 7 {loc_llvm} (`toy.cpp` and `KaleidoscopeJIT.h`).\n")
+    w("| Program | A0 build | no HIR optimizer | A0 native run | no HIR optimizer | A0 interpreted | LLVM JIT: startup and compile | LLVM JIT: run |")
+    w("|---|---|---|---|---|---|---|---|")
+    for prog in ["fib", "mandel"]:
+        src = BENCH / "kaleidoscope" / f"{prog}.k"
+        exe = str(WORK / f"k-{prog}")
+        build, _ = timed([kaleidoscope, "build", str(src), "-o", exe], runs)
+        build0, _ = timed([kaleidoscope, "build", str(src), "-o", exe + "-noopt"], runs, env={"A0_OPT": "0"})
+        run, out = timed([exe], runs)
+        run0, _ = timed([exe + "-noopt"], runs, expect=out)
+        interp, _ = timed([kaleidoscope, "run", str(src)], max(1, runs // 2), expect=out)
+        # LLVM's tutorial reads the program from standard input, compiles each top-level
+        # expression with its JIT as it comes and runs it; printd writes to standard error. The
+        # same program with the same calls doing no work gives startup and compilation, the rest
+        # is running.
+        text = src.read_text()
+        trivial = re.sub(r"printd\((.*)\);\s*$", lambda _: TRIVIAL[prog], text.strip()) + "\n"
+        assert trivial != text.strip() + "\n", prog
+        full = timed_toy(toy, text, runs, expect=out.strip())
+        empty = timed_toy(toy, trivial, runs)
+        w(f"| {prog} | {ms(build)} | {ms(build0)} | {ms(run)} | {ms(run0)} | {ms(interp)} | {ms(empty)} | "
+          f"{ms(max(full - empty, 0))} |")
+    w("")
+
+    # Minnow against C and Go.
+    w("## Minnow against C and Go\n")
+    w("| Program | Minnow build | no HIR optimizer | clang -O0 | clang -O2 | go build | Minnow run | no HIR optimizer | clang -O0 | clang -O2 | Go |")
+    w("|---|---|---|---|---|---|---|---|---|---|---|")
+    for prog in NATIVE:
+        mn = BENCH / "minnow" / f"{prog}.mn"
+        exe = str(WORK / f"mn-{prog}")
+        b_mn, _ = timed([minnow, "build", str(mn), "-o", exe], runs)
+        b_mn0, _ = timed([minnow, "build", str(mn), "-o", exe + "-noopt"], runs, env={"A0_OPT": "0"})
+        c = BENCH / "c" / f"{prog}.c"
+        b_c0, _ = timed(["clang", "-O0", str(c), "-lm", "-o", str(WORK / f"c-{prog}-O0")], runs)
+        b_c2, _ = timed(["clang", "-O2", str(c), "-lm", "-o", str(WORK / f"c-{prog}-O2")], runs)
+        go = BENCH / "go" / f"{prog}.go"
+        b_go = go_build(go, WORK / f"go-{prog}", runs)
+        r_c2, out = timed([str(WORK / f"c-{prog}-O2")], runs)
+        r_c0, _ = timed([str(WORK / f"c-{prog}-O0")], runs, expect=out)
+        r_go, _ = timed([str(WORK / f"go-{prog}")], runs, expect=out)
+        r_mn, _ = timed([exe], runs, expect=out)
+        r_mn0, _ = timed([exe + "-noopt"], runs, expect=out)
+        w(f"| {prog} | {ms(b_mn)} | {ms(b_mn0)} | {ms(b_c0)} | {ms(b_c2)} | {ms(b_go)} | {ms(r_mn)} | "
+          f"{ms(r_mn0)} | {ms(r_c0)} | {ms(r_c2)} | {ms(r_go)} |")
+    w("")
+    w(f"A0's collector in `binarytrees` (`A0_GC_STATS=1`): {gc_stats(str(WORK / 'mn-binarytrees'))}.\n")
+
+    # Where a build's time goes. Each of A0's steps includes the ones before it (the object file
+    # from the IR text); A0 links with `cc`, or `$CC`, like the C programs' links beside it.
+    cc = os.path.realpath(shutil.which(os.environ.get("CC", "cc")))
+    w(f"Where Minnow's build time goes (`cc` is {Path(cc).name}):\n")
+    w("| Program | to HIR | to IR | object file | executable | executable, `CC=clang` | cc linking a C object | clang linking it |")
+    w("|---|---|---|---|---|---|---|---|")
+    for prog in ["fib", "nbody"]:
+        mn = str(BENCH / "minnow" / f"{prog}.mn")
+        t_hir, _ = timed([minnow, "hir", mn], runs)
+        t_ir, ir = timed([minnow, "ir", mn], runs)
+        ir_file = WORK / f"mn-{prog}.a0ir"
+        ir_file.write_text(ir)
+        t_obj, _ = timed([a0, "obj", str(ir_file), "-o", str(WORK / f"mn-{prog}.o")], runs)
+        t_exe, _ = timed([minnow, "build", mn, "-o", str(WORK / f"mn-{prog}")], runs)
+        t_exe_clang, _ = timed([minnow, "build", mn, "-o", str(WORK / f"mn-{prog}")], runs,
+                               env={"CC": "clang"})
+        obj = str(WORK / f"c-{prog}.o")
+        sh(["clang", "-O0", "-c", str(BENCH / "c" / f"{prog}.c"), "-o", obj])
+        t_cc, _ = timed(["cc", obj, "-lm", "-o", str(WORK / f"c-{prog}-linked")], runs)
+        t_clang, _ = timed(["clang", obj, "-lm", "-o", str(WORK / f"c-{prog}-linked")], runs)
+        w(f"| {prog} | {ms(t_hir)} | {ms(t_ir)} | {ms(t_obj)} | {ms(t_exe)} | {ms(t_exe_clang)} | "
+          f"{ms(t_cc)} | {ms(t_clang)} |")
+    w("")
+
+    # Lox against clox.
+    w("## Lox: A0 against clox\n")
+    w("| Program | A0 build | no HIR optimizer | A0 native run | no HIR optimizer | A0 interpreted | clox |")
+    w("|---|---|---|---|---|---|---|")
+    suite = ROOT / "examples/lox/tests/craftinginterpreters/test/benchmark"
+    for prog in LOX_PROGRAMS:
+        src = suite / f"{prog}.lox"
+        exe = str(WORK / f"lox-{prog}")
+        build, _ = timed([lox, "build", str(src), "-o", exe], runs)
+        build0, _ = timed([lox, "build", str(src), "-o", exe + "-noopt"], runs, env={"A0_OPT": "0"})
+        r_clox, out = timed([clox, str(src)], runs)
+        # The programs print the time they took; the rest must agree.
+        r_native, mine = timed([exe], runs)
+        r_native0, mine0 = timed([exe + "-noopt"], runs)
+        r_interp, mine_i = timed([lox, str(src)], max(1, runs // 2))
+        for o in (mine, mine0, mine_i):
+            if without_times(o) != without_times(out):
+                raise RuntimeError(f"A0's Lox printed\n{o}\ninstead of\n{out}")
+        w(f"| {prog} | {ms(build)} | {ms(build0)} | {ms(r_native)} | {ms(r_native0)} | {ms(r_interp)} | "
+          f"{ms(r_clox)} |")
+    w("")
+    w(f"A0's collector in `binary_trees` (`A0_GC_STATS=1`): {gc_stats(str(WORK / 'lox-binary_trees'))}.\n")
+
+    Path(args.out).write_text("\n".join(report) + "\n")
+    print("\n".join(report))
+
+
+def gc_stats(exe):
+    """What A0's collector reports about a run of `exe`."""
+    r = subprocess.run([exe], capture_output=True, text=True, env={**os.environ, "A0_GC_STATS": "1"})
+    lines = [l for l in r.stderr.splitlines() if l.startswith("gc: ")]
+    return lines[-1][len("gc: "):] if lines else "no report"
+
+
+def without_times(out):
+    """A Lox benchmark's output without the times it prints (numbers with a fraction), and with
+    other numbers as clox prints them (`%g`: zoo's sum is 1e+07 there, 10000002 on A0)."""
+    lines = []
+    for l in out.splitlines():
+        if re.fullmatch(r"-?\d+\.\d+", l):
+            continue
+        try:
+            lines.append(f"{float(l):g}")
+        except ValueError:
+            lines.append(l)
+    return lines
+
+
+def timed_toy(toy, text, runs, expect=None):
+    """The median time of LLVM's tutorial on a program (from standard input). It prints what
+    `printd` prints on standard error, among its prompts."""
+    times = []
+    for _ in range(runs):
+        start = time.perf_counter()
+        r = subprocess.run([toy], input=text, capture_output=True, text=True)
+        times.append(time.perf_counter() - start)
+        if r.returncode != 0:
+            raise RuntimeError(f"LLVM's Kaleidoscope failed:\n{r.stderr}")
+        if expect is not None and expect not in r.stderr:
+            raise RuntimeError(f"LLVM's Kaleidoscope did not print {expect}:\n{r.stderr}")
+    return statistics.median(times)
+
+
+def go_build(src, out, runs):
+    """The median time of `go build`. Go caches what it compiled by content, so each build gets a
+    copy of the source that differs in a comment (the standard library stays cached, as it would
+    for a programmer)."""
+    times = []
+    for i in range(runs):
+        copy = WORK / "go-src" / f"{src.stem}.go"
+        copy.parent.mkdir(parents=True, exist_ok=True)
+        copy.write_text(src.read_text() + f"\n// build {time.time()} {i}\n")
+        start = time.perf_counter()
+        subprocess.run(["go", "build", "-o", str(out), str(copy)], check=True, capture_output=True)
+        times.append(time.perf_counter() - start)
+    return statistics.median(times)
+
+
+if __name__ == "__main__":
+    main()

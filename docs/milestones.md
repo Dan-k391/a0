@@ -845,6 +845,51 @@ One entry per milestone: what was done, what changed along the way, and open que
 - Debugging globals and evaluating expressions beyond names.
 - A Python language has no language server or debugger yet (the driver is not bound to C).
 
+## M22. A lightweight benchmark
+
+**Done**
+
+- `docs/benchmarks.md` and `bench/` (D62). Three comparisons, each A0 with its optimizer on and off:
+  - Kaleidoscope on A0 against LLVM's tutorial: lines of code, compile time and run time.
+  - Minnow against C (clang -O0 and -O2) and Go, on four programs.
+  - Lox on A0 against clox, on six of the book's benchmarks.
+
+  `bench/run.py` reproduces it in about ten minutes on Linux or macOS. It reports compile and run
+  times as medians, checks that every implementation prints the same, records every tool's version
+  and flags, and reports what A0's collector did in the allocation-heavy programs.
+- The results, on one machine:
+  - A0 builds executables in 110–160 ms, of which its own work is 2–6 ms; the rest is the system
+    linker.
+  - Minnow runs at clang -O0's speed on calls and floating point, half of -O2's. It is 3 times
+    slower than C on arrays, half as fast as malloc on allocation, and faster than Go there.
+  - Kaleidoscope's native code is as fast as LLVM's JIT on `fib` and 1.6 times faster on `mandel`,
+    thanks to the HIR optimizer's inlining, which the tutorial's passes do not do.
+  - Native Lox is 2.9 times faster than clox on `fib`, even on `binary_trees`, and 1.3–1.7 times
+    slower on method calls and property access. A0's interpreter is 14–48 times slower than clox.
+
+**Changed**
+
+Nothing in A0 changed for the benchmark. What it found along the way:
+
+- Linking dominates builds. `cc` is gcc's driver on Ubuntu, which takes about 105 ms to link even a
+  C object, against clang's 72 ms; `CC=clang` brings Minnow's builds to 76–85 ms.
+- The tutorial's chapter 7 code (LLVM 18) runs no mem2reg, though the chapter is about it, and LLVM's
+  JIT compiles functions lazily, so a compile time must keep the calls (D62).
+- clox cannot run the book's `string_equality` benchmark (more than 256 constants in a chunk).
+  clox prints numbers with `%g`, where A0's Lox prints integers in full (`1e+07` against
+  `10000002`).
+
+**Open questions**
+
+- Link with clang where `cc` is gcc, or with a faster linker, when one is installed: about 35 ms of
+  every build.
+- Minnow's arrays: a way to allocate n elements, and arrays of `bool` and bytes narrower than a
+  word.
+- Lox: method calls without a bound method (as clox's `OP_INVOKE`), and property names resolved
+  once instead of looked up by string.
+- The collector marks the whole live heap at each collection: half of Lox's `binary_trees` time,
+  41% of Minnow's `binarytrees`.
+
 ## Overall open questions
 
 None at the moment.

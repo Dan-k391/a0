@@ -154,6 +154,7 @@ A0 is not published on crates.io; depend on it from git (`a0-hir = { git =
 | [docs/playground.md](docs/playground.md) | The browser playground: building it, how it works |
 | [docs/debugging.md](docs/debugging.md) | The debugger every language gets, and native debug information |
 | [docs/repl.md](docs/repl.md) | The REPL every language gets |
+| [docs/benchmarks.md](docs/benchmarks.md) | Where A0 stands against LLVM, C, Go and clox: compile and run times |
 | [docs/decisions.md](docs/decisions.md) | Design decisions and why |
 | [docs/milestones.md](docs/milestones.md) | What was built when, with measurements and open questions |
 | [CHANGELOG.md](CHANGELOG.md) | Releases |

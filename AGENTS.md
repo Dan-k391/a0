@@ -13,6 +13,7 @@ cargo test -p lox --test suite      # the official Lox suite only
 cargo test -p a0-capi --test python # the Python bindings and Pebble (needs Python 3)
 WASI_SDK=/path/to/wasi-sdk sh playground/build.sh && node playground/test.mjs target/playground
                                     # the playground, built for WebAssembly (Linux, macOS)
+python3 bench/run.py                # the benchmark (docs/benchmarks.md; Linux, macOS; not in CI)
 cargo clippy --workspace --all-targets   # must report no warnings
 cargo fmt --all                     # run before committing
 ```
@@ -50,6 +51,7 @@ the debugger (`docs/debugging.md`); the VS Code extension in `editors/vscode` st
 | editors | `editors/vscode` (an extension that starts `lang lsp`; JavaScript) | nothing in Rust |
 | bindings | `bindings/python` (the package `a0`, ctypes over the C API's shared library) | the C API |
 | web | `playground/` (the browser playground: a page, a WASI shim and a worker; JavaScript) | the engine's wasm |
+| benchmark | `bench/` (programs in Minnow, Kaleidoscope, C and Go; `run.py`, Python) | the built tools |
 
 Never make a lower layer depend on a higher one, and keep the frontend and the core IR independent
 of each other. `a0-hir` is the one layer that uses both (its text format is parsed with the grammar
@@ -149,6 +151,7 @@ layer, decision D17). A new crate goes into the table above and into `[workspace
 | A design choice with alternatives | a new `D<n>` entry in `docs/decisions.md` |
 | A milestone ends | `docs/milestones.md` (done / changed / open questions); `CHANGELOG.md` (under Unreleased) |
 | A release | `CHANGELOG.md`, the version in `Cargo.toml`, `README.md` status, a `v<version>` tag |
+| What the benchmark measures, or anything that moves its numbers much (codegen, the optimizer, the collector, linking) | `docs/benchmarks.md`, rerunning `bench/run.py` |
 | A workflow or convention | this file and `.claude/skills/` |
 
 ## Commits

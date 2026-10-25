@@ -1,0 +1,43 @@
+// Allocation: many short-lived binary trees and one long-lived one (the Benchmarks Game's
+// binary-trees, maximum depth 16), which the garbage collector has to keep up with.
+struct Node { left: Node?, right: Node? }
+
+fn make(depth: int) -> Node {
+  if depth == 0 {
+    return new Node { left: null, right: null };
+  }
+  return new Node { left: make(depth - 1), right: make(depth - 1) };
+}
+
+fn check(n: Node) -> int {
+  if let l = n.left {
+    if let r = n.right {
+      return 1 + check(l) + check(r);
+    }
+  }
+  return 1;
+}
+
+fn main() {
+  let max_depth = 16;
+  print(str(max_depth + 1) + " " + str(check(make(max_depth + 1))));
+  let long_lived = make(max_depth);
+  let depth = 4;
+  while depth <= max_depth {
+    let iterations = 1;
+    let k = 0;
+    while k < max_depth - depth + 4 {
+      iterations = iterations * 2;
+      k = k + 1;
+    }
+    let total = 0;
+    let i = 0;
+    while i < iterations {
+      total = total + check(make(depth));
+      i = i + 1;
+    }
+    print(str(iterations) + " " + str(depth) + " " + str(total));
+    depth = depth + 2;
+  }
+  print(str(max_depth) + " " + str(check(long_lived)));
+}
