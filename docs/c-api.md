@@ -103,7 +103,10 @@ A0Module *m = a0_hir_lower(h, &d);                      /* then a0_run, a0_build
 
 ## What is bound
 
-Grammars and syntax trees, the HIR builder (every function of `HirBuilder`, by handle and by name),
+Grammars and syntax trees, the HIR builder (every function of `HirBuilder`, by handle and by name,
+including what makes good diagnostics: `a0_hir_set_name_span`, `a0_hir_set_param_span`,
+`a0_hir_set_term`, `a0_hir_report_code` and the functions that add labels, notes and fixes; see
+`docs/diagnostics.md`), the codes of diagnostics (`a0_diagnostics_code`),
 HIR text, the core IR builder and text format, the interpreter (`a0_run`) and the native backend
 (`a0_write_object`, `a0_build_executable`). Not bound: `a0-sema`, `SyntaxIndex` and the driver
 (D20). The runtime and the collector keep global state, so use A0 from one thread at a time.

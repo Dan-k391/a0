@@ -7,9 +7,11 @@
 //! [`HirBuilder::name`], [`HirBuilder::call_named`], [`HirBuilder::assign_named`],
 //! [`HirBuilder::named_type`], [`HirBuilder::new_struct_named`] and [`HirBuilder::variant_named`].
 
+use a0_diag::codes as code;
+use a0_diag::{Diagnostic, Span, similar_name};
 use a0_sema::ScopeKind;
 
-use crate::builder::HirBuilder;
+use crate::builder::{HirBuilder, Problem};
 use crate::model::*;
 
 impl HirBuilder {
@@ -119,9 +121,115 @@ impl HirBuilder {
             .map(|r| LocalId(self.names.data(r.symbol) as u32))
     }
 
-    /// A frontend's own error at the current span.
+    /// A frontend's own error at the current span, without a code.
     pub fn report(&mut self, message: &str) {
-        self.error(message);
+        self.report_code("", message);
+    }
+
+    /// A frontend's own error at the current span, with a code (the language's, or one of A0's
+    /// from `a0_diag::codes`).
+    pub fn report_code(&mut self, code: &str, message: &str) {
+        self.diags
+            .push(Diagnostic::error(code, message).with_span_opt(self.span));
+    }
+
+    /// Says what is wrong at the span of the last error reported.
+    pub fn report_primary_label(&mut self, message: &str) {
+        if let Some(d) = self.diags.last_mut() {
+            d.label = message.to_string();
+        }
+    }
+
+    /// Points the last error reported at a related location, such as an earlier declaration.
+    pub fn report_label(&mut self, span: Span, message: &str) {
+        if let Some(d) = self.diags.last_mut() {
+            d.labels.push(a0_diag::Label {
+                span,
+                message: message.to_string(),
+            });
+        }
+    }
+
+    pub fn report_note(&mut self, note: &str) {
+        if let Some(d) = self.diags.last_mut() {
+            d.notes.push(note.to_string());
+        }
+    }
+
+    pub fn report_help(&mut self, help: &str) {
+        if let Some(d) = self.diags.last_mut() {
+            d.helps.push(help.to_string());
+        }
+    }
+
+    /// Suggests replacing `span` with `text` to fix the last error reported.
+    pub fn report_fix(&mut self, message: &str, span: Span, text: &str) {
+        if let Some(d) = self.diags.last_mut() {
+            *d = std::mem::replace(d, Diagnostic::error("", "")).with_fix(message, span, text);
+        }
+    }
+
+    /// Reports `name` as unknown: a `what` ("name", "function") nothing declares, with the closest
+    /// of `candidates` as a suggestion.
+    fn unknown(&mut self, code: &'static str, what: &str, name: &str, candidates: &[&str]) {
+        let span = self.take_name_span(name);
+        let p = Problem::new(code, format!("unknown {what} `{name}`"));
+        let p = match similar_name(name, candidates) {
+            Some(close) => {
+                let kind = self.kind_of_name(&close);
+                p.similar(&kind, Some(close))
+            }
+            None => p.label("not found in this scope"),
+        };
+        self.diags.push(p.diagnostic(self.span, span));
+    }
+
+    /// What a name in scope is, as in "a variable".
+    fn kind_of_name(&self, name: &str) -> String {
+        let term = if self.lookup_local(name).is_some() {
+            Term::Variable
+        } else {
+            match self.m.lookup_value(name) {
+                Some(Item::Global(_)) => return "a global".to_string(),
+                Some(_) => Term::Function,
+                None if Builtin::from_name(name).is_some() => Term::Function,
+                None => match self.m.lookup_type(name) {
+                    Some(Item::Struct(_)) => Term::Struct,
+                    Some(Item::Enum(_)) => Term::Enum,
+                    _ => return "a type".to_string(),
+                },
+            }
+        };
+        let word = self.m.term(term);
+        let article = if word.starts_with(['a', 'e', 'i', 'o', 'u']) {
+            "an"
+        } else {
+            "a"
+        };
+        format!("{article} {word}")
+    }
+
+    /// The names a value can be referred to by here: locals (innermost first), globals and
+    /// functions, and, for calls, C functions and builtins.
+    fn value_candidates(&self, calls: bool) -> Vec<&str> {
+        let mut out = self.names.visible_names();
+        for (name, item) in &self.m.value_names {
+            let ok = match item {
+                Item::Global(_) | Item::Func(_) => true,
+                Item::Extern(_) => calls,
+                _ => false,
+            };
+            if ok {
+                out.push(name);
+            }
+        }
+        if calls {
+            out.extend(BUILTINS.iter().copied());
+        }
+        // Items come from a map; sort them so that suggestions do not depend on its order.
+        let locals = self.names.visible_names().len();
+        out[locals..].sort_unstable();
+        out
     }
 
     /// A placeholder for an expression that could not be built; its type fits everywhere, so it
@@ -139,11 +247,26 @@ impl HirBuilder {
             Some(Item::Global(g)) => self.global(g),
             Some(Item::Func(f)) => self.func(f),
             Some(Item::Extern(_)) => {
-                self.error(&format!("the C function `{name}` can only be called"));
+                self.problem(
+                    &Problem::new(
+                        code::NOT_A_VALUE,
+                        format!(
+                            "the C {} `{name}` can only be called",
+                            self.m.term(Term::Function)
+                        ),
+                    )
+                    .label("not a value"),
+                );
                 self.error_expr()
             }
             _ => {
-                self.error(&format!("unknown name `{name}`"));
+                let candidates: Vec<String> = self
+                    .value_candidates(false)
+                    .into_iter()
+                    .map(str::to_string)
+                    .collect();
+                let candidates: Vec<&str> = candidates.iter().map(String::as_str).collect();
+                self.unknown(code::UNKNOWN_NAME, "name", name, &candidates);
                 self.error_expr()
             }
         }
@@ -166,7 +289,14 @@ impl HirBuilder {
             _ => match Builtin::from_name(name) {
                 Some(op) => self.builtin(op, args),
                 None => {
-                    self.error(&format!("unknown function `{name}`"));
+                    let candidates: Vec<String> = self
+                        .value_candidates(true)
+                        .into_iter()
+                        .map(str::to_string)
+                        .collect();
+                    let candidates: Vec<&str> = candidates.iter().map(String::as_str).collect();
+                    let what = self.m.term(Term::Function);
+                    self.unknown(code::UNKNOWN_NAME, &what, name, &candidates);
                     self.error_expr()
                 }
             },
@@ -180,12 +310,43 @@ impl HirBuilder {
         }
         match self.m.lookup_value(name) {
             Some(Item::Global(g)) => self.set_global(g, value),
-            Some(Item::Func(_) | Item::Extern(_)) => {
-                self.error(&format!("cannot assign to the function `{name}`"));
+            Some(Item::Func(f)) => {
+                let function = self.m.term(Term::Function);
+                let p = Problem::new(
+                    code::NOT_ASSIGNABLE,
+                    format!("cannot assign to the {function} `{name}`"),
+                )
+                .label(format!("`{name}` is a {function}"))
+                .at(self.m.funcs[f.index()].span, "declared here");
+                self.problem(&p);
+                self.error_expr()
+            }
+            Some(Item::Extern(_)) => {
+                let function = self.m.term(Term::Function);
+                self.problem(&Problem::new(
+                    code::NOT_ASSIGNABLE,
+                    format!("cannot assign to the {function} `{name}`"),
+                ));
                 self.error_expr()
             }
             _ => {
-                self.error(&format!("unknown name `{name}`"));
+                let mut candidates: Vec<String> = self
+                    .names
+                    .visible_names()
+                    .into_iter()
+                    .map(str::to_string)
+                    .collect();
+                let mut globals: Vec<String> = self
+                    .m
+                    .value_names
+                    .iter()
+                    .filter(|(_, i)| matches!(i, Item::Global(_)))
+                    .map(|(n, _)| n.clone())
+                    .collect();
+                globals.sort_unstable();
+                candidates.extend(globals);
+                let candidates: Vec<&str> = candidates.iter().map(String::as_str).collect();
+                self.unknown(code::UNKNOWN_NAME, "name", name, &candidates);
                 self.error_expr()
             }
         }
@@ -225,7 +386,14 @@ impl HirBuilder {
         let item = match self.m.lookup_type(name) {
             Some(item) => item,
             None => {
-                self.error(&format!("unknown type `{name}`"));
+                let mut candidates: Vec<String> =
+                    self.type_scope.iter().map(|(n, _)| n.clone()).collect();
+                let mut declared: Vec<String> = self.m.type_names.keys().cloned().collect();
+                declared.sort_unstable();
+                candidates.extend(declared);
+                candidates.extend(["bool", "int", "float", "string", "any"].map(str::to_string));
+                let candidates: Vec<&str> = candidates.iter().map(String::as_str).collect();
+                self.unknown(code::UNKNOWN_TYPE, "type", name, &candidates);
                 return self.fresh_type();
             }
         };
@@ -250,15 +418,35 @@ impl HirBuilder {
         let count = self.m.struct_field_count(s) as usize;
         let mut slots: Vec<Option<usize>> = vec![None; count];
         let mut ok = true;
+        let field = self.m.term(Term::Field);
+        let decl = self.m.structs[s.index()].span;
         for (k, name) in names.iter().enumerate() {
             match self.m.struct_field_index(s, name) {
                 Some(i) if slots[i as usize].is_some() => {
-                    self.error(&format!("the field `{name}` is given twice"));
+                    let first = slots[i as usize].and_then(|j| self.m.expr_span(values[j]));
+                    let p = Problem::new(
+                        code::FIELD_TWICE,
+                        format!("the {field} `{name}` is given twice"),
+                    )
+                    .at(first, "first given here");
+                    let at = self.m.expr_span(values[k]).or(self.span);
+                    self.problem_at(at, &p);
                     ok = false;
                 }
                 Some(i) => slots[i as usize] = Some(k),
                 None => {
-                    self.error(&format!("`{sname}` has no field `{name}`"));
+                    let fields: Vec<String> = (0..count)
+                        .map(|i| self.m.struct_field(s, i as u32).0.to_string())
+                        .collect();
+                    let fields: Vec<&str> = fields.iter().map(String::as_str).collect();
+                    let p = Problem::new(
+                        code::UNKNOWN_FIELD,
+                        format!("`{sname}` has no {field} `{name}`"),
+                    )
+                    .label(format!("unknown {field}"))
+                    .at(decl, format!("`{sname}` declared here"))
+                    .similar(&format!("a {field}"), similar_name(name, &fields));
+                    self.problem(&p);
                     ok = false;
                 }
             }
@@ -268,10 +456,23 @@ impl HirBuilder {
             .map(|i| format!("`{}`", self.m.struct_field(s, i as u32).0))
             .collect();
         if !missing.is_empty() {
-            self.error(&format!(
-                "missing fields in `{sname}`: {}",
-                missing.join(", ")
-            ));
+            let list = match missing.as_slice() {
+                [one] => one.clone(),
+                [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
+                [] => String::new(),
+            };
+            let what = if missing.len() == 1 {
+                field.clone()
+            } else {
+                format!("{field}s")
+            };
+            let p = Problem::new(
+                code::MISSING_FIELDS,
+                format!("missing {what} {list} in `{sname}`"),
+            )
+            .label(format!("missing {list}"))
+            .at(decl, format!("`{sname}` declared here"));
+            self.problem(&p);
             ok = false;
         }
         if !ok {
@@ -302,11 +503,37 @@ impl HirBuilder {
         match self.m.variant_index(e, name) {
             Some(v) => self.variant(e, v, args),
             None => {
-                let ename = self.m.enum_name(e).to_string();
-                self.error(&format!("`{ename}` has no variant `{name}`"));
+                self.unknown_variant(e, name);
                 self.error_expr()
             }
         }
+    }
+
+    /// Reports that the enum `e` has no variant `name`, suggesting a close one.
+    pub fn unknown_variant(&mut self, e: EnumId, name: &str) {
+        let ename = self.m.enum_name(e).to_string();
+        let variant = self.m.term(Term::Variant);
+        let names: Vec<String> = (0..self.m.variant_count(e))
+            .map(|v| self.m.variant_name(e, v).to_string())
+            .collect();
+        let names: Vec<&str> = names.iter().map(String::as_str).collect();
+        let list: Vec<String> = names.iter().map(|n| format!("`{n}`")).collect();
+        let span = self.take_name_span(name);
+        let p = Problem::new(
+            code::UNKNOWN_VARIANT,
+            format!("`{ename}` has no {variant} `{name}`"),
+        )
+        .label(format!("unknown {variant}"))
+        .at(
+            self.m.enums[e.index()].span,
+            format!("`{ename}` declared here"),
+        )
+        .note(format!(
+            "the {variant}s of `{ename}` are {}",
+            list.join(", ")
+        ))
+        .similar(&format!("a {variant}"), similar_name(name, &names));
+        self.diags.push(p.diagnostic(self.span, span));
     }
 
     /// How diagnostics write types of this kind, in the language's syntax: `{}` stands for the

@@ -2,7 +2,7 @@
 
 use std::process::ExitCode;
 
-use a0_driver::{CompileError, ExitCodes, Language, Program};
+use a0_driver::{Codes, CompileError, ExitCodes, Language, Program};
 
 fn main() -> ExitCode {
     Language {
@@ -16,6 +16,7 @@ fn main() -> ExitCode {
         host_symbols: None,
         libraries: None,
         grammar: Some(minnow::GRAMMAR),
+        codes: Codes::A0,
     }
     .main()
 }

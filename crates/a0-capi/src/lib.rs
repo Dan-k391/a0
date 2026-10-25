@@ -198,6 +198,18 @@ pub unsafe extern "C" fn a0_diagnostics_message(
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn a0_diagnostics_code(
+    d: *const A0Diagnostics,
+    i: usize,
+    len: *mut usize,
+) -> *const c_char {
+    match unsafe { d.as_ref() } {
+        Some(d) if i < d.diags.len() => unsafe { give_str(&d.diags.get(i).code, len) },
+        _ => unsafe { give_str("", len) },
+    }
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn a0_diagnostics_span(
     d: *const A0Diagnostics,
     i: usize,

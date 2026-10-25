@@ -88,102 +88,126 @@ fn precedence_survives_printing() {
 
 #[test]
 fn type_errors_are_reported_with_locations() {
-    let cases: &[(&str, &str)] = &[
+    // (program, code, part of the rendered diagnostic)
+    let cases: &[(&str, &str, &str)] = &[
         (
             "fn main() -> int { 1 + \"x\" }",
-            "mismatched types: expected `int`, found `string`",
+            "E2001",
+            "^^^ expected `int`, found `string`",
         ),
         (
             "fn main() -> int { \"x\" }",
-            "this body evaluates to `string` but must return `int`",
+            "E2001",
+            "`main` returns `int`",
         ),
         (
             "struct P { x: int }\nfn main() -> int { let p = new P { x: 1 }; p.y }",
-            "`P` has no field `y`",
+            "E1003",
+            "no field `y` on type `P`",
         ),
         (
             "enum E { A, B }\nfn main() -> int { match E::A { A => 1 } }",
-            "match does not cover B",
+            "E2014",
+            "`match` does not cover `B`",
         ),
         (
             "fn main() -> int { break; 0 }",
-            "`break` and `continue` can only be used inside a loop",
+            "E3001",
+            "`break` outside of a loop",
         ),
         (
             "fn f() -> int { return \"s\"; }\nfn main() -> int { 0 }",
-            "mismatched types: expected `int`, found `string`",
+            "E2001",
+            "`f` returns `int`",
         ),
         (
             "fn main() -> int { let x = 1; x(2) }",
-            "`int` is not a function",
+            "E2003",
+            "expected a function, found `int`",
         ),
         (
             "fn main() -> int { if let x = 5 { x } else { 0 } }",
+            "E2006",
             "`if let` needs a nullable value, found `int`",
         ),
         (
             "struct P { x: int }\nfn main() -> int { let p = new P { x: 1 }; if let q = p { q.x } else { 0 } }",
+            "E2006",
             "`if let` needs a nullable value, found `P`",
         ),
         (
             "fn main() -> int { let a = [1, 2]; a[\"x\"] }",
-            "mismatched types: expected `int`, found `string`",
+            "E2001",
+            "expected `int`, found `string`",
         ),
         (
             "fn main() -> int { let v = 1 as any; v as array<int>; 0 }",
+            "E2008",
             "cannot convert `any` to `array<int>`",
         ),
         (
             "fn main() -> int { 1 is int; 0 }",
-            "mismatched types: expected `any`, found `int`",
+            "E2001",
+            "expected `any`, found `int`",
         ),
         (
             "fn main() -> int { let m = new map<float, int>; 0 }",
-            "map keys must be int, bool or string",
+            "E2017",
+            "map keys must be integers, booleans or strings",
         ),
         (
             "fn main() -> int { push(1, 2); 0 }",
+            "E2001",
             "`push` needs an array, not `int`",
         ),
         (
             "struct P { x: int }\nfn main() -> int { let p = null<P>; p.x }",
-            "`P?` may be null; narrow it (`if let`) or unwrap it (`!`) before using its fields",
+            "E2007",
+            "this value of type `P?` may be `null`",
         ),
         (
             "struct P { x: int }\nfn main() -> int { let p: P = null<P>; 0 }",
-            "mismatched types: expected `P`, found `P?`",
+            "E2001",
+            "expected `P`, found `P?`",
         ),
         (
             "struct P { x: int }\nglobal g: P;\nfn main() -> int { 0 }",
-            "global 'g' starts as null, so its type must be nullable (`P?`)",
+            "E2010",
+            "the global `g` starts as `null`, so its type must be nullable",
         ),
         (
             "fn main() -> int { let n = 1; n! }",
+            "E2006",
             "`int` is not nullable",
         ),
         (
             "fn main() -> int { let xs = new array<int>; xs[0] }\nfn f() { let ys = []; }",
+            "E2005",
             "cannot infer the type `array<_>`",
         ),
         (
             "fn id<T>(x: T) -> T { x + x }\nfn main() -> int { id(1) }",
+            "E2004",
             "operator `+` cannot be applied to `T`",
         ),
         (
             "fn id<T>(x: T) -> T { x }\nfn main() -> int { id(\"s\") }",
-            "this body evaluates to `string` but must return `int`",
+            "E2001",
+            "`main` returns `int`",
         ),
         (
             "extern fn f(string);\nfn main() -> int { 0 }",
+            "hir.builder",
             "externs take int, float, bool or unit",
         ),
     ];
     let mut failures = Vec::new();
-    for (src, want) in cases {
+    for (src, code, want) in cases {
         let text = format!("module \"m\";\n{src}\n");
         let got = errors(&text);
-        if !got.contains(want) || !got.contains("test.hir:") {
-            failures.push(format!("{src}\n  want: {want}\n  got: {got}"));
+        if !got.contains(want) || !got.contains("test.hir:") || !got.contains(&format!("[{code}]"))
+        {
+            failures.push(format!("{src}\n  want: [{code}] {want}\n  got: {got}"));
         }
     }
     assert!(failures.is_empty(), "\n{}", failures.join("\n"));

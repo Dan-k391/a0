@@ -188,10 +188,12 @@ A frontend walks its syntax tree once and calls `HirBuilder`. Two styles mix fre
   order, keeps their evaluation order and reports unknown, repeated and missing fields;
   `variant_named` and `field_named` look up by name.
 
-Errors are reported at the span set with `set_span`, in user-facing wording; `report` adds a
-language's own errors and `error_expr` stands in for an expression that could not be built (its type
-fits everything, so it causes no further errors). `set_type_syntax(TypeTag::Array, "[{}]")` makes
-diagnostics write types in the language's syntax. Item names are free: one that is a HIR keyword
+Errors are reported at the span set with `set_span`, with codes, related locations and suggested
+fixes, in the language's words (`docs/diagnostics.md`); `report_code` adds a language's own errors
+and `error_expr` stands in for an expression that could not be built (its type fits everything, so
+it causes no further errors). `set_type_syntax(TypeTag::Array, "[{}]")` makes diagnostics write
+types in the language's syntax and `set_term` names its concepts; `set_name_span` and
+`set_param_span` say where names and parameters are, for fixes and related locations. Item names are free: one that is a HIR keyword
 (`map`) or not an identifier is written in backquotes in the text format.
 
 ## Text format

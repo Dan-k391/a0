@@ -165,7 +165,8 @@ fn unoptimized_programs_run_natively() {
     native("unoptimized, native", "0");
 }
 
-/// Compiles `src` and returns each error as `line:col: message`.
+/// Compiles `src` and returns each error as `line:col: message`, followed by `: label` when the
+/// error says what is wrong at its span.
 fn errors(src: &str) -> Vec<String> {
     let mut sm = SourceMap::new();
     let id = sm.add("test.mn", src);
@@ -174,12 +175,18 @@ fn errors(src: &str) -> Vec<String> {
         Err(d) => d
             .as_slice()
             .iter()
-            .map(|d| match d.span {
-                Some(s) => {
-                    let (line, col) = sm.line_col(id, s.start);
-                    format!("{line}:{col}: {}", d.message)
+            .map(|d| {
+                let text = match d.label.as_str() {
+                    "" => d.message.clone(),
+                    label => format!("{}: {label}", d.message),
+                };
+                match d.span {
+                    Some(s) => {
+                        let (line, col) = sm.line_col(id, s.start);
+                        format!("{line}:{col}: {text}")
+                    }
+                    None => text,
                 }
-                None => d.message.clone(),
             })
             .collect(),
     }
@@ -197,20 +204,17 @@ fn compile_errors_are_reported_with_locations() {
         ("fn f(p: Pt) {}", "1:9: unknown type `Pt`"),
         (
             "fn f(a: int) {} fn main() { f(1, 2); }",
-            "1:29: expected 1 argument, found 2",
+            "1:29: this function takes 1 argument but 2 arguments were supplied",
         ),
         (
             "fn main() { let x = 1; x(2); }",
-            "1:24: `int` is not a function",
+            "1:24: expected a function, found `int`",
         ),
         (
             "fn f() -> int { if true { return 1; } }",
             "1:15: this function can end without returning a value of type `int`",
         ),
-        (
-            "fn main() { break; }",
-            "1:13: `break` and `continue` can only be used inside a loop",
-        ),
+        ("fn main() { break; }", "1:13: `break` outside of a loop"),
         (
             "fn main() { 1 = 2; }",
             "1:13: cannot assign to this expression",
@@ -221,11 +225,11 @@ fn compile_errors_are_reported_with_locations() {
         ),
         (
             "struct P { x: int } fn main() { let p = new P { x: 1 }; print(p.z); }",
-            "1:65: `P` has no field `z`",
+            "1:65: no field `z` on type `P`",
         ),
         (
             "struct P { x: int, y: int } fn main() { let p = new P { x: 1 }; }",
-            "1:49: missing fields in `P`: `y`",
+            "1:49: missing field `y` in `P`",
         ),
         (
             "fn main() { print(\"a\" - \"b\"); }",
@@ -233,17 +237,20 @@ fn compile_errors_are_reported_with_locations() {
         ),
         (
             "fn main() { let xs = []; }",
-            "1:22: cannot infer the type `[_]`; add a type annotation",
+            "1:22: cannot infer the type `[_]`",
         ),
         ("fn not_main() {}", "the program has no `main` function"),
         (
             "fn main(x: int) {}",
-            "1:1: `main` must take no parameters and return nothing or an `int`",
+            "1:4: `main` must take no parameters and return nothing or an integer",
         ),
-        ("fn f() {} fn f() {}", "1:11: `f` is declared twice"),
+        (
+            "fn f() {} fn f() {}",
+            "1:14: `f` is declared twice: declared again here",
+        ),
         (
             "fn main() { let a = 1; let a = 2; }",
-            "1:28: `a` is already defined in this scope",
+            "1:28: `a` is already defined in this scope: defined again here",
         ),
         (
             "fn main() { let n = \"a\" as int; }",
@@ -251,7 +258,7 @@ fn compile_errors_are_reported_with_locations() {
         ),
         (
             "fn main() { return 1; }",
-            "1:20: mismatched types: expected `unit`, found `int`",
+            "1:20: mismatched types: expected no value, found `int`",
         ),
         (
             "fn f() -> int { return; }",
@@ -280,15 +287,15 @@ fn compile_errors_are_reported_with_locations() {
         ("fn main() { let x = 1 }", "1:23: expected ';'"),
         (
             "struct N { next: N? } fn main() { let n = new N { next: null }; print(n.next.next); }",
-            "1:73: `N?` may be null; narrow it (`if let`) or unwrap it (`!`) before using its fields",
+            "1:73: this value of type `N?` may be `null`",
         ),
         (
             "fn main() { let s: string = null; }",
-            "1:29: mismatched types: expected `string`, found `_?`",
+            "1:29: mismatched types: expected `string`, found `null`",
         ),
         (
             "fn main() { let n = 1; print(n!); }",
-            "1:30: `int` is not nullable, so there is nothing to unwrap",
+            "1:30: `int` is not nullable",
         ),
         (
             "fn main() { let n = 1; if let m = n { print(m); } }",
@@ -304,11 +311,11 @@ fn compile_errors_are_reported_with_locations() {
         ),
         (
             "enum E { A, B(int) } fn main() { match E::A { A => print(1) } }",
-            "1:34: match does not cover B",
+            "1:40: `match` does not cover `B`",
         ),
         (
             "fn main() { match 1 { _ => print(1) } }",
-            "1:13: cannot match on `int`",
+            "1:19: cannot match on `int`",
         ),
         (
             "fn twice<T>(x: T) -> T { return x + x; } fn main() {}",
@@ -350,9 +357,15 @@ fn compile_errors_are_reported_with_locations() {
 fn errors_do_not_cascade() {
     // One unknown name gives one error, not a chain of mismatches from its unknown type.
     let got = errors("fn main() { let x = y; print(x.f); x(); print(x); }");
-    assert_eq!(got, vec!["1:21: unknown name `y`".to_string()]);
+    assert_eq!(
+        got,
+        vec!["1:21: unknown name `y`: not found in this scope".to_string()]
+    );
     let got = errors("struct P { x: int } fn main() { let p = new P { x: 1 }; print(p.z); }");
-    assert_eq!(got, vec!["1:65: `P` has no field `z`".to_string()]);
+    assert_eq!(
+        got,
+        vec!["1:65: no field `z` on type `P`: unknown field".to_string()]
+    );
     // A later use fixes an earlier unknown type; with no use at all, the program must say it.
     assert_eq!(
         errors("fn main() { let xs = []; print(xs[0]); push(xs, 1); }"),
@@ -361,7 +374,10 @@ fn errors_do_not_cascade() {
     let got = errors("fn main() { let xs = []; print(xs[0]); }");
     assert_eq!(
         got,
-        vec!["1:32: the type of this value must be known here; add a type annotation".to_string()]
+        vec![
+            "1:32: the type of this value must be known here: type must be known at this point"
+                .to_string()
+        ]
     );
 }
 

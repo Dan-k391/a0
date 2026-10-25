@@ -186,8 +186,9 @@ impl Mono<'_> {
             self.out.display_type(inner)
         );
         if !self.diags.as_slice().iter().any(|d| d.message == msg) {
-            self.diags
-                .push(Diagnostic::error("hir.generic", &msg).with_span_opt(span));
+            self.diags.push(
+                Diagnostic::error(a0_diag::codes::VALUE_NOT_NULLABLE, &msg).with_span_opt(span),
+            );
         }
     }
 
@@ -202,6 +203,7 @@ impl Mono<'_> {
             name: name.clone(),
             type_params: Vec::new(),
             fields: Vec::new(),
+            field_spans: def.field_spans.clone(),
             span: def.span,
         });
         self.register_type(&name, Item::Struct(id));
@@ -245,6 +247,7 @@ impl Mono<'_> {
             variants.push(VariantDef {
                 name: v.name.clone(),
                 fields,
+                span: v.span,
             });
         }
         self.out.enums[id.index()].variants = variants;
@@ -317,11 +320,17 @@ impl Mono<'_> {
             return id;
         }
         let data = &self.m.locals[l.index()];
-        let (name, ty, span) = (data.name.clone(), data.ty, data.span);
+        let (name, source_name, ty, span) = (
+            data.name.clone(),
+            data.source_name.clone(),
+            data.ty,
+            data.span,
+        );
         let ty = self.ty(ty, &c.subst);
         let id = LocalId(self.out.locals.len() as u32);
         self.out.locals.push(LocalData {
             name,
+            source_name,
             ty,
             body: out_body,
             span,

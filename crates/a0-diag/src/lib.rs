@@ -5,11 +5,14 @@
 //! [`Span`] is a byte range inside one registered source. Diagnostics render the way rustc's do
 //! (see [`RenderOptions`]).
 
+pub mod codes;
 mod render;
+mod similar;
 
 use std::fmt::Write as _;
 
 pub use render::RenderOptions;
+pub use similar::similar_name;
 
 /// Identifies a source registered in a [`SourceMap`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -322,6 +325,11 @@ impl Diagnostics {
 
     pub fn get(&self, index: usize) -> &Diagnostic {
         &self.items[index]
+    }
+
+    /// The diagnostic pushed last, to add labels, notes or fixes to it.
+    pub fn last_mut(&mut self) -> Option<&mut Diagnostic> {
+        self.items.last_mut()
     }
 
     pub fn as_slice(&self) -> &[Diagnostic] {

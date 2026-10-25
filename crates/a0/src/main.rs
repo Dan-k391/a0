@@ -21,6 +21,7 @@ commands:
                             compile to an object file for any supported target
   parse <grammar.a0g> <file>
                             parse a file with a grammar; print the tree or the errors
+  explain <code>            explain an error code (E2001)
 
 targets: x86_64-linux, aarch64-linux, x86_64-macos, aarch64-macos, x86_64-windows,
          aarch64-windows (or full triples); the default is the host
@@ -41,6 +42,22 @@ fn main() -> ExitCode {
         "build" => build(rest, true),
         "obj" => build(rest, false),
         "parse" => parse_with_grammar(rest),
+        "explain" => match rest {
+            [code] => match a0_diag::codes::explain(code) {
+                Some(c) => {
+                    print!("{}", c.describe(code));
+                    ExitCode::SUCCESS
+                }
+                None => {
+                    eprintln!("a0: no error has the code `{code}`");
+                    ExitCode::from(2)
+                }
+            },
+            _ => {
+                eprint!("{USAGE}");
+                ExitCode::from(2)
+            }
+        },
         "help" | "--help" | "-h" => {
             print!("{USAGE}");
             ExitCode::SUCCESS

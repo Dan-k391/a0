@@ -2,9 +2,10 @@
 //! typing cannot see (returns against the enclosing body, `break` placement, which bodies may use a
 //! local, tree shape).
 
+use a0_diag::codes as code;
 use a0_diag::{Diagnostic, Diagnostics, Span};
 
-use crate::builder::{TypeErr, infer, visit_children};
+use crate::builder::{Problem, TypeErr, infer, visit_children};
 use crate::model::*;
 
 /// Checks a whole module. Typing nodes again may intern types, hence `&mut`.
@@ -59,21 +60,24 @@ fn retype(m: &mut HirModule) -> Diagnostics {
         if ty == TypeId::NEVER || ty == TypeId::ERROR || !m.is_resolved(ty) {
             continue;
         }
-        let (at, message) = match infer(m, &kind, ty) {
+        let (at, problem) = match infer(m, &kind, ty) {
             Ok(t) if m.same(t, ty) => continue,
             Ok(t) => (
                 e,
-                format!(
-                    "expression typed {} should be {}",
-                    m.display_type(ty),
-                    m.display_type(t)
+                Problem::new(
+                    "hir.check",
+                    format!(
+                        "expression typed {} should be {}",
+                        m.display_type(ty),
+                        m.display_type(t)
+                    ),
                 ),
             ),
-            Err(TypeErr::At(at, msg)) => (at.unwrap_or(e), msg),
+            Err(TypeErr::At(at, p)) => (at.unwrap_or(e), p),
             Err(TypeErr::Open(_)) => continue,
         };
         let span = m.exprs[at.index()].span;
-        diags.push(Diagnostic::error("hir.check", &message).with_span_opt(span));
+        diags.push(problem.diagnostic(span, None));
     }
     diags
 }
@@ -101,14 +105,14 @@ pub fn check_entry(m: &HirModule) -> Diagnostics {
             if !m.body_params(body).is_empty() || !matches!(ret, TypeId::INT | TypeId::UNIT) {
                 diags.push(
                     Diagnostic::error(
-                        "hir.entry",
-                        "`main` must take no parameters and return nothing or an `int`",
+                        code::BAD_ENTRY,
+                        "`main` must take no parameters and return nothing or an integer",
                     )
                     .with_span_opt(m.funcs[f.index()].span),
                 );
             }
         }
-        _ => diags.error("hir.entry", "the program has no `main` function", None),
+        _ => diags.error(code::NO_ENTRY, "the program has no `main` function", None),
     }
     diags
 }
@@ -121,10 +125,14 @@ struct Checker<'a> {
 }
 
 impl Checker<'_> {
+    /// A malformed module: a bug in the language that built it.
     fn error(&mut self, e: ExprId, message: &str) {
+        self.problem(e, &Problem::new("hir.check", message));
+    }
+
+    fn problem(&mut self, e: ExprId, p: &Problem) {
         let span = self.m.exprs[e.index()].span;
-        self.diags
-            .push(Diagnostic::error("hir.check", message).with_span_opt(span));
+        self.diags.push(p.diagnostic(span, None));
     }
 
     fn body(&mut self, body: BodyId, span: Option<Span>) {
@@ -182,14 +190,30 @@ impl Checker<'_> {
                 }
             }
             ExprKind::Return(None) if m.body_ret(body) != TypeId::UNIT => {
-                let msg = format!(
-                    "this function must return a value of type `{}`",
-                    m.display_type(m.body_ret(body))
-                );
-                self.error(e, &msg);
+                let ret = m.quote_type(m.body_ret(body));
+                let decl = match m.bodies[body.index()].parent {
+                    None => m.funcs[m.bodies[body.index()].func.index()].span,
+                    Some(_) => None,
+                };
+                let p = Problem::new(
+                    code::BAD_RESULT,
+                    format!(
+                        "this {} must return a value of type {ret}",
+                        m.term(Term::Function)
+                    ),
+                )
+                .label(format!("returns no value, but {ret} is expected"))
+                .at(decl, format!("returns {ret}"));
+                self.problem(e, &p);
             }
             ExprKind::Break | ExprKind::Continue if loops == 0 => {
-                self.error(e, "`break` and `continue` can only be used inside a loop");
+                let what = m.term(match data.kind {
+                    ExprKind::Break => Term::Break,
+                    _ => Term::Continue,
+                });
+                let p = Problem::new(code::OUTSIDE_LOOP, format!("{what} outside of a loop"))
+                    .label(format!("cannot {what} outside of a loop"));
+                self.problem(e, &p);
             }
             ExprKind::Lambda(b) => {
                 self.body_uses[b.index()] += 1;

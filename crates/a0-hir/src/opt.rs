@@ -336,10 +336,16 @@ impl Opt<'_> {
         locals: &mut HashMap<LocalId, LocalId>,
     ) -> LocalId {
         let data = &self.m.locals[l.index()];
-        let (name, ty, span) = (data.name.clone(), data.ty, data.span);
+        let (name, source_name, ty, span) = (
+            data.name.clone(),
+            data.source_name.clone(),
+            data.ty,
+            data.span,
+        );
         let id = LocalId(self.m.locals.len() as u32);
         self.m.locals.push(LocalData {
             name: format!("{name}_inl"),
+            source_name,
             ty,
             body,
             span,
@@ -585,10 +591,16 @@ impl Opt<'_> {
                 continue;
             };
             let data = &self.m.locals[l.index()];
-            let (name, body, span) = (format!("{}_raw", data.name), data.body, data.span);
+            let (name, source_name, body, span) = (
+                format!("{}_raw", data.name),
+                data.source_name.clone(),
+                data.body,
+                data.span,
+            );
             let raw = LocalId(self.m.locals.len() as u32);
             self.m.locals.push(LocalData {
                 name,
+                source_name,
                 ty: t,
                 body,
                 span,

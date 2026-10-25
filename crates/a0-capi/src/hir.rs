@@ -11,7 +11,7 @@ use std::ptr;
 use a0_diag::{Diagnostic, Diagnostics, Span};
 use a0_hir::{
     ArmId, BinOp, BodyId, Builtin, EnumId, ExprId, ExternId, FuncId, GlobalId, HirBuilder, Item,
-    LocalId, StructId, TypeId, TypeTag, UnOp,
+    LocalId, StructId, Term, TypeId, TypeTag, UnOp,
 };
 
 use crate::{A0Diagnostics, A0Hir, NONE, SOURCE, error, free, give, items, report, text};
@@ -420,6 +420,136 @@ pub unsafe extern "C" fn a0_hir_set_type_syntax(
                 }
             };
             h.b.set_type_syntax(tag, &template);
+            Some(())
+        })
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn a0_hir_set_term(
+    b: *mut A0HirBuilder,
+    term: *const c_char,
+    term_len: usize,
+    text_: *const c_char,
+    text_len: usize,
+) {
+    let term = unsafe { text(term, term_len) };
+    let words = unsafe { text(text_, text_len) };
+    unsafe {
+        with_unit(b, |h| {
+            let term = match term.as_ref() {
+                "function" => Term::Function,
+                "closure" => Term::Closure,
+                "struct" => Term::Struct,
+                "enum" => Term::Enum,
+                "variant" => Term::Variant,
+                "field" => Term::Field,
+                "variable" => Term::Variable,
+                "null" => Term::Null,
+                "unwrap" => Term::Unwrap,
+                "narrow" => Term::Narrow,
+                "match" => Term::Match,
+                "break" => Term::Break,
+                "continue" => Term::Continue,
+                other => {
+                    h.fail(format!("'{other}' is not a term"));
+                    return None;
+                }
+            };
+            h.b.set_term(term, &words);
+            Some(())
+        })
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn a0_hir_set_name_span(b: *mut A0HirBuilder, start: u32, end: u32) {
+    unsafe {
+        with_unit(b, |h| {
+            h.b.set_name_span(Some(Span::new(SOURCE, start, end)));
+            Some(())
+        })
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn a0_hir_set_param_span(
+    b: *mut A0HirBuilder,
+    body: u32,
+    index: u32,
+    start: u32,
+    end: u32,
+) {
+    unsafe {
+        with_unit(b, |h| {
+            let body = h.body(body)?;
+            h.b.set_param_span(body, index, Span::new(SOURCE, start, end));
+            Some(())
+        })
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn a0_hir_report_code(
+    b: *mut A0HirBuilder,
+    code: *const c_char,
+    code_len: usize,
+    message: *const c_char,
+    len: usize,
+) {
+    let code = unsafe { text(code, code_len) };
+    let message = unsafe { text(message, len) };
+    unsafe {
+        with_unit(b, |h| {
+            h.b.report_code(&code, &message);
+            Some(())
+        })
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn a0_hir_report_label(
+    b: *mut A0HirBuilder,
+    start: u32,
+    end: u32,
+    message: *const c_char,
+    len: usize,
+) {
+    let message = unsafe { text(message, len) };
+    unsafe {
+        with_unit(b, |h| {
+            h.b.report_label(Span::new(SOURCE, start, end), &message);
+            Some(())
+        })
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn a0_hir_report_note(b: *mut A0HirBuilder, note: *const c_char, len: usize) {
+    let note = unsafe { text(note, len) };
+    unsafe {
+        with_unit(b, |h| {
+            h.b.report_note(&note);
+            Some(())
+        })
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn a0_hir_report_fix(
+    b: *mut A0HirBuilder,
+    message: *const c_char,
+    len: usize,
+    start: u32,
+    end: u32,
+    replacement: *const c_char,
+    replacement_len: usize,
+) {
+    let message = unsafe { text(message, len) };
+    let replacement = unsafe { text(replacement, replacement_len) };
+    unsafe {
+        with_unit(b, |h| {
+            h.b.report_fix(&message, Span::new(SOURCE, start, end), &replacement);
             Some(())
         })
     }

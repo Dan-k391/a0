@@ -7,7 +7,8 @@ Protocol on stdin and stdout. A language needs no code for it. It passes its gra
 
 | Feature | Where it comes from |
 |---|---|
-| Diagnostics | the language's compiler, as it reports errors on the command line (spans become ranges) |
+| Diagnostics | the language's compiler, as it reports errors on the command line: spans become ranges, labels related information, and codes are shown as the language chooses (`docs/diagnostics.md`) |
+| Quick fixes (code actions) | the fixes diagnostics suggest, such as a declared name close to a misspelled one |
 | Highlighting (semantic tokens) | the grammar: keywords, operators, numbers, strings and comments from its tokens; functions, types, parameters, variables and members from `@def` |
 | Outline (document symbols) | `@def`: declarations nested in the declarations around them, without parameters and local variables |
 | Go to definition | `@def` and `@scope`: lexical resolution, every member of that name after `.` or `::` |

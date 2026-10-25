@@ -39,7 +39,7 @@ pub use check::{check, check_entry};
 pub use lower::{LowerOptions, lower, lower_with};
 pub use model::{
     ArmId, BinOp, BodyId, Builtin, EnumId, ExprId, ExternId, FuncId, GlobalId, HirModule, Item,
-    LocalId, StructId, TypeId, TypeTag, UnOp,
+    LocalId, StructId, Term, TypeId, TypeTag, UnOp,
 };
 pub use print::print_module;
 pub use text::parse;

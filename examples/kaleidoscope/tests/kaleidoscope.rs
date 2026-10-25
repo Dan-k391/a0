@@ -133,7 +133,10 @@ fn compile_errors_are_reported_with_locations() {
         // Names are resolved, and calls checked, by A0's HIR builder.
         ("def f(x) y;", "unknown name `y`"),
         ("def f(x) g(x);", "unknown function `g`"),
-        ("def f(x y) x; f(1);", "expected 2 arguments, found 1"),
+        (
+            "def f(x y) x; f(1);",
+            "this function takes 2 arguments but 1 argument was supplied",
+        ),
         ("def f(x) x | 1;", "unknown binary operator '|'"),
         ("def f(x) !x;", "unknown unary operator '!'"),
         (

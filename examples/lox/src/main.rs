@@ -7,7 +7,7 @@
 use std::process::ExitCode;
 
 use a0_diag::Span;
-use a0_driver::{CompileError, ExitCodes, Language, Message, Program};
+use a0_driver::{Codes, CompileError, ExitCodes, Language, Message, Program};
 
 fn main() -> ExitCode {
     Language {
@@ -35,6 +35,7 @@ fn main() -> ExitCode {
         host_symbols: None,
         libraries: None,
         grammar: Some(lox::GRAMMAR),
+        codes: Codes::A0,
     }
     .main()
 }

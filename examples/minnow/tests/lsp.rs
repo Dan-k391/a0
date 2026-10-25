@@ -122,3 +122,56 @@ fn type_errors_are_diagnostics() {
     );
     assert_eq!(start(d).0, 1);
 }
+
+#[test]
+fn misspelled_names_get_a_quick_fix() {
+    let text = "fn main() {\n  let count = 1;\n  print(cuont);\n}\n";
+    let messages = run(text, &[("textDocument/codeAction", 2, 9)]);
+    let d = &messages
+        .iter()
+        .find(|m| m.get("method").as_str() == Some("textDocument/publishDiagnostics"))
+        .unwrap()
+        .get("params")
+        .get("diagnostics")
+        .as_array()[0];
+    assert_eq!(d.get("code").as_str(), Some("E1001"), "{d}");
+    let action = &result(&messages, 1).as_array()[0];
+    assert_eq!(
+        action.get("title").as_str(),
+        Some("a variable with a similar name exists: `count`")
+    );
+    assert_eq!(action.get("kind").as_str(), Some("quickfix"));
+    let edit = &action
+        .get("edit")
+        .get("changes")
+        .get("file:///demo.mn")
+        .as_array()[0];
+    assert_eq!(edit.get("newText").as_str(), Some("count"));
+    assert_eq!(start(edit), (2, 8));
+}
+
+#[test]
+fn related_locations_are_related_information() {
+    let text = "fn f(a: int) {}\nfn main() {\n  f(\"no\");\n}\n";
+    let messages = run(text, &[]);
+    let d = &messages
+        .iter()
+        .find(|m| m.get("method").as_str() == Some("textDocument/publishDiagnostics"))
+        .unwrap()
+        .get("params")
+        .get("diagnostics")
+        .as_array()[0];
+    let related = &d.get("relatedInformation").as_array()[0];
+    assert_eq!(
+        related.get("message").as_str(),
+        Some("parameter declared here")
+    );
+    assert_eq!(start(related.get("location")), (0, 5));
+    assert!(
+        d.get("message")
+            .as_str()
+            .unwrap()
+            .contains("expected `int`, found `string`"),
+        "{d}"
+    );
+}

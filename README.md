@@ -100,6 +100,7 @@ A0 is not published on crates.io; depend on it from git (`a0-hir = { git =
 | [docs/grammar.md](docs/grammar.md) | The grammar language |
 | [docs/hir.md](docs/hir.md) | The high-level IR: types, expressions, building it from a frontend, lowering, optimization |
 | [docs/ir.md](docs/ir.md) | The core IR and its text format |
+| [docs/diagnostics.md](docs/diagnostics.md) | Error messages: how they render, their codes, how a language makes them good |
 | [docs/editors.md](docs/editors.md) | The language server and editor setup |
 | [docs/c-api.md](docs/c-api.md) | Using A0 from C |
 | [docs/decisions.md](docs/decisions.md) | Design decisions and why |

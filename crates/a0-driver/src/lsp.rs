@@ -3,14 +3,15 @@
 //! Everything comes from what a language already gives the driver: diagnostics from its compiler;
 //! highlighting, the outline, go-to-definition and the declarations shown on hover from its grammar's
 //! `@def` and `@scope` annotations ([`SyntaxIndex`]); and types on hover from the HIR its compiler
-//! builds, when it builds one with spans. The server speaks JSON-RPC on stdin and stdout, keeps whole
-//! documents (full sync), and analyzes a document each time it changes.
+//! builds, when it builds one with spans. Diagnostics carry their codes and related locations, and
+//! their suggested fixes are quick fixes (code actions). The server speaks JSON-RPC on stdin and
+//! stdout, keeps whole documents (full sync), and analyzes a document each time it changes.
 
 use std::collections::HashMap;
 use std::io::{self, BufRead, Write};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
-use a0_diag::{Severity, SourceId, SourceMap, Span};
+use a0_diag::{Diagnostic, Fix, Severity, SourceId, SourceMap, Span};
 use a0_hir::{HirModule, Item};
 use a0_syntax::{Grammar, SymbolKind, SyntaxIndex, TokenClass};
 
@@ -137,6 +138,9 @@ struct Document {
     index: Option<SyntaxIndex>,
     hir: Option<HirModule>,
     source: SourceId,
+    /// The suggested fixes of its diagnostics: the diagnostic's range (byte offsets), the
+    /// diagnostic as published, and the fix.
+    fixes: Vec<(u32, u32, Json, Fix)>,
 }
 
 struct Server<'a> {
@@ -232,6 +236,10 @@ pub(crate) fn serve(lang: &Language, input: &mut dyn BufRead, output: &mut dyn W
                 let result = server.hover(params);
                 server.respond(&id, result);
             }
+            "textDocument/codeAction" => {
+                let result = server.code_actions(params);
+                server.respond(&id, result);
+            }
             _ if !id.is_null() => server.error(&id, -32601, "method not supported"),
             _ => {}
         }
@@ -289,11 +297,21 @@ pub fn session(
     ];
     for (i, &(method, line, character)) in requests.iter().enumerate() {
         let position = Json::object([("line", line.into()), ("character", character.into())]);
-        input.push(message(
-            Some(i as u32 + 1),
-            method,
-            Json::object([("textDocument", doc()), ("position", position)]),
-        ));
+        // Code actions are asked for a range; the position stands for an empty one.
+        let params = if method == "textDocument/codeAction" {
+            let range = Json::object([("start", position.clone()), ("end", position)]);
+            Json::object([
+                ("textDocument", doc()),
+                ("range", range),
+                (
+                    "context",
+                    Json::object([("diagnostics", Json::Array(Vec::new()))]),
+                ),
+            ])
+        } else {
+            Json::object([("textDocument", doc()), ("position", position)])
+        };
+        input.push(message(Some(i as u32 + 1), method, params));
     }
     input.push(message(Some(u32::MAX), "shutdown", Json::Null));
     input.push(message(None, "exit", Json::Null));
@@ -379,6 +397,7 @@ impl Server<'_> {
                 Json::object([("openClose", true.into()), ("change", 1u32.into())]),
             ),
             ("positionEncoding".to_string(), "utf-16".into()),
+            ("codeActionProvider".to_string(), true.into()),
         ];
         if self.grammar.is_some() {
             let types = TOKEN_TYPES.iter().map(|&t| t.into()).collect::<Vec<Json>>();
@@ -443,6 +462,7 @@ impl Server<'_> {
         // A compiler bug must not take the editor's language support down with it.
         let compiled = catch_unwind(AssertUnwindSafe(|| compile(&text, source)));
         let mut diagnostics = Vec::new();
+        let mut fixes = Vec::new();
         let mut hir = None;
         let diagnostic = |span: Option<(u32, u32)>, severity: u32, message: &str| {
             let (start, end) = span.unwrap_or((0, 0));
@@ -457,7 +477,7 @@ impl Server<'_> {
             Ok(Ok(Program::Hir(m))) => hir = Some(m),
             Ok(Ok(Program::Ir(_))) => {}
             Ok(Err(CompileError::Diagnostics(ds))) => {
-                for d in ds.as_slice() {
+                for d in self.lang.codes.apply(&ds).as_slice() {
                     let span = match d.span {
                         Some(s) if s.source == source => Some((s.start, s.end)),
                         Some(_) => continue,
@@ -468,12 +488,37 @@ impl Server<'_> {
                         Severity::Warning => 2,
                         Severity::Note => 3,
                     };
-                    let mut message = d.message.clone();
-                    for note in &d.notes {
-                        message.push_str("\nnote: ");
-                        message.push_str(note);
+                    let mut json = diagnostic(span, severity, &full_message(d));
+                    if let Json::Object(fields) = &mut json {
+                        if !d.code.is_empty() {
+                            fields.push(("code".to_string(), d.code.as_str().into()));
+                        }
+                        let related: Vec<Json> = d
+                            .labels
+                            .iter()
+                            .filter(|l| l.span.source == source)
+                            .map(|l| {
+                                let range = lines.range(&text, l.span.start, l.span.end);
+                                Json::object([
+                                    (
+                                        "location",
+                                        Json::object([("uri", uri.into()), ("range", range)]),
+                                    ),
+                                    ("message", l.message.as_str().into()),
+                                ])
+                            })
+                            .collect();
+                        if !related.is_empty() {
+                            fields.push(("relatedInformation".to_string(), related.into()));
+                        }
                     }
-                    diagnostics.push(diagnostic(span, severity, &message));
+                    let (start, end) = span.unwrap_or((0, 0));
+                    for fix in &d.fixes {
+                        if fix.edits.iter().all(|e| e.span.source == source) {
+                            fixes.push((start, end, json.clone(), fix.clone()));
+                        }
+                    }
+                    diagnostics.push(json);
                 }
             }
             Ok(Err(CompileError::Messages(ms))) => {
@@ -502,9 +547,66 @@ impl Server<'_> {
                 index,
                 hir,
                 source,
+                fixes,
             },
         );
         self.publish(uri, diagnostics);
+    }
+
+    /// Quick fixes for the diagnostics in the requested range: their suggested edits.
+    fn code_actions(&self, params: &Json) -> Json {
+        let Some(doc) = self.doc(params) else {
+            return Json::Null;
+        };
+        let Some(uri) = params.get("textDocument").get("uri").as_str() else {
+            return Json::Null;
+        };
+        let range = params.get("range");
+        let offset = |p: &Json| {
+            doc.lines.offset(
+                &doc.text,
+                p.get("line").as_u32().unwrap_or(0),
+                p.get("character").as_u32().unwrap_or(0),
+            )
+        };
+        let (from, to) = (offset(range.get("start")), offset(range.get("end")));
+        let mut actions = Vec::new();
+        for (start, end, diagnostic, fix) in &doc.fixes {
+            if *start > to || *end < from {
+                continue;
+            }
+            let edits: Vec<Json> = fix
+                .edits
+                .iter()
+                .map(|e| {
+                    Json::object([
+                        (
+                            "range",
+                            doc.lines.range(&doc.text, e.span.start, e.span.end),
+                        ),
+                        ("newText", e.text.as_str().into()),
+                    ])
+                })
+                .collect();
+            let title = match fix.edits.as_slice() {
+                [one] if !one.text.is_empty() => format!("{}: `{}`", fix.message, one.text),
+                _ => fix.message.clone(),
+            };
+            actions.push(Json::object([
+                ("title", title.into()),
+                ("kind", "quickfix".into()),
+                ("diagnostics", vec![diagnostic.clone()].into()),
+                ("isPreferred", true.into()),
+                (
+                    "edit",
+                    Json::object([(
+                        "changes",
+                        Json::Object(vec![(uri.to_string(), edits.into())]),
+                    )]),
+                ),
+            ]));
+        }
+        actions.into()
     }
 
     fn publish(&mut self, uri: &str, diagnostics: Vec<Json>) {
@@ -580,6 +682,32 @@ impl Server<'_> {
             ("range", doc.lines.range(&doc.text, token.start, token.end)),
         ])
     }
+}
+
+/// A diagnostic's message as an editor shows it: the message, what is wrong at its span, then its
+/// notes, helps and fixes.
+fn full_message(d: &Diagnostic) -> String {
+    let mut message = d.message.clone();
+    if !d.label.is_empty() {
+        message.push('\n');
+        message.push_str(&d.label);
+    }
+    for note in &d.notes {
+        message.push_str("\nnote: ");
+        message.push_str(note);
+    }
+    for help in &d.helps {
+        message.push_str("\nhelp: ");
+        message.push_str(help);
+    }
+    for fix in &d.fixes {
+        message.push_str("\nhelp: ");
+        message.push_str(&fix.message);
+        if let [one] = fix.edits.as_slice() {
+            message.push_str(&format!(": `{}`", one.text));
+        }
+    }
+    message
 }
 
 fn kind_words(kind: SymbolKind) -> &'static str {
@@ -798,6 +926,7 @@ mod tests {
             host_symbols: None,
             libraries: None,
             grammar: Some(GRAMMAR),
+            codes: crate::Codes::A0,
         }
     }
 

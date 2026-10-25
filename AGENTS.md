@@ -54,6 +54,11 @@ layer, decision D17). A new crate goes into the table above and into `[workspace
   object). Anything public that C should reach gets a binding in `a0-capi` and its header.
 - **Report, don't panic.** Libraries return `Diagnostics` (from `a0-diag`) for anything a user can
   cause. Builders record misuse as diagnostics. `panic!`/`unwrap` only for internal invariants.
+- **Diagnostics as good as rustc's.** A problem a program can have gets its own code in
+  `a0_diag::codes` (with an explanation), a short message, a primary label, related labels where
+  they help (the earlier declaration, the parameter, the result type) and a fix where one is
+  likely. Words come from `Term`s and types from `display_type`/`quote_type`, never the HIR's own
+  spellings. Misuse by a language's code keeps a descriptive code (`hir.builder`).
 - **Interpreter and native code must behave identically**: same output, same stderr, same exit code.
   Traps and panics go through the C runtime (`a0_rt_trap`, exit 101).
 - No new dependencies without a reason recorded in `docs/decisions.md`. Never a code generator other
@@ -98,6 +103,7 @@ layer, decision D17). A new crate goes into the table above and into `[workspace
 | HIR types, expressions, builtins, text format, lowering | `docs/hir.md` (and `hir.a0g` + `print.rs` together) |
 | Grammar DSL (including `@def`/`@scope`) | `docs/grammar.md` |
 | The language server or the editor extension | `docs/editors.md` |
+| Diagnostics: rendering, codes (`a0_diag::codes`), the builder's reporting API | `docs/diagnostics.md` (its code table is tested) |
 | A design choice with alternatives | a new `D<n>` entry in `docs/decisions.md` |
 | A milestone ends | `docs/milestones.md` (done / changed / open questions); `CHANGELOG.md` (under Unreleased) |
 | A release | `CHANGELOG.md`, the version in `Cargo.toml`, `README.md` status, a `v<version>` tag |

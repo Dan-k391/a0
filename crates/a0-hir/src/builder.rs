@@ -7,13 +7,110 @@
 //! type) is typed again by `finish`. A type error is recorded as a diagnostic at the expression it is
 //! about and the node gets `never`, which fits everywhere, so one mistake is reported once.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
+use a0_diag::codes as code;
 use a0_diag::{Diagnostic, Diagnostics, Span};
 use a0_sema::Scopes;
 
 use crate::check::check;
 use crate::model::*;
+
+/// A problem in a program as the builder reports it: a code, a message, what is wrong at the node
+/// itself, related locations, explanations and a likely misspelling.
+pub(crate) struct Problem {
+    pub code: &'static str,
+    pub message: String,
+    pub label: String,
+    pub labels: Vec<(Option<Span>, String)>,
+    pub notes: Vec<String>,
+    pub helps: Vec<String>,
+    /// A declared name close to a misspelled one: what it is ("a field") and the name.
+    pub similar: Option<(String, String)>,
+}
+
+impl Problem {
+    pub(crate) fn new(code: &'static str, message: impl Into<String>) -> Box<Problem> {
+        Box::new(Problem {
+            code,
+            message: message.into(),
+            label: String::new(),
+            labels: Vec::new(),
+            notes: Vec::new(),
+            helps: Vec::new(),
+            similar: None,
+        })
+    }
+
+    /// What is wrong at the node itself.
+    pub(crate) fn label(mut self: Box<Self>, text: impl Into<String>) -> Box<Self> {
+        self.label = text.into();
+        self
+    }
+
+    /// A related location (nothing when its span is unknown).
+    pub(crate) fn at(
+        mut self: Box<Self>,
+        span: Option<Span>,
+        text: impl Into<String>,
+    ) -> Box<Self> {
+        if span.is_some() {
+            self.labels.push((span, text.into()));
+        }
+        self
+    }
+
+    pub(crate) fn note(mut self: Box<Self>, text: impl Into<String>) -> Box<Self> {
+        self.notes.push(text.into());
+        self
+    }
+
+    pub(crate) fn help(mut self: Box<Self>, text: impl Into<String>) -> Box<Self> {
+        self.helps.push(text.into());
+        self
+    }
+
+    /// Suggests `name`, a declared `what` ("a field") close to the misspelled one, if there is one.
+    pub(crate) fn similar(mut self: Box<Self>, what: &str, name: Option<String>) -> Box<Self> {
+        self.similar = name.map(|n| (what.to_string(), n));
+        self
+    }
+
+    /// The diagnostic, at `span`; `name` is where the misspelled name is, for a suggested fix.
+    pub(crate) fn diagnostic(&self, span: Option<Span>, name: Option<Span>) -> Diagnostic {
+        let mut d = Diagnostic::error(self.code, &self.message)
+            .with_span_opt(span)
+            .with_primary_label(&self.label);
+        for (s, text) in &self.labels {
+            if let Some(s) = s {
+                d = d.with_label(*s, text);
+            }
+        }
+        for n in &self.notes {
+            d = d.with_note(n);
+        }
+        for h in &self.helps {
+            d = d.with_help(h);
+        }
+        if let Some((what, n)) = &self.similar {
+            let message = format!("{what} with a similar name exists");
+            d = match name {
+                Some(at) => d.with_fix(&message, at, n),
+                None => d.with_help(&format!("{message}: `{n}`")),
+            };
+        }
+        d
+    }
+}
+
+/// `count` things, as in "1 argument" and "2 arguments".
+pub(crate) fn plural(count: usize, thing: &str) -> String {
+    if count == 1 {
+        format!("1 {thing}")
+    } else {
+        format!("{count} {thing}s")
+    }
+}
 
 /// Names that cannot be used for locals and items because the text format reserves them.
 pub const KEYWORDS: &[&str] = &[
@@ -85,8 +182,12 @@ pub(crate) fn is_identifier(s: &str) -> bool {
 /// Builds a [`HirModule`]. See the crate documentation for an example.
 pub struct HirBuilder {
     pub(crate) m: HirModule,
-    diags: Diagnostics,
-    span: Option<Span>,
+    pub(crate) diags: Diagnostics,
+    pub(crate) span: Option<Span>,
+    /// Where the name in the next node built by name is, for suggested fixes.
+    name_span: Option<Span>,
+    /// Where the names of nodes built by name are, for problems found when they are typed again.
+    name_spans: HashMap<ExprId, Span>,
     /// Nodes whose typing rule needed a type that was still open, with their hints.
     deferred: Vec<(ExprId, TypeId)>,
     // State of the name-based helpers in `frontend.rs`.
@@ -111,6 +212,8 @@ impl HirBuilder {
             m,
             diags: Diagnostics::new(),
             span: None,
+            name_span: None,
+            name_spans: HashMap::new(),
             deferred: Vec::new(),
             names: Scopes::new(),
             shadow_scopes: Vec::new(),
@@ -128,14 +231,48 @@ impl HirBuilder {
         self.span = span;
     }
 
-    pub(crate) fn error(&mut self, message: &str) {
-        self.diags
-            .push(Diagnostic::error("hir.type", message).with_span_opt(self.span));
+    /// Where the name is in what is built next by name (a name, a call, a field, a variant or a
+    /// type), when it is not the whole current span: misspelled names then get a fix that editors
+    /// can apply. It applies to one node.
+    pub fn set_name_span(&mut self, span: Option<Span>) {
+        self.name_span = span;
     }
 
-    fn error_at(&mut self, span: Option<Span>, message: &str) {
-        self.diags
-            .push(Diagnostic::error("hir.type", message).with_span_opt(span));
+    /// The span of `name` in what is being built: the one the frontend gave, or the current span
+    /// if it is exactly as long as the name.
+    pub(crate) fn take_name_span(&mut self, name: &str) -> Option<Span> {
+        self.name_span
+            .take()
+            .or(self.span.filter(|s| s.len() as usize == name.len()))
+    }
+
+    /// Reports a problem at the current span.
+    pub(crate) fn problem(&mut self, p: &Problem) {
+        let name = self.name_span.take();
+        self.diags.push(p.diagnostic(self.span, name));
+    }
+
+    pub(crate) fn problem_at(&mut self, span: Option<Span>, p: &Problem) {
+        self.diags.push(p.diagnostic(span, None));
+    }
+
+    /// Reports a misuse of the builder, which is a bug in the language rather than in the program.
+    pub(crate) fn misuse(&mut self, message: &str) {
+        self.problem(&Problem::new("hir.builder", message));
+    }
+
+    /// What diagnostics call `term`, in the language's words.
+    pub fn set_term(&mut self, term: Term, text: &str) {
+        self.m.terms.retain(|(t, _)| *t != term);
+        self.m.terms.push((term, text.to_string()));
+    }
+
+    /// Where the `index`th parameter of `body` is declared, so that messages about an argument can
+    /// point at it.
+    pub fn set_param_span(&mut self, body: BodyId, index: u32, span: Span) {
+        if let Some(&l) = self.m.bodies[body.index()].params.get(index as usize) {
+            self.m.locals[l.index()].span = Some(span);
+        }
     }
 
     /// Finishes inference, checks the module and returns it, or every problem found.
@@ -172,9 +309,10 @@ impl HirBuilder {
                         self.m.unify(node, t);
                     }
                     Err(TypeErr::Open(_)) => self.deferred.push((e, hint)),
-                    Err(TypeErr::At(at, msg)) => {
+                    Err(TypeErr::At(at, p)) => {
                         let span = self.m.exprs[at.unwrap_or(e).index()].span;
-                        self.error_at(span, &msg);
+                        let name = self.name_spans.get(&e).copied();
+                        self.diags.push(p.diagnostic(span, name));
                         let node = self.m.exprs[e.index()].ty;
                         self.m.unify(node, TypeId::ERROR);
                         self.m.exprs[e.index()].ty = TypeId::ERROR;
@@ -189,9 +327,14 @@ impl HirBuilder {
             let kind = self.m.exprs[e.index()].kind.clone();
             if let Err(TypeErr::Open(at)) = infer(&mut self.m, &kind, TypeId::NEVER) {
                 let span = self.m.exprs[at.index()].span;
-                self.error_at(
+                self.problem_at(
                     span,
-                    "the type of this value must be known here; add a type annotation",
+                    &Problem::new(
+                        code::CANNOT_INFER,
+                        "the type of this value must be known here",
+                    )
+                    .label("type must be known at this point")
+                    .help("add a type annotation"),
                 );
             }
             let node = self.m.exprs[e.index()].ty;
@@ -211,11 +354,12 @@ impl HirBuilder {
             if let Some(v) = self.m.first_var(t)
                 && reported.insert(v)
             {
-                let msg = format!(
-                    "cannot infer the type `{}`; add a type annotation",
-                    self.m.display_type(t)
-                );
-                self.error_at(self.m.exprs[i].span, &msg);
+                let message = match self.m.kind(t) {
+                    TypeKind::Var(_) => "cannot infer the type of this value".to_string(),
+                    _ => format!("cannot infer the type {}", self.m.quote_type(t)),
+                };
+                let p = Problem::new(code::CANNOT_INFER, message).help("add a type annotation");
+                self.problem_at(self.m.exprs[i].span, &p);
             }
         }
         for i in 0..self.m.locals.len() {
@@ -223,11 +367,12 @@ impl HirBuilder {
             if let Some(v) = self.m.first_var(t)
                 && reported.insert(v)
             {
-                let msg = format!(
-                    "cannot infer the type of `{}`; add a type annotation",
-                    self.m.locals[i].name
+                let message = format!(
+                    "cannot infer the type of `{}`",
+                    self.m.locals[i].source_name
                 );
-                self.error_at(self.m.locals[i].span, &msg);
+                let p = Problem::new(code::CANNOT_INFER, message).help("add a type annotation");
+                self.problem_at(self.m.locals[i].span, &p);
             }
         }
     }
@@ -240,11 +385,14 @@ impl HirBuilder {
             if let Some(inner) = value_nullable(&self.m, t)
                 && reported.insert(inner)
             {
-                let msg = format!(
-                    "only reference types can be nullable, not `{}`",
-                    self.m.display_type(inner)
+                let message = format!(
+                    "only reference types can be nullable, not {}",
+                    self.m.quote_type(inner)
                 );
-                self.error_at(self.m.exprs[i].span, &msg);
+                self.problem_at(
+                    self.m.exprs[i].span,
+                    &Problem::new(code::VALUE_NOT_NULLABLE, message),
+                );
             }
         }
     }
@@ -305,8 +453,11 @@ impl HirBuilder {
             self.m.kind(key),
             TypeKind::Int | TypeKind::Bool | TypeKind::String | TypeKind::Var(_)
         ) {
-            let k = self.m.display_type(key);
-            self.error(&format!("map keys must be int, bool or string, not `{k}`"));
+            let k = self.m.quote_type(key);
+            self.problem(&Problem::new(
+                code::BAD_MAP_KEY,
+                format!("map keys must be integers, booleans or strings, not {k}"),
+            ));
         }
         self.m.intern(TypeKind::Map(key, value))
     }
@@ -323,9 +474,10 @@ impl HirBuilder {
             TypeKind::Var(_) | TypeKind::Param(..) => self.m.intern(TypeKind::Nullable(t)),
             _ if self.m.is_reference(t) => self.m.intern(TypeKind::Nullable(t)),
             _ => {
-                let name = self.m.display_type(t);
-                self.error(&format!(
-                    "only reference types can be nullable, not `{name}`"
+                let name = self.m.quote_type(t);
+                self.problem(&Problem::new(
+                    code::VALUE_NOT_NULLABLE,
+                    format!("only reference types can be nullable, not {name}"),
                 ));
                 t
             }
@@ -355,7 +507,7 @@ impl HirBuilder {
     /// The `index`th type parameter of a generic struct, enum or function.
     pub fn type_param(&mut self, owner: Item, index: u32) -> TypeId {
         if index as usize >= self.m.type_params(owner).len() {
-            self.error("no such type parameter");
+            self.misuse("no such type parameter");
         }
         self.m.intern(TypeKind::Param(owner, index))
     }
@@ -369,10 +521,17 @@ impl HirBuilder {
                 Item::Func(f) => self.m.func_name(f).to_string(),
                 _ => String::new(),
             };
-            self.error(&format!(
-                "`{name}` takes {want} type argument{}, {given} given",
-                if want == 1 { "" } else { "s" }
-            ));
+            let p = Problem::new(
+                code::TYPE_ARGUMENT_COUNT,
+                format!(
+                    "`{name}` takes {} but {given} {} given",
+                    plural(want, "type argument"),
+                    if given == 1 { "was" } else { "were" }
+                ),
+            )
+            .label(format!("expected {}", plural(want, "type argument")))
+            .at(self.m.item_span(item), format!("`{name}` declared here"));
+            self.problem(&p);
         }
     }
 
@@ -389,24 +548,32 @@ impl HirBuilder {
     /// one or one the quoting cannot hold.
     fn item_name(&mut self, name: &str) {
         if name.is_empty() || name.contains(['`', '\n']) {
-            self.error(&format!("'{name}' is not a valid name"));
+            self.misuse(&format!("'{name}' is not a valid name"));
         }
     }
 
     fn add_type_name(&mut self, name: &str, item: Item) {
         self.item_name(name);
-        if self.m.type_names.insert(name.to_string(), item).is_some() {
-            self.error(&format!("the type `{name}` is declared twice"));
+        if let Some(first) = self.m.type_names.insert(name.to_string(), item) {
+            self.declared_twice(&format!("the type `{name}`"), self.m.item_span(first));
         }
         self.m.items.push(item);
     }
 
     fn add_value_name(&mut self, name: &str, item: Item) {
         self.item_name(name);
-        if self.m.value_names.insert(name.to_string(), item).is_some() {
-            self.error(&format!("`{name}` is declared twice"));
+        if let Some(first) = self.m.value_names.insert(name.to_string(), item) {
+            self.declared_twice(&format!("`{name}`"), self.m.item_span(first));
         }
         self.m.items.push(item);
+    }
+
+    /// Reports a second declaration of `what` at the current span, `first` being the first.
+    fn declared_twice(&mut self, what: &str, first: Option<Span>) {
+        let p = Problem::new(code::DUPLICATE, format!("{what} is declared twice"))
+            .label("declared again here")
+            .at(first, "first declared here");
+        self.problem(&p);
     }
 
     fn type_param_names(&mut self, params: &[&str]) -> Vec<String> {
@@ -431,6 +598,7 @@ impl HirBuilder {
             name: name.to_string(),
             type_params,
             fields: Vec::new(),
+            field_spans: Vec::new(),
             span: self.span,
         });
         self.add_type_name(name, Item::Struct(s));
@@ -439,13 +607,22 @@ impl HirBuilder {
 
     pub fn add_field(&mut self, s: StructId, name: &str, ty: TypeId) -> u32 {
         self.item_name(name);
-        let def = &mut self.m.structs[s.index()];
-        if def.fields.iter().any(|(n, _)| n == name) {
-            let sname = def.name.clone();
-            self.error(&format!("struct {sname} has two fields named '{name}'"));
+        let def = &self.m.structs[s.index()];
+        if let Some(i) = def.fields.iter().position(|(n, _)| n == name) {
+            let (what, first) = (
+                format!(
+                    "the {} `{name}` of `{}`",
+                    self.m.term(Term::Field),
+                    def.name
+                ),
+                def.field_spans[i],
+            );
+            self.declared_twice(&what, first);
         }
+        let span = self.span;
         let def = &mut self.m.structs[s.index()];
         def.fields.push((name.to_string(), ty));
+        def.field_spans.push(span);
         def.fields.len() as u32 - 1
     }
 
@@ -468,14 +645,21 @@ impl HirBuilder {
 
     pub fn add_variant(&mut self, e: EnumId, name: &str, fields: &[TypeId]) -> u32 {
         self.item_name(name);
-        if self.m.variant_index(e, name).is_some() {
-            let ename = self.m.enum_name(e).to_string();
-            self.error(&format!("enum {ename} has two variants named '{name}'"));
+        if let Some(v) = self.m.variant_index(e, name) {
+            let what = format!(
+                "the {} `{name}` of `{}`",
+                self.m.term(Term::Variant),
+                self.m.enum_name(e)
+            );
+            let first = self.m.enums[e.index()].variants[v as usize].span;
+            self.declared_twice(&what, first);
         }
+        let span = self.span;
         let def = &mut self.m.enums[e.index()];
         def.variants.push(VariantDef {
             name: name.to_string(),
             fields: fields.to_vec(),
+            span,
         });
         def.variants.len() as u32 - 1
     }
@@ -484,10 +668,16 @@ impl HirBuilder {
     /// be nullable.
     pub fn declare_global(&mut self, name: &str, ty: TypeId) -> GlobalId {
         if self.m.is_reference(ty) && !matches!(self.m.kind(ty), TypeKind::Nullable(_)) {
-            let t = self.m.display_type(ty);
-            self.error(&format!(
-                "global '{name}' starts as null, so its type must be nullable (`{t}?`)"
-            ));
+            let nullable = self.m.intern(TypeKind::Nullable(ty));
+            let p = Problem::new(
+                code::NULL_NOT_ALLOWED,
+                format!(
+                    "the global `{name}` starts as {}, so its type must be nullable",
+                    self.m.term(Term::Null)
+                ),
+            )
+            .help(format!("make its type {}", self.m.quote_type(nullable)));
+            self.problem(&p);
         }
         let g = GlobalId(self.m.globals.len() as u32);
         self.m.globals.push(GlobalDef {
@@ -504,7 +694,7 @@ impl HirBuilder {
         for &t in params.iter().chain([&ret]) {
             if !matches!(t, TypeId::INT | TypeId::FLOAT | TypeId::BOOL | TypeId::UNIT) {
                 let tn = self.m.display_type(t);
-                self.error(&format!(
+                self.misuse(&format!(
                     "extern fn {name} uses {tn}; externs take int, float, bool or unit"
                 ));
             }
@@ -570,7 +760,7 @@ impl HirBuilder {
     ) {
         let body = self.m.funcs[f.index()].body;
         if !self.m.bodies[body.index()].params.is_empty() {
-            self.error("a function's signature can only be set once");
+            self.misuse("a function's signature can only be set once");
             return;
         }
         self.m.bodies[body.index()].ret = ret;
@@ -606,7 +796,7 @@ impl HirBuilder {
 
     fn add_params(&mut self, body: BodyId, names: &[&str], types: &[TypeId]) {
         if names.len() != types.len() {
-            self.error("parameter names and types differ in number");
+            self.misuse("parameter names and types differ in number");
         }
         for (i, &ty) in types.iter().enumerate() {
             let name = names.get(i).copied().unwrap_or("p");
@@ -627,7 +817,7 @@ impl HirBuilder {
     /// affects printing. The type may be [`HirBuilder::fresh_type`] to infer it.
     pub fn new_local(&mut self, body: BodyId, name: &str, ty: TypeId) -> LocalId {
         if ty == TypeId::NEVER {
-            self.error("a local cannot have type never");
+            self.misuse("a local cannot have type never");
         }
         let func = self.m.bodies[body.index()].func;
         let mut base: String = name
@@ -657,6 +847,7 @@ impl HirBuilder {
         let l = LocalId(self.m.locals.len() as u32);
         self.m.locals.push(LocalData {
             name: unique,
+            source_name: name.to_string(),
             ty,
             body,
             span: self.span,
@@ -671,25 +862,56 @@ impl HirBuilder {
         self.m.bodies[body.index()].root = Some(root);
         let ret = self.m.bodies[body.index()].ret;
         let rt = self.m.expr_type(root);
-        let (want, found) = (self.m.display_type(ret), self.m.display_type(rt));
+        let want = self.m.quote_type(ret);
+        // Where the result type comes from: the function's declaration (closures have none).
+        let data = &self.m.bodies[body.index()];
+        let (decl, fname) = match data.parent {
+            None => {
+                let f = &self.m.funcs[data.func.index()];
+                (f.span, format!("`{}`", f.name))
+            }
+            Some(_) => (None, String::new()),
+        };
         if ret != TypeId::UNIT && !self.m.coerce(rt, ret) {
-            let span = self.m.exprs[root.index()].span;
-            let msg = if self.m.same(rt, TypeId::UNIT) {
-                format!("this function can end without returning a value of type `{want}`")
+            let mut value = root;
+            while let ExprKind::Block(_, Some(tail)) = self.m.exprs[value.index()].kind {
+                value = tail;
+            }
+            let span = self.m.exprs[value.index()].span;
+            let p = if self.m.same(rt, TypeId::UNIT) {
+                Problem::new(
+                    code::BAD_RESULT,
+                    format!(
+                        "this {} can end without returning a value of type {want}",
+                        self.m.term(Term::Function)
+                    ),
+                )
+                .label(format!("expected {want}"))
             } else {
-                format!("this body evaluates to `{found}` but must return `{want}`")
+                mismatch(&self.m, ret, rt)
             };
-            self.error_at(span, &msg);
+            let p = p.at(decl, format!("{fname} returns {want}"));
+            self.problem_at(span, &p);
         }
         let mut returns = Vec::new();
         collect_returns(&self.m, root, &mut returns);
         for v in returns {
             let vt = self.m.expr_type(v);
-            let msg = mismatch(&self.m, ret, vt);
-            if !self.m.coerce(vt, ret) {
-                let span = self.m.exprs[v.index()].span;
-                self.error_at(span, &msg);
+            if self.m.coerce(vt, ret) {
+                continue;
             }
+            let p = if ret == TypeId::UNIT {
+                Problem::new(code::MISMATCHED_TYPES, "mismatched types")
+                    .label(format!(
+                        "expected no value, found {}",
+                        self.m.quote_type(vt)
+                    ))
+                    .at(decl, format!("{fname} returns no value"))
+            } else {
+                mismatch(&self.m, ret, vt).at(decl, format!("{fname} returns {want}"))
+            };
+            let span = self.m.exprs[v.index()].span;
+            self.problem_at(span, &p);
         }
     }
 
@@ -713,15 +935,18 @@ impl HirBuilder {
                 self.deferred.push((e, hint));
                 self.m.fresh_var()
             }
-            Err(TypeErr::At(at, msg)) => {
+            Err(TypeErr::At(at, p)) => {
                 let span = match at {
                     Some(x) => self.m.exprs[x.index()].span,
                     None => self.span,
                 };
-                self.error_at(span, &msg);
+                self.diags.push(p.diagnostic(span, self.name_span));
                 TypeId::ERROR
             }
         };
+        if let Some(name) = self.name_span.take() {
+            self.name_spans.insert(e, name);
+        }
         self.m.exprs.push(ExprData {
             kind,
             ty,
@@ -1047,48 +1272,124 @@ fn field_index(m: &HirModule, object: ExprId, name: &str) -> Option<u32> {
 
 /// Why a node could not be typed.
 pub(crate) enum TypeErr {
-    /// A type error, about the given sub-expression (or the node itself).
-    At(Option<ExprId>, String),
+    /// A problem, about the given sub-expression (or the node itself).
+    At(Option<ExprId>, Box<Problem>),
     /// The rule needs the type of this sub-expression, which is not inferred yet.
     Open(ExprId),
 }
 
 type Typed = Result<TypeId, TypeErr>;
 
-fn fail<T>(msg: String) -> Result<T, TypeErr> {
-    Err(TypeErr::At(None, msg))
+fn fail<T>(p: Box<Problem>) -> Result<T, TypeErr> {
+    Err(TypeErr::At(None, p))
 }
 
-pub(crate) fn mismatch(m: &HirModule, expected: TypeId, found: TypeId) -> String {
-    format!(
-        "mismatched types: expected `{}`, found `{}`",
-        m.display_type(expected),
-        m.display_type(found)
-    )
+pub(crate) fn mismatch(m: &HirModule, expected: TypeId, found: TypeId) -> Box<Problem> {
+    Problem::new(code::MISMATCHED_TYPES, "mismatched types").label(format!(
+        "expected {}, found {}",
+        m.quote_type(expected),
+        m.quote_type(found)
+    ))
 }
 
 /// Requires `e` to fit `want`.
 fn expect(m: &mut HirModule, e: ExprId, want: TypeId) -> Result<(), TypeErr> {
     let found = m.expr_type(e);
-    let msg = mismatch(m, want, found);
+    let mut p = mismatch(m, want, found);
+    // A value that may be null where one that cannot is needed: say how to get at it.
+    if let TypeKind::Nullable(inner) = m.kind(found)
+        && m.same(*inner, want)
+        && !matches!(m.expr(e).kind, ExprKind::Null)
+    {
+        p = p.help(format!(
+            "check that it is not {} with {}, or unwrap it with {}",
+            m.term(Term::Null),
+            m.term(Term::Narrow),
+            m.term(Term::Unwrap)
+        ));
+    }
     if m.coerce(found, want) {
         Ok(())
     } else {
-        Err(TypeErr::At(Some(e), msg))
+        Err(TypeErr::At(Some(e), p))
     }
 }
 
-fn args_match(m: &mut HirModule, params: &[TypeId], args: &[ExprId]) -> Result<(), TypeErr> {
-    if params.len() != args.len() {
-        return fail(format!(
-            "expected {} argument{}, found {}",
-            params.len(),
-            if params.len() == 1 { "" } else { "s" },
-            args.len()
-        ));
+/// Adds a related location to a problem: where the expected type came from, for example.
+fn because<T>(
+    r: Result<T, TypeErr>,
+    span: Option<Span>,
+    text: impl FnOnce() -> String,
+) -> Result<T, TypeErr> {
+    r.map_err(|err| match err {
+        TypeErr::At(at, p) => TypeErr::At(at, p.at(span, text())),
+        open => open,
+    })
+}
+
+/// What is being called, for messages about its arguments.
+struct Callee {
+    /// "this function", "`len`"
+    what: String,
+    /// Where it is declared, and its parameters.
+    decl: Option<Span>,
+    params: Vec<Option<Span>>,
+}
+
+impl Callee {
+    fn unknown(what: String) -> Callee {
+        Callee {
+            what,
+            decl: None,
+            params: Vec::new(),
+        }
     }
-    for (&p, &a) in params.iter().zip(args) {
-        expect(m, a, p)?;
+
+    /// A function's declaration and its parameters' (parameters declared at the function's own
+    /// span are not pointed at separately).
+    fn function(m: &HirModule, f: FuncId) -> Callee {
+        let decl = m.funcs[f.index()].span;
+        let params = m
+            .body_params(m.func_body(f))
+            .iter()
+            .map(|&p| m.local_span(p).filter(|s| Some(*s) != decl))
+            .collect();
+        Callee {
+            what: format!("this {}", m.term(Term::Function)),
+            decl,
+            params,
+        }
+    }
+}
+
+fn args_match(
+    m: &mut HirModule,
+    params: &[TypeId],
+    args: &[ExprId],
+    callee: &Callee,
+) -> Result<(), TypeErr> {
+    if params.len() != args.len() {
+        let p = Problem::new(
+            code::ARGUMENT_COUNT,
+            format!(
+                "{} takes {} but {} supplied",
+                callee.what,
+                plural(params.len(), "argument"),
+                match args.len() {
+                    1 => "1 argument was".to_string(),
+                    n => format!("{n} arguments were"),
+                }
+            ),
+        )
+        .label(format!("expected {}", plural(params.len(), "argument")))
+        .at(callee.decl, "declared here");
+        return fail(p);
+    }
+    for (i, (&p, &a)) in params.iter().zip(args).enumerate() {
+        let param = callee.params.get(i).copied().flatten();
+        because(expect(m, a, p), param, || {
+            "parameter declared here".to_string()
+        })?;
     }
     Ok(())
 }
@@ -1101,11 +1402,20 @@ fn signature(
 ) -> Result<(Vec<TypeId>, TypeId), TypeErr> {
     let want = m.funcs[f.index()].type_params.len();
     if want != targs.len() {
-        return fail(format!(
-            "`{}` takes {want} type arguments, {} given",
-            m.func_name(f),
-            targs.len()
-        ));
+        let name = m.func_name(f);
+        return fail(
+            Problem::new(
+                code::TYPE_ARGUMENT_COUNT,
+                format!(
+                    "`{name}` takes {} but {} {} given",
+                    plural(want, "type argument"),
+                    targs.len(),
+                    if targs.len() == 1 { "was" } else { "were" }
+                ),
+            )
+            .label(format!("expected {}", plural(want, "type argument")))
+            .at(m.funcs[f.index()].span, format!("`{name}` declared here")),
+        );
     }
     let body = m.func_body(f);
     let params: Vec<TypeId> = m
@@ -1122,11 +1432,22 @@ fn signature(
     Ok((params, m.subst(ret, owner, targs)))
 }
 
-fn open_or<T>(m: &HirModule, e: ExprId, msg: impl FnOnce() -> String) -> Result<T, TypeErr> {
+fn open_or<T>(m: &HirModule, e: ExprId, p: impl FnOnce() -> Box<Problem>) -> Result<T, TypeErr> {
     if matches!(m.kind(m.expr_type(e)), TypeKind::Var(_)) {
         Err(TypeErr::Open(e))
     } else {
-        Err(TypeErr::At(Some(e), msg()))
+        Err(TypeErr::At(Some(e), p()))
+    }
+}
+
+/// A note for a problem about a value of type parameter `t`, which may be any type.
+fn param_note(m: &HirModule, t: TypeId, p: Box<Problem>) -> Box<Problem> {
+    match m.kind(t) {
+        TypeKind::Param(..) => p.note(format!(
+            "{} is a type parameter, so it may be any type",
+            m.quote_type(t)
+        )),
+        _ => p,
     }
 }
 
@@ -1144,9 +1465,12 @@ pub(crate) fn infer(m: &mut HirModule, kind: &ExprKind, hint: TypeId) -> Typed {
         ExprKind::Null => match m.kind(hint) {
             TypeKind::Nullable(_) => hint,
             _ => {
-                return fail(format!(
-                    "`null` needs a nullable type, not `{}`",
-                    m.display_type(hint)
+                return fail(Problem::new(
+                    "hir.builder",
+                    format!(
+                        "`null` needs a nullable type, not `{}`",
+                        m.display_type(hint)
+                    ),
                 ));
             }
         },
@@ -1157,22 +1481,28 @@ pub(crate) fn infer(m: &mut HirModule, kind: &ExprKind, hint: TypeId) -> Typed {
             m.intern(TypeKind::Fn(params, ret))
         }
         ExprKind::Let(l, init) | ExprKind::SetLocal(l, init) => {
-            expect(m, *init, m.local_type(*l))?;
+            let r = expect(m, *init, m.local_type(*l));
+            because(r, m.local_span(*l), || "expected due to this".to_string())?;
             TypeId::UNIT
         }
         ExprKind::SetGlobal(g, value) => {
-            expect(m, *value, m.global_type(*g))?;
+            let r = expect(m, *value, m.global_type(*g));
+            because(r, m.globals[g.index()].span, || {
+                "expected due to this".to_string()
+            })?;
             TypeId::UNIT
         }
         ExprKind::SetField(object, field, value) => {
             let ft = field_type(m, *object, *field)?;
-            expect(m, *value, ft)?;
+            let decl = field_span(m, *object, *field);
+            because(expect(m, *value, ft), decl, || field_declared(m))?;
             TypeId::UNIT
         }
         ExprKind::SetFieldName(object, name, value) => {
             let i = named_field(m, *object, name)?;
             let ft = field_type(m, *object, i)?;
-            expect(m, *value, ft)?;
+            let decl = field_span(m, *object, i);
+            because(expect(m, *value, ft), decl, || field_declared(m))?;
             TypeId::UNIT
         }
         ExprKind::SetIndex(target, index, value) => {
@@ -1186,12 +1516,7 @@ pub(crate) fn infer(m: &mut HirModule, kind: &ExprKind, hint: TypeId) -> Typed {
                 m.shallow(ty(m, *a))
             }
             _ => {
-                return open_or(m, *a, || {
-                    format!(
-                        "operator `-` cannot be applied to `{}`",
-                        m.display_type(ty(m, *a))
-                    )
-                });
+                return open_or(m, *a, || bad_operand(m, "-", ty(m, *a)));
             }
         },
         ExprKind::Unary(UnOp::Not, a) => {
@@ -1206,7 +1531,7 @@ pub(crate) fn infer(m: &mut HirModule, kind: &ExprKind, hint: TypeId) -> Typed {
         }
         ExprKind::Call(f, targs, args) => {
             let (params, ret) = signature(m, *f, targs)?;
-            args_match(m, &params, args)?;
+            args_match(m, &params, args, &Callee::function(m, *f))?;
             ret
         }
         ExprKind::CallExtern(x, args) => {
@@ -1214,14 +1539,20 @@ pub(crate) fn infer(m: &mut HirModule, kind: &ExprKind, hint: TypeId) -> Typed {
                 m.externs[x.index()].params.clone(),
                 m.externs[x.index()].ret,
             );
-            args_match(m, &params, args)?;
+            let callee = Callee {
+                what: format!("this {}", m.term(Term::Function)),
+                decl: m.externs[x.index()].span,
+                params: Vec::new(),
+            };
+            args_match(m, &params, args, &callee)?;
             ret
         }
         ExprKind::CallValue(callee, args) => {
             let ct = ty(m, *callee);
             match m.kind(ct).clone() {
                 TypeKind::Fn(params, ret) => {
-                    args_match(m, &params, args)?;
+                    let what = format!("this {}", m.term(Term::Closure));
+                    args_match(m, &params, args, &Callee::unknown(what))?;
                     ret
                 }
                 TypeKind::Never => TypeId::NEVER,
@@ -1235,8 +1566,18 @@ pub(crate) fn infer(m: &mut HirModule, kind: &ExprKind, hint: TypeId) -> Typed {
                     ret
                 }
                 _ => {
-                    let msg = format!("`{}` is not a function", m.display_type(ct));
-                    return Err(TypeErr::At(Some(*callee), msg));
+                    let function = m.term(Term::Function);
+                    let mut p = Problem::new(
+                        code::NOT_CALLABLE,
+                        format!("expected a {function}, found {}", m.quote_type(ct)),
+                    )
+                    .label(format!("this is not a {function}"));
+                    if let ExprKind::Local(l) = m.expr(*callee).kind {
+                        let name = m.local_source_name(l);
+                        let text = format!("`{name}` has type {}", m.quote_type(ct));
+                        p = p.at(m.local_span(l), text);
+                    }
+                    return Err(TypeErr::At(Some(*callee), p));
                 }
             }
         }
@@ -1253,16 +1594,23 @@ pub(crate) fn infer(m: &mut HirModule, kind: &ExprKind, hint: TypeId) -> Typed {
             let args = m.type_args(hint).to_vec();
             let def_fields: Vec<(String, TypeId)> = m.structs[s.index()].fields.clone();
             if fields.len() != def_fields.len() {
-                return fail(format!(
-                    "struct `{}` has {} fields, {} given",
-                    m.struct_name(*s),
-                    def_fields.len(),
-                    fields.len()
-                ));
+                let p = Problem::new(
+                    code::MISSING_FIELDS,
+                    format!(
+                        "`{}` has {} but {} {} given",
+                        m.struct_name(*s),
+                        plural(def_fields.len(), &m.term(Term::Field)),
+                        fields.len(),
+                        if fields.len() == 1 { "is" } else { "are" }
+                    ),
+                )
+                .at(m.structs[s.index()].span, "declared here");
+                return fail(p);
             }
-            for ((_, ft), &v) in def_fields.iter().zip(fields) {
+            for (i, ((_, ft), &v)) in def_fields.iter().zip(fields).enumerate() {
                 let ft = m.subst(*ft, Item::Struct(*s), &args);
-                expect(m, v, ft)?;
+                let decl = m.structs[s.index()].field_spans[i];
+                because(expect(m, v, ft), decl, || field_declared(m))?;
             }
             hint
         }
@@ -1274,21 +1622,34 @@ pub(crate) fn infer(m: &mut HirModule, kind: &ExprKind, hint: TypeId) -> Typed {
         ExprKind::Variant(e, v, args) => {
             let targs = m.type_args(hint).to_vec();
             let Some(var) = m.enums[e.index()].variants.get(*v as usize) else {
-                return fail(format!("enum `{}` has no variant {v}", m.enum_name(*e)));
+                return fail(Problem::new(
+                    "hir.builder",
+                    format!("enum `{}` has no variant {v}", m.enum_name(*e)),
+                ));
             };
-            let fields: Vec<TypeId> = var.fields.clone();
+            let (fields, decl): (Vec<TypeId>, Option<Span>) = (var.fields.clone(), var.span);
             let fields: Vec<TypeId> = fields
                 .into_iter()
                 .map(|f| m.subst(f, Item::Enum(*e), &targs))
                 .collect();
-            args_match(m, &fields, args)?;
+            let callee = Callee {
+                what: format!("this {}", m.term(Term::Variant)),
+                decl,
+                params: Vec::new(),
+            };
+            args_match(m, &fields, args, &callee)?;
             hint
         }
         ExprKind::Match(scrutinee, arms) => match_type(m, *scrutinee, arms)?,
         ExprKind::Array(elems) => {
             let elem = match m.kind(hint) {
                 TypeKind::Array(e) => *e,
-                _ => return fail("an array literal needs an array type".to_string()),
+                _ => {
+                    return fail(Problem::new(
+                        "hir.builder",
+                        "an array literal needs an array type",
+                    ));
+                }
             };
             for &e in elems {
                 expect(m, e, elem)?;
@@ -1297,18 +1658,21 @@ pub(crate) fn infer(m: &mut HirModule, kind: &ExprKind, hint: TypeId) -> Typed {
         }
         ExprKind::NewArray => {
             if !matches!(m.kind(hint), TypeKind::Array(_)) {
-                return fail(format!(
-                    "new array needs an array type, not `{}`",
-                    m.display_type(hint)
+                return fail(Problem::new(
+                    "hir.builder",
+                    format!(
+                        "new array needs an array type, not `{}`",
+                        m.display_type(hint)
+                    ),
                 ));
             }
             hint
         }
         ExprKind::NewMap => {
             if !matches!(m.kind(hint), TypeKind::Map(..)) {
-                return fail(format!(
-                    "new map needs a map type, not `{}`",
-                    m.display_type(hint)
+                return fail(Problem::new(
+                    "hir.builder",
+                    format!("new map needs a map type, not `{}`", m.display_type(hint)),
                 ));
             }
             hint
@@ -1325,10 +1689,13 @@ pub(crate) fn infer(m: &mut HirModule, kind: &ExprKind, hint: TypeId) -> Typed {
                 return Err(TypeErr::Open(*e));
             }
             if !cast_allowed(m, from, hint) {
-                return fail(format!(
-                    "cannot convert `{}` to `{}`",
-                    m.display_type(from),
-                    m.display_type(hint)
+                return fail(Problem::new(
+                    code::BAD_CONVERSION,
+                    format!(
+                        "cannot convert {} to {}",
+                        m.quote_type(from),
+                        m.quote_type(hint)
+                    ),
                 ));
             }
             hint
@@ -1339,19 +1706,25 @@ pub(crate) fn infer(m: &mut HirModule, kind: &ExprKind, hint: TypeId) -> Typed {
             TypeKind::Error => TypeId::ERROR,
             _ => {
                 return open_or(m, *e, || {
-                    format!(
-                        "`{}` is not nullable, so there is nothing to unwrap",
-                        m.display_type(ty(m, *e))
+                    Problem::new(
+                        code::NOT_NULLABLE,
+                        format!("{} is not nullable", m.quote_type(ty(m, *e))),
                     )
+                    .label(format!("cannot be {}", m.term(Term::Null)))
+                    .help(format!("remove the {}", m.term(Term::Unwrap)))
                 });
             }
         },
         ExprKind::Is(e, t) => {
             expect(m, *e, TypeId::ANY)?;
             if !testable(m, *t) {
-                return fail(format!(
-                    "cannot test whether an any is a `{}`",
-                    m.display_type(*t)
+                return fail(Problem::new(
+                    code::BAD_TYPE_TEST,
+                    format!(
+                        "cannot test whether a value of type {} holds {}",
+                        m.quote_type(TypeId::ANY),
+                        m.quote_type(*t)
+                    ),
                 ));
             }
             TypeId::BOOL
@@ -1371,22 +1744,23 @@ pub(crate) fn infer(m: &mut HirModule, kind: &ExprKind, hint: TypeId) -> Typed {
                 TypeKind::Nullable(inner) => {
                     let lt = m.local_type(*local);
                     if !m.unify(lt, inner) {
-                        let msg = format!(
-                            "`{}` binds a `{}` as `{}`",
-                            m.local_name(*local),
-                            m.display_type(inner),
-                            m.display_type(lt)
-                        );
-                        return Err(TypeErr::At(Some(*value), msg));
+                        let p =
+                            mismatch(m, lt, inner).at(m.local_span(*local), "expected due to this");
+                        return Err(TypeErr::At(Some(*value), p));
                     }
                 }
                 TypeKind::Never | TypeKind::Error => {}
                 _ => {
                     return open_or(m, *value, || {
-                        format!(
-                            "`if let` needs a nullable value, found `{}`",
-                            m.display_type(vt)
+                        Problem::new(
+                            code::NOT_NULLABLE,
+                            format!(
+                                "{} needs a nullable value, found {}",
+                                m.term(Term::Narrow),
+                                m.quote_type(vt)
+                            ),
                         )
+                        .label(format!("this is never {}", m.term(Term::Null)))
                     });
                 }
             }
@@ -1420,27 +1794,79 @@ fn named_field(m: &HirModule, object: ExprId, name: &str) -> Result<u32, TypeErr
     match m.kind(ot) {
         TypeKind::Struct(s, _) => match m.struct_field_index(*s, name) {
             Some(i) => Ok(i),
-            None => Err(TypeErr::At(
-                None,
-                format!("`{}` has no field `{name}`", m.display_type(ot)),
-            )),
+            None => {
+                let fields: Vec<&str> = m.structs[s.index()]
+                    .fields
+                    .iter()
+                    .map(|(n, _)| n.as_str())
+                    .collect();
+                let field = m.term(Term::Field);
+                let mut p = Problem::new(
+                    code::UNKNOWN_FIELD,
+                    format!("no {field} `{name}` on type {}", m.quote_type(ot)),
+                )
+                .label(format!("unknown {field}"))
+                .similar(&format!("a {field}"), a0_diag::similar_name(name, &fields));
+                if !fields.is_empty() {
+                    let list: Vec<String> = fields.iter().map(|f| format!("`{f}`")).collect();
+                    p = p.note(format!(
+                        "the {field}s of {} are {}",
+                        m.quote_type(ot),
+                        list.join(", ")
+                    ));
+                }
+                Err(TypeErr::At(None, p))
+            }
         },
         TypeKind::Never | TypeKind::Error => Ok(u32::MAX),
         _ => open_or(m, object, || no_fields(m, ot)),
     }
 }
 
-fn no_fields(m: &HirModule, t: TypeId) -> String {
+fn no_fields(m: &HirModule, t: TypeId) -> Box<Problem> {
     match m.kind(t) {
-        TypeKind::Nullable(_) => format!(
-            "`{}` may be null; narrow it (`if let`) or unwrap it (`!`) before using its fields",
-            m.display_type(t)
-        ),
-        _ => format!(
-            "`{}` is not a struct, so it has no fields",
-            m.display_type(t)
+        TypeKind::Nullable(_) => maybe_null(m, t),
+        _ => Problem::new(
+            code::NO_FIELDS,
+            format!(
+                "{} is not a {}, so it has no {}s",
+                m.quote_type(t),
+                m.term(Term::Struct),
+                m.term(Term::Field)
+            ),
         ),
     }
+}
+
+/// A value of nullable type `t` used as if it could not be null.
+fn maybe_null(m: &HirModule, t: TypeId) -> Box<Problem> {
+    let null = m.term(Term::Null);
+    Problem::new(
+        code::MAYBE_NULL,
+        format!("this value of type {} may be {null}", m.quote_type(t)),
+    )
+    .label(format!("may be {null}"))
+    .help(format!(
+        "check that it is not {null} with {}, or unwrap it with {}",
+        m.term(Term::Narrow),
+        m.term(Term::Unwrap)
+    ))
+}
+
+/// Where the `field`th field of the struct `object` has is declared.
+fn field_span(m: &HirModule, object: ExprId, field: u32) -> Option<Span> {
+    match m.kind(m.expr_type(object)) {
+        TypeKind::Struct(s, _) => m.structs[s.index()]
+            .field_spans
+            .get(field as usize)
+            .copied()
+            .flatten(),
+        _ => None,
+    }
+}
+
+fn field_declared(m: &HirModule) -> String {
+    format!("{} declared here", m.term(Term::Field))
 }
 
 fn field_type(m: &mut HirModule, object: ExprId, field: u32) -> Typed {
@@ -1448,9 +1874,9 @@ fn field_type(m: &mut HirModule, object: ExprId, field: u32) -> Typed {
     match m.kind(ot).clone() {
         TypeKind::Struct(s, args) => match m.structs[s.index()].fields.get(field as usize) {
             Some(&(_, t)) => Ok(m.subst(t, Item::Struct(s), &args)),
-            None => fail(format!(
-                "struct `{}` has no field {field}",
-                m.struct_name(s)
+            None => fail(Problem::new(
+                "hir.builder",
+                format!("struct `{}` has no field {field}", m.struct_name(s)),
             )),
         },
         TypeKind::Never => Ok(TypeId::NEVER),
@@ -1468,28 +1894,30 @@ fn index_types(m: &mut HirModule, target: ExprId) -> Result<(TypeId, TypeId), Ty
         TypeKind::Never => Ok((TypeId::NEVER, TypeId::NEVER)),
         TypeKind::Error => Ok((TypeId::ERROR, TypeId::ERROR)),
         _ => open_or(m, target, || match m.kind(t) {
-            TypeKind::Nullable(_) => format!(
-                "`{}` may be null; narrow it (`if let`) or unwrap it (`!`) before indexing",
-                m.display_type(t)
+            TypeKind::Nullable(_) => maybe_null(m, t),
+            _ => Problem::new(
+                code::NOT_INDEXABLE,
+                format!("cannot index a value of type {}", m.quote_type(t)),
             ),
-            _ => format!("cannot index a value of type `{}`", m.display_type(t)),
         }),
     }
 }
 
 fn binary_type(m: &mut HirModule, op: BinOp, a: ExprId, b: ExprId) -> Typed {
     let (ta, tb) = (m.expr_type(a), m.expr_type(b));
+    let left = |m: &HirModule| format!("expected because this is {}", m.quote_type(ta));
+    let a_span = m.expr(a).span;
     if matches!(op, BinOp::Eq | BinOp::Ne) {
         // Either side may be the nullable one: `x == null`.
-        let msg = mismatch(m, ta, tb);
+        let p = mismatch(m, ta, tb).at(a_span, left(m));
         if !(m.coerce(tb, ta) || m.coerce(ta, tb)) {
-            return Err(TypeErr::At(Some(b), msg));
+            return Err(TypeErr::At(Some(b), p));
         }
         return Ok(TypeId::BOOL);
     }
-    let msg = mismatch(m, ta, tb);
+    let p = mismatch(m, ta, tb).at(a_span, left(m));
     if ta != TypeId::NEVER && ta != TypeId::ERROR && !m.coerce(tb, ta) {
-        return Err(TypeErr::At(Some(b), msg));
+        return Err(TypeErr::At(Some(b), p));
     }
     let (t, operand) = if ta == TypeId::NEVER {
         (tb, b)
@@ -1508,20 +1936,22 @@ fn binary_type(m: &mut HirModule, op: BinOp, a: ExprId, b: ExprId) -> Typed {
         _ => false,
     };
     if !ok {
-        return Err(TypeErr::At(
-            Some(operand),
-            format!(
-                "operator `{}` cannot be applied to `{}`",
-                op.symbol(),
-                m.display_type(t)
-            ),
-        ));
+        return Err(TypeErr::At(Some(operand), bad_operand(m, op.symbol(), t)));
     }
     Ok(if op.is_comparison() {
         TypeId::BOOL
     } else {
         m.shallow(t)
     })
+}
+
+fn bad_operand(m: &HirModule, op: &str, t: TypeId) -> Box<Problem> {
+    let p = Problem::new(
+        code::BAD_OPERAND,
+        format!("operator `{op}` cannot be applied to {}", m.quote_type(t)),
+    )
+    .label(format!("this is {}", m.quote_type(t)));
+    param_note(m, t, p)
 }
 
 fn match_type(m: &mut HirModule, scrutinee: ExprId, arms: &[ArmId]) -> Typed {
@@ -1532,7 +1962,15 @@ fn match_type(m: &mut HirModule, scrutinee: ExprId, arms: &[ArmId]) -> Typed {
         TypeKind::Error => return Ok(TypeId::ERROR),
         _ => {
             return open_or(m, scrutinee, || {
-                format!("match needs an enum, found `{}`", m.display_type(st))
+                Problem::new(
+                    code::NOT_AN_ENUM,
+                    format!(
+                        "{} needs a value of an {}, found {}",
+                        m.term(Term::Match),
+                        m.term(Term::Enum),
+                        m.quote_type(st)
+                    ),
+                )
             });
         }
     };
@@ -1551,27 +1989,32 @@ fn match_type(m: &mut HirModule, scrutinee: ExprId, arms: &[ArmId]) -> Typed {
                     .get(v as usize)
                     .map(|v| v.fields.clone())
                 else {
-                    return fail(format!("enum `{}` has no variant {v}", m.enum_name(e)));
-                };
-                if binds.len() != fields.len() {
-                    return fail(format!(
-                        "variant `{}` has {} fields, the arm binds {}",
-                        m.variant_name(e, v),
-                        fields.len(),
-                        binds.len()
+                    return fail(Problem::new(
+                        "hir.builder",
+                        format!("enum `{}` has no variant {v}", m.enum_name(e)),
                     ));
+                };
+                let decl = m.enums[e.index()].variants[v as usize].span;
+                if binds.len() != fields.len() {
+                    let p = Problem::new(
+                        code::ARGUMENT_COUNT,
+                        format!(
+                            "the {} `{}` has {} but the pattern binds {}",
+                            m.term(Term::Variant),
+                            m.variant_name(e, v),
+                            plural(fields.len(), "value"),
+                            binds.len()
+                        ),
+                    )
+                    .at(decl, "declared here");
+                    return fail(p);
                 }
                 for (&b, &f) in binds.iter().zip(&fields) {
                     let f = m.subst(f, Item::Enum(e), &eargs);
                     let lt = m.local_type(b);
-                    let msg = format!(
-                        "`{}` binds a `{}` as `{}`",
-                        m.local_name(b),
-                        m.display_type(f),
-                        m.display_type(lt)
-                    );
+                    let p = mismatch(m, lt, f).at(decl, "declared here");
                     if !m.unify(lt, f) {
-                        return fail(msg);
+                        return fail(p);
                     }
                 }
                 covered[v as usize] = true;
@@ -1582,13 +2025,28 @@ fn match_type(m: &mut HirModule, scrutinee: ExprId, arms: &[ArmId]) -> Typed {
         result = m.join(result, bt).unwrap_or(TypeId::UNIT);
     }
     if !wildcard && covered.iter().any(|c| !c) {
-        let missing: Vec<&str> = covered
-            .iter()
-            .enumerate()
-            .filter(|(_, c)| !**c)
-            .map(|(i, _)| m.variant_name(e, i as u32))
+        let missing: Vec<u32> = (0..covered.len() as u32)
+            .filter(|&i| !covered[i as usize])
             .collect();
-        return fail(format!("match does not cover {}", missing.join(", ")));
+        let names: Vec<String> = missing
+            .iter()
+            .map(|&v| format!("`{}`", m.variant_name(e, v)))
+            .collect();
+        let list = match names.as_slice() {
+            [one] => one.clone(),
+            [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
+            [] => String::new(),
+        };
+        let mut p = Problem::new(
+            code::NON_EXHAUSTIVE,
+            format!("{} does not cover {list}", m.term(Term::Match)),
+        )
+        .label(format!("{list} not covered"));
+        for &v in &missing {
+            p = p.at(m.enums[e.index()].variants[v as usize].span, "not covered");
+        }
+        let p = p.help("add an arm for each, or one that matches anything");
+        return Err(TypeErr::At(Some(scrutinee), p));
     }
     Ok(result)
 }
@@ -1608,12 +2066,8 @@ fn builtin_type(m: &mut HirModule, op: Builtin, args: &[ExprId]) -> Typed {
         Builtin::Substr => 3,
     };
     if args.len() != arity {
-        return fail(format!(
-            "`{}` takes {arity} argument{}, found {}",
-            op.name(),
-            if arity == 1 { "" } else { "s" },
-            args.len()
-        ));
+        let callee = Callee::unknown(format!("`{}`", op.name()));
+        return args_match(m, &vec![TypeId::ERROR; arity], args, &callee).map(|_| TypeId::ERROR);
     }
     let t0 = args
         .first()
@@ -1621,7 +2075,10 @@ fn builtin_type(m: &mut HirModule, op: Builtin, args: &[ExprId]) -> Typed {
         .unwrap_or(TypeId::UNIT);
     let bad = |m: &HirModule, what: &str| {
         open_or(m, args[0], || {
-            format!("`{}` {what}, not `{}`", op.name(), m.display_type(t0))
+            Problem::new(
+                code::MISMATCHED_TYPES,
+                format!("`{}` {what}, not {}", op.name(), m.quote_type(t0)),
+            )
         })
     };
     Ok(match op {

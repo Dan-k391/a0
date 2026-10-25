@@ -1,0 +1,179 @@
+//! The codes of the errors and warnings A0 reports to the people who write programs, with an
+//! explanation of each (`lang explain E0201`).
+//!
+//! Every kind of problem has its own code, and a code never changes meaning. `E0xxx` are syntax
+//! errors, `E1xxx` names, `E2xxx` types, `E3xxx` control flow, `E4xxx` the entry point and `Wxxxx`
+//! warnings. Problems that only a language's own code can cause (a malformed tree, a misused
+//! builder) keep descriptive codes such as `hir.tree`; they are bugs to report to the language's
+//! authors, not errors in a program.
+//!
+//! The explanations speak of concepts, not syntax, since each language writes them its own way.
+
+/// One code and what it means.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CodeInfo {
+    pub code: &'static str,
+    /// A short description, as in the codes' list.
+    pub title: &'static str,
+    pub explanation: &'static str,
+}
+
+macro_rules! codes {
+    ($($name:ident = $code:literal, $title:literal, $explanation:literal;)*) => {
+        $(
+            #[doc = $title]
+            pub const $name: &str = $code;
+        )*
+
+        /// Every code, in order.
+        pub const ALL: &[CodeInfo] = &[$(CodeInfo { code: $code, title: $title, explanation: $explanation }),*];
+    };
+}
+
+codes! {
+    SYNTAX = "E0001", "syntax error",
+        "The program does not follow the language's grammar here: a token is missing or one appears where it cannot. The message says what the parser expected.";
+    INVALID_TOKEN = "E0002", "invalid token",
+        "These characters do not form any token of the language, for example an unknown symbol or a string that is never closed.";
+
+    UNKNOWN_NAME = "E1001", "unknown name",
+        "The name is not declared where it is used: no variable, function or global of that name is in scope. It may be misspelled, declared later in an inner block, or declared in a block that has ended.";
+    UNKNOWN_TYPE = "E1002", "unknown type",
+        "No type of this name is declared. Check the spelling, and that the type is declared somewhere in the program.";
+    UNKNOWN_FIELD = "E1003", "unknown field",
+        "The value's type has no field of this name. The message names the type; its declaration lists the fields it has.";
+    UNKNOWN_VARIANT = "E1004", "unknown variant",
+        "The enumeration has no variant of this name. Its declaration lists the variants it has.";
+    DUPLICATE = "E1005", "declared twice",
+        "Two declarations in the same place have the same name, so a use of the name could not tell them apart. Rename or remove one of them; the message points at both.";
+    FIELD_TWICE = "E1006", "field given twice",
+        "A value of a structure gives the same field twice. Each field is given exactly once.";
+    MISSING_FIELDS = "E1007", "missing fields",
+        "A value of a structure must give every field of the structure. The message lists the fields that are missing.";
+    NOT_A_VALUE = "E1008", "not a value",
+        "The name refers to something that can be called but not used as a value, such as a function written in C.";
+    NOT_ASSIGNABLE = "E1009", "cannot assign",
+        "Only variables, globals, fields and elements can be assigned; a function's name cannot.";
+
+    MISMATCHED_TYPES = "E2001", "mismatched types",
+        "A value has a different type than the place it is used requires. The message says which type was expected and which was found, and points at where the expectation comes from: a declared type, a parameter, a field or a function's result.";
+    ARGUMENT_COUNT = "E2002", "wrong number of arguments",
+        "A function, closure or variant is given a different number of arguments than it takes. The message points at its declaration.";
+    NOT_CALLABLE = "E2003", "not a function",
+        "Only functions and closures can be called. The value called here has another type.";
+    BAD_OPERAND = "E2004", "operator not defined for this type",
+        "The operator is not defined for values of this type; arithmetic needs numbers, for example.";
+    CANNOT_INFER = "E2005", "cannot infer a type",
+        "Nothing in the program determines this type: for example an empty collection that is never filled, or a value only ever compared with null. Declaring the type of the variable resolves it.";
+    NOT_NULLABLE = "E2006", "not nullable",
+        "This value can never be null, so it cannot be tested for null or unwrapped.";
+    MAYBE_NULL = "E2007", "may be null",
+        "This value may be null, so it cannot be used as if it were present. Check that it is not null first, which narrows its type, or unwrap it if it is known to be present.";
+    BAD_CONVERSION = "E2008", "invalid conversion",
+        "There is no conversion between these two types.";
+    BAD_TYPE_TEST = "E2009", "invalid type test",
+        "A dynamic value can only be tested for a type that a dynamic value can hold: a primitive, a structure or an enumeration.";
+    NULL_NOT_ALLOWED = "E2010", "null where no null is allowed",
+        "Null is used where the type does not allow it; only nullable types hold null.";
+    VALUE_NOT_NULLABLE = "E2011", "nullable value type",
+        "Only references (strings, collections, structures, enumerations, closures) can be nullable; numbers and booleans cannot.";
+    NOT_INDEXABLE = "E2012", "cannot index",
+        "Only arrays and maps can be indexed.";
+    NOT_AN_ENUM = "E2013", "not an enumeration",
+        "Only values of an enumeration can be matched against its variants.";
+    NON_EXHAUSTIVE = "E2014", "match does not cover every variant",
+        "A match must handle every variant of the enumeration, or have a catch-all arm. The message lists the variants that are not covered.";
+    BAD_RESULT = "E2015", "wrong result",
+        "The function's body ends, or returns, without a value of the function's result type.";
+    TYPE_ARGUMENT_COUNT = "E2016", "wrong number of type arguments",
+        "A generic function or type is given a different number of type arguments than it takes.";
+    BAD_MAP_KEY = "E2017", "invalid map key",
+        "Map keys must be integers, booleans or strings.";
+    NO_FIELDS = "E2018", "not a structure",
+        "Only structures have fields; this value has another type.";
+    BAD_GENERIC_USE = "E2019", "invalid use of a type parameter",
+        "Inside a generic function or type, a type parameter stands for any type, so its values can only be stored, passed, compared and converted, not used as numbers or strings.";
+
+    OUTSIDE_LOOP = "E3001", "outside a loop",
+        "Leaving or continuing a loop is only possible inside a loop.";
+
+    NO_ENTRY = "E4001", "no entry point",
+        "A program needs a `main` function, which is where it starts.";
+    BAD_ENTRY = "E4002", "invalid entry point",
+        "The `main` function takes no parameters and returns nothing or an integer, the program's exit status.";
+
+    UNUSED_VARIABLE = "W0001", "unused variable",
+        "The variable is declared but its value is never read. Remove it, or start its name with an underscore to show that this is intended.";
+    UNREACHABLE = "W0002", "unreachable code",
+        "The code can never run, because the code before it always returns, leaves a loop, or stops the program.";
+}
+
+impl CodeInfo {
+    /// What `explain` prints: the code as the language shows it (`shown`), the title, and the
+    /// explanation in lines of at most 80 columns.
+    pub fn describe(&self, shown: &str) -> String {
+        let mut out = format!("{shown}: {}\n\n", self.title);
+        let mut column = 0;
+        for word in self.explanation.split_whitespace() {
+            if column > 0 && column + 1 + word.len() > 80 {
+                out.push('\n');
+                column = 0;
+            } else if column > 0 {
+                out.push(' ');
+                column += 1;
+            }
+            out.push_str(word);
+            column += word.len();
+        }
+        out.push('\n');
+        out
+    }
+}
+
+/// The meaning of a code, if it is one of A0's.
+pub fn explain(code: &str) -> Option<&'static CodeInfo> {
+    ALL.iter().find(|c| c.code == code)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn codes_are_unique_well_formed_and_explained() {
+        let mut seen = std::collections::HashSet::new();
+        for c in ALL {
+            assert!(seen.insert(c.code), "{} twice", c.code);
+            let (letter, digits) = c.code.split_at(1);
+            assert!(
+                matches!(letter, "E" | "W") && digits.len() == 4,
+                "{}",
+                c.code
+            );
+            assert!(digits.bytes().all(|b| b.is_ascii_digit()), "{}", c.code);
+            assert!(
+                !c.title.is_empty() && c.explanation.ends_with('.'),
+                "{}",
+                c.code
+            );
+        }
+        assert_eq!(explain("E2001").unwrap().title, "mismatched types");
+        assert!(explain("E9999").is_none());
+    }
+
+    #[test]
+    fn the_documentation_lists_every_code() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../docs/diagnostics.md");
+        let docs = std::fs::read_to_string(path).unwrap();
+        let rows: Vec<String> = docs
+            .lines()
+            .filter(|l| l.starts_with("| E") || l.starts_with("| W"))
+            .map(str::to_string)
+            .collect();
+        let want: Vec<String> = ALL
+            .iter()
+            .map(|c| format!("| {} | {} |", c.code, c.title))
+            .collect();
+        assert_eq!(rows, want, "docs/diagnostics.md's table of codes");
+    }
+}

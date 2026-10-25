@@ -283,11 +283,12 @@ static void vars(const A0Grammar *g, const char *source) {
     a0_tree_free(t);
     h = a0_hir_finish(b, &d);
     if (h == NULL) {
-        size_t len;
+        size_t len, code_len;
         uint32_t start = 0;
         const char *message = a0_diagnostics_message(d, 0, &len);
+        const char *code = a0_diagnostics_code(d, 0, &code_len);
         a0_diagnostics_span(d, 0, &start, NULL);
-        printf("vars error at %u: %.*s\n", start, (int)len, message);
+        printf("vars error at %u: [%.*s] %.*s\n", start, (int)code_len, code, (int)len, message);
         a0_diagnostics_free(d);
         return;
     }

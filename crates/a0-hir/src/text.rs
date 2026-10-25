@@ -1,5 +1,6 @@
 //! Parsing the HIR text format, using A0's own grammar layer (`hir.a0g`) and scopes from `a0-sema`.
 
+use a0_diag::codes as code;
 use a0_diag::{Diagnostic, Diagnostics, SourceId};
 use a0_sema::{ScopeKind, Scopes};
 use a0_syntax::{Grammar, NodeId, SyntaxTree};
@@ -87,9 +88,9 @@ struct TextParser<'a> {
 }
 
 impl TextParser<'_> {
-    fn error<T>(&mut self, node: NodeId, message: &str) -> R<T> {
+    fn error<T>(&mut self, node: NodeId, code: &str, message: &str) -> R<T> {
         self.diags
-            .push(Diagnostic::error("hir.syntax", message).with_span(self.tree.span(node)));
+            .push(Diagnostic::error(code, message).with_span(self.tree.span(node)));
         Err(Abort)
     }
 
@@ -118,6 +119,12 @@ impl TextParser<'_> {
         self.b.set_span(Some(self.tree.span(n)));
     }
 
+    /// Attributes a declaration to its name, which is what messages point at.
+    fn at_name(&mut self, n: NodeId) {
+        let name = self.field(n, "name").unwrap_or(n);
+        self.at(name);
+    }
+
     // ---------------------------------------------------------------- items
 
     fn module(&mut self, root: NodeId) {
@@ -129,7 +136,7 @@ impl TextParser<'_> {
             .collect();
         // Pass 1: type names, so any declaration can refer to any type.
         for &item in &items {
-            self.at(item);
+            self.at_name(item);
             let name = self.field(item, "name").map(|n| self.text(n).to_string());
             let tparams = self.type_param_names(item);
             let tparams: Vec<&str> = tparams.iter().map(String::as_str).collect();
@@ -198,7 +205,7 @@ impl TextParser<'_> {
                     if self.kind(f) == "field" {
                         let fname = self.text(self.field(f, "name").unwrap()).to_string();
                         let t = self.ty(self.field(f, "type").unwrap())?;
-                        self.at(f);
+                        self.at_name(f);
                         self.b.add_field(s, &fname, t);
                     }
                 }
@@ -215,14 +222,14 @@ impl TextParser<'_> {
                         for t in self.fields(v, "type") {
                             tys.push(self.ty(t)?);
                         }
-                        self.at(v);
+                        self.at_name(v);
                         self.b.add_variant(e, &vname, &tys);
                     }
                 }
             }
             "global_decl" => {
                 let t = self.ty(self.field(item, "type").unwrap())?;
-                self.at(item);
+                self.at_name(item);
                 self.b.declare_global(&name, t);
             }
             "extern_decl" => {
@@ -231,20 +238,31 @@ impl TextParser<'_> {
                     params.push(self.ty(t)?);
                 }
                 let ret = self.ret(item)?;
-                self.at(item);
+                self.at_name(item);
                 self.b.declare_extern(&name, &params, ret);
             }
             "fn_decl" => {
                 let tparams = self.type_param_names(item);
                 let tparams: Vec<&str> = tparams.iter().map(String::as_str).collect();
-                self.at(item);
+                self.at_name(item);
                 let f = self.b.declare_generic_function(&name, &tparams);
                 self.bind_type_params(Item::Func(f));
                 let (names, types) = self.params(item)?;
                 let ret = self.ret(item)?;
                 let refs: Vec<&str> = names.iter().map(String::as_str).collect();
-                self.at(item);
+                self.at_name(item);
                 self.b.set_signature(f, &refs, &types, ret);
+                let body = self.b.function_body(f);
+                let params: Vec<NodeId> = self
+                    .tree
+                    .children(item)
+                    .into_iter()
+                    .filter(|&c| self.kind(c) == "param")
+                    .collect();
+                for (i, p) in params.into_iter().enumerate() {
+                    let span = self.tree.span(self.field(p, "name").unwrap_or(p));
+                    self.b.set_param_span(body, i as u32, span);
+                }
                 funcs.push((f, item));
             }
             _ => {}
@@ -336,7 +354,13 @@ impl TextParser<'_> {
                 match self.b.module().lookup_type(&name) {
                     Some(Item::Struct(s)) => self.b.struct_type_args(s, &args),
                     Some(Item::Enum(e)) => self.b.enum_type_args(e, &args),
-                    _ => return self.error(node, &format!("unknown type '{name}'")),
+                    _ => {
+                        return self.error(
+                            node,
+                            code::UNKNOWN_TYPE,
+                            &format!("unknown type '{name}'"),
+                        );
+                    }
                 }
             }
         })
@@ -414,7 +438,11 @@ impl TextParser<'_> {
             None => self.b.type_of(value),
         };
         if ty == TypeId::NEVER {
-            return self.error(node, "cannot infer the type of this let; write it");
+            return self.error(
+                node,
+                code::CANNOT_INFER,
+                "cannot infer the type of this let; write it",
+            );
         }
         let local = self.b.new_local(self.body.unwrap(), &name, ty);
         if self.scopes.lookup_in_current(&name).is_some() {
@@ -526,7 +554,11 @@ impl TextParser<'_> {
                             Ok(v) if v <= i64::MAX as u64 + 1 => {
                                 Ok(self.b.int((v as i64).wrapping_neg()))
                             }
-                            _ => self.error(node, "integer literal out of range"),
+                            _ => self.error(
+                                node,
+                                code::INVALID_TOKEN,
+                                "integer literal out of range",
+                            ),
                         };
                     }
                     "FLOAT" => {
@@ -558,7 +590,11 @@ impl TextParser<'_> {
                 }
                 match self.b.module().lookup_value(&name) {
                     Some(Item::Global(g)) => Ok(self.b.set_global(g, value)),
-                    _ => self.error(target, &format!("cannot assign to '{name}'")),
+                    _ => self.error(
+                        target,
+                        code::NOT_ASSIGNABLE,
+                        &format!("cannot assign to '{name}'"),
+                    ),
                 }
             }
             "field" => {
@@ -575,7 +611,7 @@ impl TextParser<'_> {
                 self.at(node);
                 Ok(self.b.set_index(t, i, value))
             }
-            _ => self.error(target, "invalid assignment target"),
+            _ => self.error(target, code::NOT_ASSIGNABLE, "invalid assignment target"),
         }
     }
 
@@ -635,7 +671,13 @@ impl TextParser<'_> {
                 match self.tree.kind_name(tok) {
                     "INT" => match text.parse::<i64>() {
                         Ok(v) => self.b.int(v),
-                        Err(_) => return self.error(node, "integer literal out of range"),
+                        Err(_) => {
+                            return self.error(
+                                node,
+                                code::INVALID_TOKEN,
+                                "integer literal out of range",
+                            );
+                        }
                     },
                     "FLOAT" => self.b.float(text.parse().unwrap_or(0.0)),
                     "STRING" => self.b.string(&unquote(&text)),
@@ -646,7 +688,7 @@ impl TextParser<'_> {
                 let hex = self.text(self.field(node, "bits").unwrap()).to_string();
                 match u64::from_str_radix(&hex[2..], 16) {
                     Ok(bits) => self.b.float_bits(bits),
-                    Err(_) => return self.error(node, "invalid float bits"),
+                    Err(_) => return self.error(node, code::INVALID_TOKEN, "invalid float bits"),
                 }
             }
             "null_lit" => {
@@ -664,10 +706,18 @@ impl TextParser<'_> {
                 let ename = self.text(self.field(node, "enum").unwrap()).to_string();
                 let vname = self.text(self.field(node, "name").unwrap()).to_string();
                 let Some(Item::Enum(e)) = self.b.module().lookup_type(&ename) else {
-                    return self.error(node, &format!("unknown enum '{ename}'"));
+                    return self.error(
+                        node,
+                        code::UNKNOWN_TYPE,
+                        &format!("unknown enum '{ename}'"),
+                    );
                 };
                 let Some(v) = self.b.module().variant_index(e, &vname) else {
-                    return self.error(node, &format!("enum {ename} has no variant '{vname}'"));
+                    return self.error(
+                        node,
+                        code::UNKNOWN_VARIANT,
+                        &format!("enum {ename} has no variant '{vname}'"),
+                    );
                 };
                 let targs = self.type_args(node)?;
                 let args = self.args(node)?;
@@ -760,10 +810,16 @@ impl TextParser<'_> {
                         Some(t) => self.b.func_generic(f, &t),
                         None => self.b.func(f),
                     },
-                    _ => return self.error(node, &format!("unknown name '{name}'")),
+                    _ => {
+                        return self.error(
+                            node,
+                            code::UNKNOWN_NAME,
+                            &format!("unknown name '{name}'"),
+                        );
+                    }
                 }
             }
-            other => return self.error(node, &format!("unexpected {other}")),
+            other => return self.error(node, code::SYNTAX, &format!("unexpected {other}")),
         })
     }
 
@@ -776,7 +832,7 @@ impl TextParser<'_> {
         {
             let name = self.text(self.field(s, "name").unwrap()).to_string();
             let Some(Item::Struct(sid)) = self.b.module().lookup_type(&name) else {
-                return self.error(s, &format!("unknown struct '{name}'"));
+                return self.error(s, code::UNKNOWN_TYPE, &format!("unknown struct '{name}'"));
             };
             let count = self.b.module().struct_field_count(sid) as usize;
             let mut values: Vec<Option<ExprId>> = vec![None; count];
@@ -788,9 +844,19 @@ impl TextParser<'_> {
                 let v = self.expr(self.field(init, "value").unwrap())?;
                 match self.b.module().struct_field_index(sid, &fname) {
                     Some(i) if values[i as usize].is_none() => values[i as usize] = Some(v),
-                    Some(_) => return self.error(init, &format!("field '{fname}' is given twice")),
+                    Some(_) => {
+                        return self.error(
+                            init,
+                            code::FIELD_TWICE,
+                            &format!("field '{fname}' is given twice"),
+                        );
+                    }
                     None => {
-                        return self.error(init, &format!("struct {name} has no field '{fname}'"));
+                        return self.error(
+                            init,
+                            code::UNKNOWN_FIELD,
+                            &format!("struct {name} has no field '{fname}'"),
+                        );
                     }
                 }
             }
@@ -800,7 +866,11 @@ impl TextParser<'_> {
                     Some(v) => fields.push(v),
                     None => {
                         let fname = self.b.module().struct_field(sid, i as u32).0.to_string();
-                        return self.error(s, &format!("missing field '{fname}'"));
+                        return self.error(
+                            s,
+                            code::MISSING_FIELDS,
+                            &format!("missing field '{fname}'"),
+                        );
                     }
                 }
             }
@@ -825,6 +895,7 @@ impl TextParser<'_> {
             _ => {
                 return self.error(
                     node,
+                    code::SYNTAX,
                     "new needs a struct literal, an array type or a map type",
                 );
             }
@@ -836,7 +907,7 @@ impl TextParser<'_> {
         let st = self.b.type_of(scrutinee);
         let e = match self.b.module().kind(st) {
             TypeKind::Enum(e, _) => *e,
-            _ => return self.error(node, "match needs an enum"),
+            _ => return self.error(node, code::NOT_AN_ENUM, "match needs an enum"),
         };
         let mut arms = Vec::new();
         for arm in self.tree.children(node) {
@@ -853,7 +924,13 @@ impl TextParser<'_> {
                         let vname = self.text(vn).to_string();
                         match self.b.module().variant_index(e, &vname) {
                             Some(v) => Some(v),
-                            None => return self.error(vn, &format!("no variant '{vname}'")),
+                            None => {
+                                return self.error(
+                                    vn,
+                                    code::UNKNOWN_VARIANT,
+                                    &format!("no variant '{vname}'"),
+                                );
+                            }
                         }
                     }
                 };
@@ -862,7 +939,11 @@ impl TextParser<'_> {
                     let count = self.b.module().variant_fields(e, v).len();
                     let bind_nodes = self.fields(pattern, "bind");
                     if bind_nodes.len() != count {
-                        return self.error(pattern, &format!("this variant has {count} fields"));
+                        return self.error(
+                            pattern,
+                            code::ARGUMENT_COUNT,
+                            &format!("this variant has {count} fields"),
+                        );
                     }
                     for bn in bind_nodes {
                         let bname = self.text(bn).to_string();

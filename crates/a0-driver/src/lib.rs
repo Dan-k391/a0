@@ -10,6 +10,7 @@
 //! lang ir <file>                 print the core IR
 //! lang hir <file>                print the HIR (languages that compile to the HIR)
 //! lang lsp                       serve the Language Server Protocol on stdin and stdout
+//! lang explain <code>            explain an error code
 //! lang <file> [args...]          the same as `run`, if the language says so
 //! ```
 //!
@@ -31,6 +32,8 @@ use std::process::ExitCode;
 use a0_diag::{Diagnostics, RenderOptions, SourceId, SourceMap, Span};
 
 /// What a compiler produces.
+// Made once per compile, so the size of its variants does not matter.
+#[allow(clippy::large_enum_variant)]
 pub enum Program {
     /// A core IR module with a `@main`.
     Ir(a0_ir::Module),
@@ -59,6 +62,43 @@ impl Message {
             text: text.to_string(),
             span,
         }
+    }
+}
+
+/// How the driver shows the codes of diagnostics.
+#[derive(Clone, Copy)]
+pub enum Codes {
+    /// A0's codes (`E2001`), which `lang explain` explains.
+    A0,
+    /// No codes.
+    Hidden,
+    /// The language's own: its code for each of A0's and its own errors' (`None` shows no code).
+    /// `lang explain` takes these codes and gives A0's explanation.
+    Own(fn(&str) -> Option<&'static str>),
+}
+
+impl Codes {
+    /// `d` with its codes as the language shows them.
+    pub fn apply(self, d: &Diagnostics) -> Diagnostics {
+        let mut out = Diagnostics::new();
+        for item in d.as_slice() {
+            let mut item = item.clone();
+            item.code = match self {
+                Codes::A0 => item.code,
+                Codes::Hidden => String::new(),
+                Codes::Own(map) => map(&item.code).unwrap_or_default().to_string(),
+            };
+            out.push(item);
+        }
+        out
+    }
+
+    /// The explanation of a code as the language shows it.
+    pub fn explain(self, code: &str) -> Option<&'static a0_diag::codes::CodeInfo> {
+        a0_diag::codes::ALL.iter().find(|c| match self {
+            Codes::A0 | Codes::Hidden => c.code == code,
+            Codes::Own(map) => map(c.code) == Some(code),
+        })
     }
 }
 
@@ -102,6 +142,8 @@ pub struct Language {
     pub libraries: Option<fn() -> Vec<a0_native::Library>>,
     /// The language's grammar (the text of its `.a0g` file), for the language server.
     pub grammar: Option<&'static str>,
+    /// How error codes are shown.
+    pub codes: Codes,
 }
 
 /// A parsed command line.
@@ -122,6 +164,8 @@ pub enum Command {
     Ir,
     Hir,
     Lsp,
+    /// `explain <code>`: the code is the invocation's `file`.
+    Explain,
 }
 
 /// Where `build` writes the executable: `-o`'s name, or the source file's stem, with the platform's
@@ -155,6 +199,18 @@ impl Language {
             let code = self.serve_lsp(&mut stdin.lock(), &mut std::io::stdout());
             return ExitCode::from(code);
         }
+        if inv.command == Command::Explain {
+            return match self.codes.explain(&inv.file) {
+                Some(c) => {
+                    print!("{}", c.describe(&inv.file));
+                    ExitCode::SUCCESS
+                }
+                None => {
+                    eprintln!("{}: no error has the code `{}`", self.name, inv.file);
+                    ExitCode::from(self.exit_codes.usage)
+                }
+            };
+        }
         let text = match std::fs::read_to_string(&inv.file) {
             Ok(t) => t,
             Err(e) => {
@@ -167,6 +223,7 @@ impl Language {
         let program = match (self.compile)(&text, id) {
             Ok(p) => p,
             Err(CompileError::Diagnostics(d)) => {
+                let d = self.codes.apply(&d);
                 eprint!("{}", d.render_with(&sources, &RenderOptions::stderr()));
                 return ExitCode::from(self.exit_codes.compile);
             }
@@ -228,7 +285,7 @@ impl Language {
                     Err(d) => self.internal_error(&d, &sources),
                 }
             }
-            Command::Hir | Command::Lsp => unreachable!("handled above"),
+            Command::Hir | Command::Lsp | Command::Explain => unreachable!("handled above"),
         }
     }
 
@@ -249,6 +306,16 @@ impl Language {
             return Some(Invocation {
                 command: Command::Lsp,
                 file: String::new(),
+                output: None,
+                args: Vec::new(),
+            });
+        }
+        if let [explain, code] = args
+            && explain == "explain"
+        {
+            return Some(Invocation {
+                command: Command::Explain,
+                file: code.clone(),
                 output: None,
                 args: Vec::new(),
             });
@@ -291,7 +358,8 @@ impl Language {
              \x20 build <file> [-o out]  compile it to a native executable\n\
              \x20 ir <file>              print the core IR\n\
              \x20 hir <file>             print the high-level IR\n\
-             \x20 lsp                    serve the Language Server Protocol on stdin/stdout\n"
+             \x20 lsp                    serve the Language Server Protocol on stdin/stdout\n\
+             \x20 explain <code>         explain an error code\n"
         )
     }
 }
@@ -309,6 +377,7 @@ mod tests {
             host_symbols: None,
             libraries: None,
             grammar: None,
+            codes: Codes::A0,
         }
     }
 
@@ -334,6 +403,11 @@ mod tests {
             Command::Hir
         );
         assert_eq!(l.parse_args(&args("lsp")).unwrap().command, Command::Lsp);
+        let inv = l.parse_args(&args("explain E2001")).unwrap();
+        assert_eq!(
+            (inv.command, inv.file.as_str()),
+            (Command::Explain, "E2001")
+        );
         for bad in [
             "",
             "run",
@@ -362,6 +436,19 @@ mod tests {
             "fast.bin"
         );
         assert_eq!(executable_name("fib.k", Some("fast"), ""), "fast");
+    }
+
+    #[test]
+    fn codes_can_be_hidden_or_the_language_s_own() {
+        let mut d = Diagnostics::new();
+        d.error("E2001", "mismatched types", None);
+        assert_eq!(Codes::A0.apply(&d).get(0).code, "E2001");
+        assert_eq!(Codes::Hidden.apply(&d).get(0).code, "");
+        let own = Codes::Own(|c| (c == "E2001").then_some("T1"));
+        assert_eq!(own.apply(&d).get(0).code, "T1");
+        assert_eq!(own.explain("T1").unwrap().title, "mismatched types");
+        assert!(own.explain("E2001").is_none());
+        assert_eq!(Codes::A0.explain("E2001").unwrap().code, "E2001");
     }
 
     #[test]

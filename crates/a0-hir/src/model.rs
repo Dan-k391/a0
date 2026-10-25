@@ -177,6 +177,9 @@ macro_rules! builtins {
                 }
             }
         }
+
+        /// The builtins' names.
+        pub(crate) const BUILTINS: &[&str] = &[$($name),*];
     };
 }
 
@@ -271,6 +274,8 @@ pub(crate) struct StructDef {
     pub name: String,
     pub type_params: Vec<String>,
     pub fields: Vec<(String, TypeId)>,
+    /// Where each field was declared.
+    pub field_spans: Vec<Option<Span>>,
     pub span: Option<Span>,
 }
 
@@ -278,6 +283,7 @@ pub(crate) struct StructDef {
 pub(crate) struct VariantDef {
     pub name: String,
     pub fields: Vec<TypeId>,
+    pub span: Option<Span>,
 }
 
 #[derive(Clone)]
@@ -327,10 +333,66 @@ pub(crate) struct BodyData {
 
 #[derive(Clone)]
 pub(crate) struct LocalData {
+    /// Unique within the function, for printing.
     pub name: String,
+    /// As the frontend named it, for messages.
+    pub source_name: String,
     pub ty: TypeId,
     pub body: BodyId,
     pub span: Option<Span>,
+}
+
+/// A concept diagnostics name, which a language may call something else
+/// ([`crate::HirBuilder::set_term`]). The defaults are the HIR's words.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[repr(u32)]
+pub enum Term {
+    /// "function"
+    Function,
+    /// "closure"
+    Closure,
+    /// "struct"
+    Struct,
+    /// "enum"
+    Enum,
+    /// "variant"
+    Variant,
+    /// "field"
+    Field,
+    /// "variable"
+    Variable,
+    /// "`null`", the value of a nullable type that holds nothing.
+    Null,
+    /// "`!`", which takes the value out of a nullable one.
+    Unwrap,
+    /// "`if let`", which tests a nullable value and names it when it is not null.
+    Narrow,
+    /// "`match`"
+    Match,
+    /// "`break`"
+    Break,
+    /// "`continue`"
+    Continue,
+}
+
+impl Term {
+    pub(crate) fn default_text(self) -> &'static str {
+        match self {
+            Term::Function => "function",
+            Term::Closure => "closure",
+            Term::Struct => "struct",
+            Term::Enum => "enum",
+            Term::Variant => "variant",
+            Term::Field => "field",
+            Term::Variable => "variable",
+            Term::Null => "`null`",
+            Term::Unwrap => "`!`",
+            Term::Narrow => "`if let`",
+            Term::Match => "`match`",
+            Term::Break => "`break`",
+            Term::Continue => "`continue`",
+        }
+    }
 }
 
 /// Something a module-level name refers to.
@@ -362,6 +424,8 @@ pub struct HirModule {
     pub(crate) vars: Vec<Option<TypeId>>,
     /// How diagnostics write some types, in the language's own syntax (`[{}]` for arrays).
     pub(crate) type_syntax: Vec<(TypeTag, String)>,
+    /// What diagnostics call some concepts, in the language's own words.
+    pub(crate) terms: Vec<(Term, String)>,
     /// Casts out of `any` that the optimizer proved cannot fail (an `is` test of the same value
     /// guards them); lowering skips their check.
     pub(crate) unchecked_casts: HashSet<ExprId>,
@@ -388,6 +452,7 @@ impl HirModule {
             arms: Vec::new(),
             vars: Vec::new(),
             type_syntax: Vec::new(),
+            terms: Vec::new(),
             unchecked_casts: HashSet::new(),
             items: Vec::new(),
             type_names: HashMap::new(),
@@ -521,6 +586,12 @@ impl HirModule {
 
     pub fn local_name(&self, l: LocalId) -> &str {
         &self.locals[l.index()].name
+    }
+
+    /// A local's name as the frontend gave it (`local_name` may have a suffix that keeps it
+    /// unique).
+    pub fn local_source_name(&self, l: LocalId) -> &str {
+        &self.locals[l.index()].source_name
     }
 
     pub fn local_type(&self, l: LocalId) -> TypeId {
@@ -711,6 +782,25 @@ impl HirModule {
         self.format_type(t, true)
     }
 
+    /// A type as messages quote it: `` `int` ``, or the language's word for null when it is the
+    /// type of a null nothing else determined.
+    pub(crate) fn quote_type(&self, t: TypeId) -> String {
+        match self.kind(t) {
+            TypeKind::Nullable(inner) if matches!(self.kind(*inner), TypeKind::Var(_)) => {
+                self.term(Term::Null)
+            }
+            _ => format!("`{}`", self.display_type(t)),
+        }
+    }
+
+    /// What messages call `term`.
+    pub(crate) fn term(&self, term: Term) -> String {
+        match self.terms.iter().find(|(t, _)| *t == term) {
+            Some((_, text)) => text.clone(),
+            None => term.default_text().to_string(),
+        }
+    }
+
     fn format_type(&self, t: TypeId, custom: bool) -> String {
         let name = |t: TypeId| self.format_type(t, custom);
         if custom {
@@ -729,6 +819,8 @@ impl HirModule {
             }
         }
         match self.kind(t) {
+            // `unit` is the HIR's own word; messages say `()`, as rustc does.
+            TypeKind::Unit if custom => "()".to_string(),
             TypeKind::Unit => "unit".to_string(),
             TypeKind::Bool => "bool".to_string(),
             TypeKind::Int => "int".to_string(),

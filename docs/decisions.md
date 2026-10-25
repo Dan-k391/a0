@@ -427,3 +427,41 @@ both would be new dependencies, and the C API and the language server need the s
 which is ours either way. Colors are ANSI escapes when stderr is a terminal, off with `NO_COLOR`
 and forced with `CLICOLOR_FORCE` (the no-color.org conventions); on Windows the driver asks the
 console for escape processing with `SetConsoleMode`, declared directly instead of through a crate.
+
+## D40. Error codes are numbered, explained, and the language's to show
+
+Codes were layer names (`hir.type` for every type error), which say where an error was found but
+not what it is. Every problem a program can have now has a code of its own in `a0_diag::codes`
+(`E0xxx` syntax, `E1xxx` names, `E2xxx` types, `E3xxx` control flow, `E4xxx` the entry point,
+`Wxxxx` warnings) with a title and an explanation, which `lang explain <code>` prints, as
+`rustc --explain` does. Numbers rather than names because they are stable while wording changes,
+and short enough to search for. The explanations speak of concepts, not syntax, since each
+language writes them its own way. A language shows A0's codes, none, or its own through a mapping
+(`Codes::Own`), which `explain` then accepts. Problems only a language's own code can cause (a
+misused builder, a malformed tree) keep descriptive codes, since they are bugs to fix in the
+language, not errors to explain to its users.
+
+## D41. Messages say what is wrong at the node and point at where it came from
+
+A message is now short and a primary label says what is wrong at the span, as rustc does
+("mismatched types" / "expected `int`, found `string`"), and related labels show where an
+expectation came from: the declared variable, the parameter (`set_param_span`), the field, the
+function's result type, the earlier declaration of a name declared twice, the declaration of a
+called function, the variants a `match` misses. The builder knows all of these already, so
+languages get them without work beyond attributing declarations to their names. Wording that was
+the HIR's own is gone or the language's: concepts come from `Term`s (`set_term(Term::Narrow,
+"`if (x != nil)`")`), the unit type shows as `()`, a null nothing typed yet as `null` rather than
+`_?`, and suggestions that only make sense in HIR syntax are phrased with terms. The text format,
+which is HIR's own language, keeps its words.
+
+## D42. Suggestions come from the builder's scopes, and fixes need the name's span
+
+The builder resolves names, so it knows what was in scope when a name was not: "did you mean"
+candidates are the visible locals (innermost first), then globals, functions and builtins (for
+calls), types, a struct's fields or an enum's variants, ranked by edit distance with rustc's
+threshold (a third of the length) and case-insensitive equality first. A suggestion becomes a fix,
+which the language server offers as a quick fix, only where the builder knows the name's own span:
+the current span when it is exactly as long as the name, or one the frontend gives with
+`set_name_span`; otherwise it is a help line. A heuristic on spans, rather than requiring every
+by-name call to take a name span, keeps the by-name API unchanged and is right for every frontend
+that attributes a name node to its name, which is what the example languages do.

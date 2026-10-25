@@ -106,7 +106,7 @@ fn a_c_program_builds_runs_and_compiles_modules() {
          calc: 1 +: error at 3: expected a number\n\
          hello, C from HIR\n\
          vars:\n7\n21\n\
-         vars error at 17: unknown name `b`\n\
+         vars error at 17: [E1001] unknown name `b`\n\
          2\n42\n\
          hir misuse: 2 problems, first: 99999 is not a valid expression handle\n\
          failures: 0\n",

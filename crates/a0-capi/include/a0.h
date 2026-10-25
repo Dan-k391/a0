@@ -57,6 +57,8 @@ const char *a0_version(void);
 
 size_t a0_diagnostics_count(const A0Diagnostics *d);
 const char *a0_diagnostics_message(const A0Diagnostics *d, size_t i, size_t *len);
+/* Diagnostic i's code (E2001; `a0 explain` explains it), empty if it has none. */
+const char *a0_diagnostics_code(const A0Diagnostics *d, size_t i, size_t *len);
 /* Where diagnostic i is, as byte offsets into the text it is about. Returns 0 if it has no place. */
 int a0_diagnostics_span(const A0Diagnostics *d, size_t i, uint32_t *start, uint32_t *end);
 /* All diagnostics, one per line ("error[code]: message"). */
@@ -245,6 +247,26 @@ A0HirType a0_hir_type_of(A0HirBuilder *b, A0HirExpr e);
 /* How diagnostics write a kind of type in the language's syntax: ("array", "[{}]"). */
 void a0_hir_set_type_syntax(A0HirBuilder *b, const char *tag, size_t tag_len, const char *template_,
                             size_t template_len);
+/* What diagnostics call a concept, in the language's words: ("variant", "case"). The concepts are
+ * function, closure, struct, enum, variant, field, variable, null, unwrap, narrow, match, break
+ * and continue. */
+void a0_hir_set_term(A0HirBuilder *b, const char *term, size_t term_len, const char *text,
+                     size_t text_len);
+/* Where the name is in the next node built by name, so that a misspelled name gets a fix. */
+void a0_hir_set_name_span(A0HirBuilder *b, uint32_t start, uint32_t end);
+/* Where parameter `index` of `body` is declared, for messages about arguments. */
+void a0_hir_set_param_span(A0HirBuilder *b, A0HirBody body, uint32_t index, uint32_t start,
+                           uint32_t end);
+/* The frontend's own error at the current span, with a code (a0_hir_report gives none). The
+ * functions after it add to the error reported last: a related location, a note, a fix replacing
+ * start..end. */
+void a0_hir_report_code(A0HirBuilder *b, const char *code, size_t code_len, const char *message,
+                        size_t len);
+void a0_hir_report_label(A0HirBuilder *b, uint32_t start, uint32_t end, const char *message,
+                         size_t len);
+void a0_hir_report_note(A0HirBuilder *b, const char *note, size_t len);
+void a0_hir_report_fix(A0HirBuilder *b, const char *message, size_t len, uint32_t start,
+                       uint32_t end, const char *replacement, size_t replacement_len);
 
 /* Declarations, in any order. Type parameters are names; none for a plain item. */
 A0HirStruct a0_hir_declare_struct(A0HirBuilder *b, const char *name, size_t len,

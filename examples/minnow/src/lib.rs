@@ -19,6 +19,7 @@
 //! infers and checks types, monomorphizes generics and reports errors, so Minnow has no checker of
 //! its own.
 
+use a0_diag::codes as code;
 use a0_diag::{Diagnostics, SourceId};
 use a0_hir::{
     BinOp, BodyId, Builtin, ExprId, HirBuilder, HirModule, Item, LocalId, TypeId, TypeTag, UnOp,
@@ -97,6 +98,25 @@ impl<'a> Compiler<'a> {
         self.b.set_span(Some(self.tree.span(n)));
     }
 
+    /// Attributes a declaration to its name, which is what messages point at.
+    fn at_name(&mut self, n: NodeId) {
+        let name = self.opt(n, "name").unwrap_or(n);
+        self.at(name);
+    }
+
+    /// Where the parameters of `body`, declared by `decl`, are, for messages about arguments.
+    fn param_spans(&mut self, body: BodyId, decl: NodeId) {
+        for (i, p) in self
+            .tree
+            .nodes_of_kind(decl, "param")
+            .into_iter()
+            .enumerate()
+        {
+            let span = self.tree.span(self.field(p, "name"));
+            self.b.set_param_span(body, i as u32, span);
+        }
+    }
+
     // ---------------------------------------------------------------- items
 
     fn program(&mut self) {
@@ -105,7 +125,7 @@ impl<'a> Compiler<'a> {
         for &item in &items {
             let name = self.text(self.field(item, "name"));
             let params = self.type_params(item);
-            self.at(item);
+            self.at_name(item);
             match self.kind(item) {
                 "struct_decl" => drop(self.b.declare_generic_struct(name, &params)),
                 "enum_decl" => drop(self.b.declare_generic_enum(name, &params)),
@@ -120,7 +140,7 @@ impl<'a> Compiler<'a> {
                     self.b.bind_type_params(Item::Struct(s));
                     for f in self.tree.nodes_of_kind(item, "field") {
                         let t = self.ty(self.field(f, "type"));
-                        self.at(f);
+                        self.at_name(f);
                         self.b.add_field(s, self.text(self.field(f, "name")), t);
                     }
                 }
@@ -133,20 +153,22 @@ impl<'a> Compiler<'a> {
                             .into_iter()
                             .map(|t| self.ty(t))
                             .collect();
-                        self.at(v);
+                        self.at_name(v);
                         self.b
                             .add_variant(e, self.text(self.field(v, "name")), &types);
                     }
                 }
                 ("fn_decl", _) => {
-                    self.at(item);
+                    self.at_name(item);
                     let f = self
                         .b
                         .declare_generic_function(name, &self.type_params(item));
                     self.b.bind_type_params(Item::Func(f));
                     let (names, types, ret) = self.signature(item);
-                    self.at(item);
+                    self.at_name(item);
                     self.b.set_signature(f, &names, &types, ret);
+                    let body = self.b.function_body(f);
+                    self.param_spans(body, item);
                     funcs.push((f, item));
                 }
                 _ => {}
@@ -259,7 +281,12 @@ impl<'a> Compiler<'a> {
                 self.at(name);
                 if self.b.is_declared_in_scope(self.text(name)) {
                     let msg = format!("`{}` is already defined in this scope", self.text(name));
-                    self.b.report(&msg);
+                    self.b.report_code(code::DUPLICATE, &msg);
+                    self.b.report_primary_label("defined again here");
+                    let first = self.b.lookup_local(self.text(name));
+                    if let Some(span) = first.and_then(|l| self.b.module().local_span(l)) {
+                        self.b.report_label(span, "first defined here");
+                    }
                 }
                 self.b.let_named(self.text(name), ty, value)
             }
@@ -381,7 +408,9 @@ impl<'a> Compiler<'a> {
             }
             _ => {
                 self.at(target);
-                self.b.report("cannot assign to this expression");
+                self.b
+                    .report_code(code::NOT_ASSIGNABLE, "cannot assign to this expression");
+                self.b.report_primary_label("cannot be assigned to");
                 self.b.error_expr()
             }
         }
@@ -428,6 +457,7 @@ impl<'a> Compiler<'a> {
                 let body = self
                     .b
                     .new_closure_body(self.b.current_body(), &names, &types, ret);
+                self.param_spans(body, node);
                 let root = self.body(body, node);
                 self.b.set_root(body, root);
                 self.at(node);
@@ -476,14 +506,24 @@ impl<'a> Compiler<'a> {
             "variant_expr" => {
                 let args = self.args(node);
                 self.at(node);
-                let ename = self.text(self.field(node, "enum"));
+                let enum_node = self.field(node, "enum");
+                let ename = self.text(enum_node);
                 match self.b.module().lookup_type(ename) {
                     Some(Item::Enum(e)) => {
-                        self.b
-                            .variant_named(e, self.text(self.field(node, "name")), &args)
+                        let name = self.field(node, "name");
+                        self.b.set_name_span(Some(self.tree.span(name)));
+                        self.b.variant_named(e, self.text(name), &args)
                     }
-                    _ => {
-                        self.b.report(&format!("unknown enum `{ename}`"));
+                    Some(_) => {
+                        self.at(enum_node);
+                        self.b
+                            .report_code(code::UNKNOWN_TYPE, &format!("`{ename}` is not an enum"));
+                        self.b.error_expr()
+                    }
+                    None => {
+                        // Reports the unknown name, with a close one if there is.
+                        self.at(enum_node);
+                        self.b.named_type(ename, &[]);
                         self.b.error_expr()
                     }
                 }
@@ -503,7 +543,8 @@ impl<'a> Compiler<'a> {
             "INT" => match text.parse() {
                 Ok(v) => self.b.int(v),
                 Err(_) => {
-                    self.b.report("this integer does not fit in 64 bits");
+                    self.b
+                        .report_code(code::INVALID_TOKEN, "this integer does not fit in 64 bits");
                     self.b.error_expr()
                 }
             },
@@ -511,7 +552,7 @@ impl<'a> Compiler<'a> {
             "STRING" => match a0_syntax::unquote(text) {
                 Ok(s) => self.b.string(&s),
                 Err(msg) => {
-                    self.b.report(&msg);
+                    self.b.report_code(code::INVALID_TOKEN, &msg);
                     self.b.error_expr()
                 }
             },
@@ -537,11 +578,19 @@ impl<'a> Compiler<'a> {
             .map(|&f| self.expr(self.field(f, "value")))
             .collect();
         self.at(node);
-        let sname = self.text(self.field(node, "name"));
+        let name = self.field(node, "name");
+        let sname = self.text(name);
         match self.b.module().lookup_type(sname) {
             Some(Item::Struct(s)) => self.b.new_struct_named(s, &names, &values),
-            _ => {
-                self.b.report(&format!("unknown struct `{sname}`"));
+            Some(_) => {
+                self.at(name);
+                self.b
+                    .report_code(code::UNKNOWN_TYPE, &format!("`{sname}` is not a struct"));
+                self.b.error_expr()
+            }
+            None => {
+                self.at(name);
+                self.b.named_type(sname, &[]);
                 self.b.error_expr()
             }
         }
@@ -557,6 +606,7 @@ impl<'a> Compiler<'a> {
         }
         let name = self.text(callee);
         self.at(node);
+        self.b.set_name_span(Some(self.tree.span(callee)));
         // `print(x)` prints any printable value on a line of its own.
         if name == "print" && self.b.lookup_local(name).is_none() {
             let value = self.b.builtin(Builtin::Print, &args);
@@ -572,9 +622,10 @@ impl<'a> Compiler<'a> {
         let t = self.b.type_of(scrutinee);
         let t = self.b.resolved_type(t);
         let Some(e) = self.b.module().enum_of(t) else {
-            self.at(node);
+            self.at(self.field(node, "scrutinee"));
             let msg = format!("cannot match on `{}`", self.b.module().display_type(t));
-            self.b.report(&msg);
+            self.b.report_code(code::NOT_AN_ENUM, &msg);
+            self.b.report_primary_label("not an enum");
             return self.b.error_expr();
         };
         let mut arms = Vec::new();
@@ -585,9 +636,7 @@ impl<'a> Compiler<'a> {
                 let index = self.b.module().variant_index(e, self.text(v));
                 if index.is_none() {
                     self.at(v);
-                    let enum_name = self.b.module().enum_name(e).to_string();
-                    self.b
-                        .report(&format!("`{enum_name}` has no variant `{}`", self.text(v)));
+                    self.b.unknown_variant(e, self.text(v));
                 }
                 index
             });

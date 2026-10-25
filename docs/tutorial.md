@@ -510,15 +510,16 @@ That is a whole compiler for functions and arithmetic.
 
 LLVM's chapter 4 adds a JIT. On A0, `a0-driver` gives a language its command: `run` interprets a
 program, `build` compiles it to a native executable through Cranelift and the system linker, `hir`
-and `ir` print what the compiler built, and `lsp` is a language server. Errors are rendered with the
-source; the interpreter and native code give the same output, errors and exit codes.
+and `ir` print what the compiler built, `lsp` is a language server and `explain` explains an error
+code. Errors are rendered with the source, with A0's codes (`codes` can hide them or give the
+language's own); the interpreter and native code give the same output, errors and exit codes.
 
 ```rust file=examples/kaleidoscope/src/main.rs
 //! `kaleidoscope`: run or compile Kaleidoscope programs (`kaleidoscope run|build|ir <file.k>`).
 
 use std::process::ExitCode;
 
-use a0_driver::{CompileError, ExitCodes, Language, Program};
+use a0_driver::{Codes, CompileError, ExitCodes, Language, Program};
 
 fn main() -> ExitCode {
     Language {
@@ -532,6 +533,7 @@ fn main() -> ExitCode {
         host_symbols: Some(kaleidoscope::host_symbols),
         libraries: Some(|| vec![kaleidoscope::runtime_library()]),
         grammar: Some(kaleidoscope::GRAMMAR),
+        codes: Codes::A0,
     }
     .main()
 }
@@ -626,7 +628,9 @@ $ ./add
 9.000000
 ```
 
-Errors come from the builder, with the place in the source the compiler gave with `at`:
+Errors come from the builder, at the place in the source the compiler gave with `at`, with a code
+(`kaleidoscope explain E1001` says what it means) and, for a misspelled name, the closest one in
+scope:
 
 ```kaleidoscope file=examples/kaleidoscope/tests/tutorial/undefined.k
 def f(x) x + y;
@@ -634,11 +638,11 @@ def f(x) x + y;
 
 ```console
 $ kaleidoscope run undefined.k
-error[hir.type]: unknown name `y`
+error[E1001]: unknown name `y`
  --> undefined.k:1:14
   |
 1 | def f(x) x + y;
-  |              ^
+  |              ^ help: a variable with a similar name exists: `x`
 ```
 
 ## 4. Control flow

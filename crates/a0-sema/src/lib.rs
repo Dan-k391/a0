@@ -169,6 +169,21 @@ impl Scopes {
         Some(r)
     }
 
+    /// Every name in scope, innermost first, each once (for suggesting a name close to a misspelled
+    /// one).
+    pub fn visible_names(&self) -> Vec<&str> {
+        let mut out: Vec<&str> = Vec::new();
+        for scope in self.scopes.iter().rev() {
+            for s in scope.order.iter().rev() {
+                let name = self.symbols[s.0 as usize].name.as_str();
+                if !out.contains(&name) {
+                    out.push(name);
+                }
+            }
+        }
+        out
+    }
+
     /// The symbol declared with `name` in the innermost scope, if any.
     pub fn lookup_in_current(&self, name: &str) -> Option<SymbolId> {
         self.scopes.last().and_then(|s| s.names.get(name).copied())
