@@ -196,6 +196,32 @@ fn the_platform_debugger_stops_at_a_line() {
         eprintln!("skipped: {debugger} cannot start processes here:\n{text}");
         return;
     }
+    // What the debug information looked like, if the debugger did not find it.
+    let mut text = text;
+    if !text.contains("lines.hir:4") && cfg!(target_os = "macos") {
+        for command in [
+            &["dsymutil", "-s", "./lines"][..],
+            &["ls", "-laR", "lines.dSYM"][..],
+            &["dwarfdump", "--debug-line", "lines.dSYM"][..],
+        ] {
+            let out = Command::new(command[0])
+                .args(&command[1..])
+                .current_dir(&dir)
+                .output();
+            let shown = out.map_or_else(
+                |e| e.to_string(),
+                |o| {
+                    format!(
+                        "{}{}",
+                        String::from_utf8_lossy(&o.stdout),
+                        String::from_utf8_lossy(&o.stderr)
+                    )
+                },
+            );
+            let shown: String = shown.lines().take(40).collect::<Vec<_>>().join("\n");
+            text.push_str(&format!("\n$ {}\n{shown}", command.join(" ")));
+        }
+    }
     // The backtrace names `norm` at line 4, called from `main`.
     assert!(text.contains("norm"), "{text}");
     assert!(text.contains("lines.hir:4"), "{text}");
