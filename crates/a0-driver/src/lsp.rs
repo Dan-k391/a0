@@ -4,13 +4,20 @@
 //! highlighting, the outline, go-to-definition and the declarations shown on hover from its grammar's
 //! `@def` and `@scope` annotations ([`SyntaxIndex`]); and types on hover from the HIR its compiler
 //! builds, when it builds one with spans. Diagnostics carry their codes and related locations, and
-//! their suggested fixes are quick fixes (code actions). The server speaks JSON-RPC on stdin and
-//! stdout, keeps whole documents (full sync), and analyzes a document each time it changes.
+//! their suggested fixes are quick fixes (code actions). Completion, find-references and rename come
+//! from the indexes of the program's files and the imports between them (`navigate.rs`). The server
+//! speaks JSON-RPC on stdin and stdout and keeps whole documents (full sync). An edit only reindexes
+//! the document; the program is analyzed again once edits pause, or when a request needs it, so
+//! that typing in a large program stays responsive.
 
 use std::collections::HashMap;
 use std::io::{self, BufRead, Write};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
+use std::sync::mpsc::{RecvTimeoutError, channel};
+use std::time::Duration;
+
+mod navigate;
 
 use a0_diag::{Diagnostic, Fix, Severity, SourceId, SourceMap, Span};
 use a0_hir::{HirModule, Item};
@@ -148,7 +155,26 @@ struct Document {
     /// The texts of the program's files and their URIs (the document's own is `source`).
     sources: SourceMap,
     files: Vec<(SourceId, String)>,
+    /// Every file of the program as last analyzed, indexed, with its imports.
+    program: Vec<FileInfo>,
+    /// Whether all of the program's files loaded at the last analysis (for a language with
+    /// modules; they do not when one has syntax errors).
+    loaded: bool,
 }
+
+/// A file of a document's program, for navigating between files.
+struct FileInfo {
+    source: SourceId,
+    uri: String,
+    text: String,
+    lines: Lines,
+    index: SyntaxIndex,
+    imports: Vec<FileImport>,
+}
+
+/// An import of a file: the name it uses for the module, the module's file (an index into the
+/// program's files), and the names it imports unqualified.
+type FileImport = (String, usize, Vec<(String, Span)>);
 
 struct Server<'a> {
     lang: &'a Language,
@@ -156,12 +182,21 @@ struct Server<'a> {
     docs: HashMap<String, Document>,
     /// Per document: the other files its program's last analysis published diagnostics for.
     reported: HashMap<String, Vec<String>>,
+    /// Documents edited since they were last analyzed, in the order they were.
+    dirty: Vec<String>,
     out: &'a mut dyn Write,
 }
 
+/// How long edits must pause before the program is analyzed again.
+const QUIET: Duration = Duration::from_millis(200);
+
 /// Serves the protocol until `exit` or the end of the input. Returns the process exit status: 0
 /// after a `shutdown` request, 1 otherwise (as the protocol asks).
-pub(crate) fn serve(lang: &Language, input: &mut dyn BufRead, output: &mut dyn Write) -> u8 {
+pub(crate) fn serve(
+    lang: &Language,
+    mut input: Box<dyn BufRead + Send>,
+    output: &mut dyn Write,
+) -> u8 {
     let grammar = lang
         .grammar
         .and_then(|text| match Grammar::from_str(text, SourceId(u32::MAX)) {
@@ -176,17 +211,44 @@ pub(crate) fn serve(lang: &Language, input: &mut dyn BufRead, output: &mut dyn W
         grammar,
         docs: HashMap::new(),
         reported: HashMap::new(),
+        dirty: Vec::new(),
         out: output,
     };
+    // Messages are read on a thread of their own, so that the server can tell when edits pause.
+    let (to_server, messages) = channel();
+    std::thread::spawn(move || {
+        loop {
+            let message = match read_message(&mut input) {
+                Ok(Some(m)) => Some(m),
+                Ok(None) => None,
+                Err(e) => {
+                    eprintln!("{e}");
+                    None
+                }
+            };
+            let end = message.is_none();
+            if to_server.send(message).is_err() || end {
+                break;
+            }
+        }
+    });
     let mut shut_down = false;
     loop {
-        let message = match read_message(input) {
-            Ok(Some(m)) => m,
-            Ok(None) => return if shut_down { 0 } else { 1 },
-            Err(e) => {
-                eprintln!("{}: {e}", lang.name);
-                return 1;
+        let next = if server.dirty.is_empty() {
+            messages.recv().ok().flatten()
+        } else {
+            match messages.recv_timeout(QUIET) {
+                Ok(m) => m,
+                Err(RecvTimeoutError::Timeout) => {
+                    server.analyze_dirty();
+                    continue;
+                }
+                Err(RecvTimeoutError::Disconnected) => None,
             }
+        };
+        let Some(message) = next else {
+            server.analyze_dirty();
+            return if shut_down { 0 } else { 1 };
         };
         let message = match Json::parse(&message) {
             Ok(m) => m,
@@ -203,6 +265,7 @@ pub(crate) fn serve(lang: &Language, input: &mut dyn BufRead, output: &mut dyn W
                 server.respond(&id, result);
             }
             "shutdown" => {
+                server.analyze_dirty();
                 shut_down = true;
                 server.respond(&id, Json::Null);
             }
@@ -211,7 +274,7 @@ pub(crate) fn serve(lang: &Language, input: &mut dyn BufRead, output: &mut dyn W
                 let doc = params.get("textDocument");
                 if let (Some(uri), Some(text)) = (doc.get("uri").as_str(), doc.get("text").as_str())
                 {
-                    server.update(uri, text.to_string());
+                    server.edit(uri, text.to_string());
                 }
             }
             "textDocument/didChange" => {
@@ -219,12 +282,13 @@ pub(crate) fn serve(lang: &Language, input: &mut dyn BufRead, output: &mut dyn W
                 let change = params.get("contentChanges").as_array().last();
                 if let (Some(uri), Some(text)) = (uri, change.and_then(|c| c.get("text").as_str()))
                 {
-                    server.update(uri, text.to_string());
+                    server.edit(uri, text.to_string());
                 }
             }
             "textDocument/didClose" => {
                 if let Some(uri) = params.get("textDocument").get("uri").as_str() {
                     server.docs.remove(uri);
+                    server.dirty.retain(|d| d != uri);
                     server.publish(uri, Vec::new());
                 }
             }
@@ -239,16 +303,47 @@ pub(crate) fn serve(lang: &Language, input: &mut dyn BufRead, output: &mut dyn W
                 server.respond(&id, result);
             }
             "textDocument/definition" => {
+                server.analyze_for(params);
                 let result = server.definition(params);
                 server.respond(&id, result);
             }
             "textDocument/hover" => {
+                server.analyze_for(params);
                 let result = server.hover(params);
                 server.respond(&id, result);
             }
             "textDocument/codeAction" => {
+                server.analyze_for(params);
                 let result = server.code_actions(params);
                 server.respond(&id, result);
+            }
+            "textDocument/completion" => {
+                // Completion does not wait for the analysis of an edit (`p.` does not even parse):
+                // the last analysis knows the types and the imports well enough.
+                if server.doc(params).is_some_and(|d| d.program.is_empty()) {
+                    server.analyze_for(params);
+                }
+                let result = server.completion(params);
+                server.respond(&id, result);
+            }
+            "textDocument/references" => {
+                server.analyze_for(params);
+                let result = server.references(params);
+                server.respond(&id, result);
+            }
+            "textDocument/prepareRename" => {
+                server.analyze_for(params);
+                match server.prepare_rename(params) {
+                    Ok(result) => server.respond(&id, result),
+                    Err(message) => server.error(&id, -32803, &message),
+                }
+            }
+            "textDocument/rename" => {
+                server.analyze_for(params);
+                match server.rename(params) {
+                    Ok(result) => server.respond(&id, result),
+                    Err(message) => server.error(&id, -32803, &message),
+                }
             }
             _ if !id.is_null() => server.error(&id, -32601, "method not supported"),
             _ => {}
@@ -285,6 +380,65 @@ pub fn session(
     requests: &[(&str, u32, u32)],
 ) -> io::Result<Vec<Json>> {
     session_with_args(server, &["lsp"], uri, text, requests)
+}
+
+/// Runs a session of any requests against a language server (`server <args>`), for tests: opens
+/// each `(uri, text)` of `open`, then sends each `(method, params)`: requests get ids 1, 2, ... in
+/// order, and `textDocument/did...` methods are sent as notifications. Then shuts down and exits.
+/// Returns everything the server said.
+pub fn session_requests(
+    server: &std::path::Path,
+    args: &[&str],
+    open: &[(&str, &str)],
+    requests: &[(&str, Json)],
+) -> io::Result<Vec<Json>> {
+    let message = |id: Option<u32>, method: &str, params: Json| {
+        let mut m = vec![("jsonrpc".to_string(), "2.0".into())];
+        if let Some(id) = id {
+            m.push(("id".to_string(), id.into()));
+        }
+        m.push(("method".to_string(), method.into()));
+        m.push(("params".to_string(), params));
+        frame(&Json::Object(m))
+    };
+    let mut input = vec![message(Some(0), "initialize", Json::object([]))];
+    for &(uri, text) in open {
+        input.push(message(
+            None,
+            "textDocument/didOpen",
+            Json::object([(
+                "textDocument",
+                Json::object([("uri", uri.into()), ("text", text.into())]),
+            )]),
+        ));
+    }
+    let mut id = 0;
+    for (method, params) in requests {
+        if method.starts_with("textDocument/did") {
+            input.push(message(None, method, params.clone()));
+        } else {
+            id += 1;
+            input.push(message(Some(id), method, params.clone()));
+        }
+    }
+    input.push(message(Some(u32::MAX), "shutdown", Json::Null));
+    input.push(message(None, "exit", Json::Null));
+    let mut child = std::process::Command::new(server)
+        .args(args)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()?;
+    if let Some(mut stdin) = child.stdin.take() {
+        stdin.write_all(&input.concat())?;
+    }
+    let out = child.wait_with_output()?;
+    if !out.status.success() {
+        return Err(io::Error::other(format!(
+            "the server exited with {}",
+            out.status
+        )));
+    }
+    Ok(messages(&out.stdout))
 }
 
 /// [`session`] with a server started by other arguments (`a0 lang calc.a0g lsp`).
@@ -439,6 +593,15 @@ impl Server<'_> {
                 ("documentSymbolProvider".to_string(), true.into()),
                 ("definitionProvider".to_string(), true.into()),
                 ("hoverProvider".to_string(), true.into()),
+                (
+                    "completionProvider".to_string(),
+                    Json::object([("triggerCharacters", vec![".".into()].into())]),
+                ),
+                ("referencesProvider".to_string(), true.into()),
+                (
+                    "renameProvider".to_string(),
+                    Json::object([("prepareProvider", true.into())]),
+                ),
             ]);
         }
         Json::object([
@@ -473,12 +636,75 @@ impl Server<'_> {
     /// Analyzes a new version of a document and publishes its diagnostics. For a language with
     /// modules the document is the root of a program: the files it imports are read from open
     /// documents or from disk, and their diagnostics are published too.
+    /// A new version of a document: reindexed now, analyzed later (`analyze_dirty`).
+    fn edit(&mut self, uri: &str, text: String) {
+        let lines = Lines::new(&text);
+        let index = self.grammar.as_ref().map(|g| {
+            let (tree, _) = g.parse(&text, SourceId(0));
+            SyntaxIndex::new(g, &tree)
+        });
+        match self.docs.get_mut(uri) {
+            Some(doc) => {
+                doc.text = text;
+                doc.lines = lines;
+                doc.index = index;
+            }
+            None => {
+                let mut sources = SourceMap::new();
+                let source = sources.add(uri, &text);
+                self.docs.insert(
+                    uri.to_string(),
+                    Document {
+                        text,
+                        lines,
+                        index,
+                        hir: None,
+                        source,
+                        fixes: Vec::new(),
+                        sources,
+                        files: Vec::new(),
+                        program: Vec::new(),
+                        loaded: false,
+                    },
+                );
+            }
+        }
+        if !self.dirty.iter().any(|d| d == uri) {
+            self.dirty.push(uri.to_string());
+        }
+    }
+
+    /// Analyzes every edited document.
+    fn analyze_dirty(&mut self) {
+        for uri in std::mem::take(&mut self.dirty) {
+            if let Some(text) = self.docs.get(&uri).map(|d| d.text.clone()) {
+                self.update(&uri, text);
+            }
+        }
+    }
+
+    /// Analyzes the document a request is about if it was edited since it was last analyzed.
+    fn analyze_for(&mut self, params: &Json) {
+        let Some(uri) = params.get("textDocument").get("uri").as_str() else {
+            return;
+        };
+        if let Some(i) = self.dirty.iter().position(|d| d == uri) {
+            let uri = self.dirty.remove(i);
+            if let Some(text) = self.docs.get(&uri).map(|d| d.text.clone()) {
+                self.update(&uri, text);
+            }
+        }
+    }
+
     fn update(&mut self, uri: &str, text: String) {
         let mut sources = SourceMap::new();
         let source = SourceId(0);
         let mut files: Vec<(SourceId, String)> = Vec::new();
+        let mut program_files: Vec<FileInfo> = Vec::new();
         // What is known about a program with errors still helps (types, definitions).
         let mut partial: Option<HirModule> = None;
+        // Whether the program's files loaded (they do not with syntax errors).
+        let mut loaded_all = self.lang.modules.is_none();
         // A compiler bug must not take the editor's language support down with it.
         let compiled = match (self.lang.modules, self.grammar.as_ref(), uri_to_path(uri)) {
             (Some(modules), Some(grammar), Some(path)) => {
@@ -507,8 +733,38 @@ impl Server<'_> {
                     files = loaded
                         .files
                         .iter()
-                        .map(|f| (f.source, path_to_uri(&f.path)))
+                        .map(|f| {
+                            let file_uri = if program::normalize(&f.path) == root {
+                                uri.to_string()
+                            } else {
+                                path_to_uri(&f.path)
+                            };
+                            (f.source, file_uri)
+                        })
                         .collect();
+                    program_files = loaded
+                        .files
+                        .iter()
+                        .zip(&files)
+                        .map(|(f, (_, file_uri))| {
+                            let text = sources.text(f.source).to_string();
+                            FileInfo {
+                                source: f.source,
+                                uri: file_uri.clone(),
+                                lines: Lines::new(&text),
+                                text,
+                                index: SyntaxIndex::new(grammar, &f.tree),
+                                imports: f
+                                    .imports
+                                    .iter()
+                                    .map(|(import, file)| {
+                                        (import.alias.clone(), *file, import.names.clone())
+                                    })
+                                    .collect(),
+                            }
+                        })
+                        .collect();
+                    loaded_all = true;
                     let (m, diags) = program::analyze(&loaded, &modules, self.lang.name);
                     if diags.has_errors() {
                         partial = Some(m);
@@ -639,6 +895,24 @@ impl Server<'_> {
                 ));
             }
         }
+        // The last types known help completion while the program does not compile.
+        if hir.is_none() {
+            hir = self.docs.get_mut(uri).and_then(|d| d.hir.take());
+        }
+        // A single file, or a program that did not load: the document alone.
+        if program_files.is_empty()
+            && let Some(g) = self.grammar.as_ref()
+        {
+            let (tree, _) = g.parse(&text, source);
+            program_files.push(FileInfo {
+                source,
+                uri: uri.to_string(),
+                text: text.clone(),
+                lines: Lines::new(&text),
+                index: SyntaxIndex::new(g, &tree),
+                imports: Vec::new(),
+            });
+        }
         self.docs.insert(
             uri.to_string(),
             Document {
@@ -650,6 +924,8 @@ impl Server<'_> {
                 fixes,
                 sources,
                 files,
+                program: program_files,
+                loaded: loaded_all,
             },
         );
         // Files this program's last analysis reported on and this one does not are now clean.
@@ -1146,6 +1422,7 @@ mod tests {
             grammar: Some(GRAMMAR),
             codes: crate::Codes::A0,
             modules: None,
+            repl_main: None,
         }
     }
 
@@ -1200,7 +1477,7 @@ mod tests {
     fn run(input: Vec<Vec<u8>>) -> (Vec<Json>, u8) {
         let input = input.concat();
         let mut output = Vec::new();
-        let code = demo().serve_lsp(&mut input.as_slice(), &mut output);
+        let code = demo().serve_lsp(Box::new(std::io::Cursor::new(input)), &mut output);
         (messages(&output), code)
     }
 
@@ -1245,6 +1522,8 @@ mod tests {
             ),
             notify("initialized", Json::object([])),
             open("let x = oops;"),
+            // Edits are analyzed when a request needs it (or when they pause).
+            at(9, "textDocument/hover", 0, 4),
             change,
             request(2, "textDocument/semanticTokens/full", td()),
             request(3, "textDocument/documentSymbol", td()),
@@ -1252,7 +1531,7 @@ mod tests {
             at(4, "textDocument/definition", 7, 22),
             at(5, "textDocument/hover", 4, 2),
             at(6, "textDocument/hover", 5, 3),
-            request(7, "textDocument/rename", td()),
+            request(7, "textDocument/formatting", td()),
             b"Content-Length: 5\r\n\r\n{nope".to_vec(),
             request(8, "shutdown", Json::Null),
             notify("exit", Json::Null),
@@ -1345,6 +1624,7 @@ mod tests {
     fn exit_without_shutdown_fails_and_compiler_panics_are_reported() {
         let (messages, code) = run(vec![
             open("let x = 1; // panic\n"),
+            at(2, "textDocument/hover", 0, 4),
             notify("exit", Json::Null),
         ]);
         assert_eq!(code, 1);

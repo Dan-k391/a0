@@ -265,3 +265,184 @@ fn the_standard_library_is_known_to_the_server() {
     );
     assert!(result(&messages, 2).as_array().is_empty(), "{messages:?}");
 }
+
+const UTIL: &str = "pub struct Point { x: int, y: int }
+
+impl Point {
+  fn sum(self) -> int { return self.x + self.y; }
+}
+
+pub fn twice(x: int) -> int {
+  return x * 2;
+}
+";
+
+const MAIN: &str = "import util;
+
+fn main() {
+  let p = new util.Point { x: 1, y: 2 };
+  let total = util.twice(p.sum());
+  print(total + util.twice(3));
+  print(p.x);
+}
+";
+
+fn position(uri: &str, line: u32, character: u32) -> Json {
+    Json::object([
+        ("textDocument", Json::object([("uri", uri.into())])),
+        (
+            "position",
+            Json::object([("line", line.into()), ("character", character.into())]),
+        ),
+    ])
+}
+
+/// The labels of a completion result.
+fn labels(result: &Json) -> Vec<String> {
+    result
+        .get("items")
+        .as_array()
+        .iter()
+        .map(|i| i.get("label").as_str().unwrap().to_string())
+        .collect()
+}
+
+/// `(file name, line, character)` of each location.
+fn places(result: &Json) -> Vec<(String, u32, u32)> {
+    let mut out: Vec<(String, u32, u32)> = result
+        .as_array()
+        .iter()
+        .map(|l| {
+            let uri = l.get("uri").as_str().unwrap();
+            let name = uri.rsplit('/').next().unwrap().to_string();
+            let (line, character) = start(l);
+            (name, line, character)
+        })
+        .collect();
+    out.sort();
+    out
+}
+
+#[test]
+fn completion_references_and_rename_work_across_files() {
+    let dir = std::env::temp_dir().join(format!("minnow-lsp-nav-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("util.mn"), UTIL).unwrap();
+    let main = a0_driver::lsp::path_to_uri(&dir.join("main.mn"));
+    let minnow = Path::new(env!("CARGO_BIN_EXE_minnow"));
+    let with = |p: Json, extra: (&str, Json)| match p {
+        Json::Object(mut m) => {
+            m.push((extra.0.to_string(), extra.1));
+            Json::Object(m)
+        }
+        other => other,
+    };
+    let requests = [
+        // Names in scope at the start of line 6, and the language's keywords.
+        ("textDocument/completion", position(&main, 6, 2)),
+        // After `p.`: the struct's fields and its method.
+        ("textDocument/completion", position(&main, 6, 10)),
+        // After `util.`: the module's items.
+        ("textDocument/completion", position(&main, 5, 21)),
+        // `twice`, used twice in main.mn and declared in util.mn.
+        ("textDocument/references", position(&main, 4, 20)),
+        // `total`, a local.
+        ("textDocument/references", position(&main, 5, 9)),
+        ("textDocument/prepareRename", position(&main, 4, 20)),
+        (
+            "textDocument/rename",
+            with(position(&main, 4, 20), ("newName", "double".into())),
+        ),
+        (
+            "textDocument/rename",
+            with(position(&main, 4, 20), ("newName", "fn".into())),
+        ),
+    ];
+    let messages =
+        a0_driver::lsp::session_requests(minnow, &["lsp"], &[(&main, MAIN)], &requests).unwrap();
+    std::fs::remove_dir_all(&dir).ok();
+
+    let names = labels(result(&messages, 1));
+    for wanted in ["p", "total", "main", "util", "let", "while"] {
+        assert!(names.contains(&wanted.to_string()), "{wanted} in {names:?}");
+    }
+    assert_eq!(labels(result(&messages, 2)), ["sum", "x", "y"]);
+    let items = labels(result(&messages, 3));
+    assert!(
+        items.contains(&"twice".to_string()) && items.contains(&"Point".to_string()),
+        "{items:?}"
+    );
+
+    assert_eq!(
+        places(result(&messages, 4)),
+        [
+            ("main.mn".to_string(), 4, 19),
+            ("main.mn".to_string(), 5, 21),
+            ("util.mn".to_string(), 6, 7),
+        ]
+    );
+    assert_eq!(
+        places(result(&messages, 5)),
+        [("main.mn".to_string(), 4, 6), ("main.mn".to_string(), 5, 8)]
+    );
+    assert_eq!(
+        result(&messages, 6).get("placeholder").as_str(),
+        Some("twice")
+    );
+    // The rename edits both files.
+    let changes = result(&messages, 7).get("changes");
+    let Json::Object(files) = changes else {
+        panic!("{changes}")
+    };
+    let mut edited: Vec<(String, usize)> = files
+        .iter()
+        .map(|(uri, edits)| {
+            let name = uri.rsplit('/').next().unwrap().to_string();
+            (name, edits.as_array().len())
+        })
+        .collect();
+    edited.sort();
+    assert_eq!(
+        edited,
+        [("main.mn".to_string(), 2), ("util.mn".to_string(), 1)]
+    );
+    // A keyword is not a name.
+    let refused = messages
+        .iter()
+        .find(|m| m.get("id").as_u32() == Some(8))
+        .unwrap();
+    assert!(!refused.get("error").is_null(), "{refused}");
+}
+
+#[test]
+fn edits_are_analyzed_once_they_pause() {
+    let uri = "file:///edits.mn";
+    let minnow = Path::new(env!("CARGO_BIN_EXE_minnow"));
+    // Fifty edits in a row, then a request: the program is analyzed for the request, not fifty
+    // times on the way.
+    let mut requests: Vec<(&str, Json)> = Vec::new();
+    for i in 0..50 {
+        let text = format!("fn main() {{\n  let x = {i};\n  print(x);\n}}\n");
+        requests.push((
+            "textDocument/didChange",
+            Json::object([
+                ("textDocument", Json::object([("uri", uri.into())])),
+                (
+                    "contentChanges",
+                    vec![Json::object([("text", text.into())])].into(),
+                ),
+            ]),
+        ));
+    }
+    requests.push(("textDocument/hover", position(uri, 1, 6)));
+    let messages =
+        a0_driver::lsp::session_requests(minnow, &["lsp"], &[(uri, "fn main() {}\n")], &requests)
+            .unwrap();
+    let analyses = messages
+        .iter()
+        .filter(|m| m.get("method").as_str() == Some("textDocument/publishDiagnostics"))
+        .count();
+    assert!(analyses <= 2, "{analyses} analyses");
+    let hover = result(&messages, 1).get("contents").get("value");
+    assert!(hover.as_str().unwrap().contains("let x = 49"), "{hover}");
+}

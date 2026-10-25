@@ -230,4 +230,4 @@ def unquote(text):
 
 
 if __name__ == "__main__":
-    sys.exit(main("pebble", compile))
+    sys.exit(main("pebble", compile, grammar=GRAMMAR, repl_main="fn main() {\n{}}\n"))

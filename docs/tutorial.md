@@ -513,9 +513,11 @@ That is a whole compiler for functions and arithmetic.
 
 LLVM's chapter 4 adds a JIT. On A0, `a0-driver` gives a language its command: `run` interprets a
 program, `build` compiles it to a native executable through Cranelift and the system linker, `hir`
-and `ir` print what the compiler built, `lsp` is a language server and `explain` explains an error
-code. Errors are rendered with the source, with A0's codes (`codes` can hide them or give the
-language's own); the interpreter and native code give the same output, errors and exit codes.
+and `ir` print what the compiler built, `lsp` is a language server, `dap` a debugger, `repl` a
+read-eval-print loop (Kaleidoscope's top-level expressions run where they are typed, so
+`repl_main` is `None`) and `explain` explains an error code. Errors are rendered with the source,
+with A0's codes (`codes` can hide them or give the language's own); the interpreter and native
+code give the same output, errors and exit codes.
 
 ```rust file=examples/kaleidoscope/src/main.rs
 //! `kaleidoscope`: run or compile Kaleidoscope programs (`kaleidoscope run|build|ir <file.k>`).
@@ -538,6 +540,7 @@ fn main() -> ExitCode {
         grammar: Some(kaleidoscope::GRAMMAR),
         codes: Codes::A0,
         modules: None,
+        repl_main: None,
     }
     .main()
 }

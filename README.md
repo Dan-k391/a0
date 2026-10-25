@@ -33,8 +33,9 @@ grammar ──a0-syntax──▶ syntax tree ──your compiler──▶ HIR �
   (where an expected type comes from, the earlier declaration), "did you mean" fixes, warnings, in
   the language's words; and runtime errors with the values involved and a stack trace of source
   functions, inlined ones included.
-- **A command-line driver** (`run`, `build`, `ir`, `hir`, `explain`), **a language server**
-  (`lsp`) for diagnostics with quick fixes, highlighting, outline, go-to-definition and hover, and
+- **A command-line driver** (`run`, `build`, `ir`, `hir`, `explain`) with **a REPL** (`repl`),
+  **a language server** (`lsp`) for diagnostics with quick fixes, highlighting, outline,
+  go-to-definition, hover, completion, find-references and rename across a program's files, and
   **a debugger** (`dap`: breakpoints, stepping, the stack and its locals), with a VS Code
   extension; `build -g` describes executables for gdb and lldb.
 - **A C API**, for hosts that are not written in Rust: a C program can build HIR with the same
@@ -151,6 +152,8 @@ A0 is not published on crates.io; depend on it from git (`a0-hir = { git =
 | [docs/c-api.md](docs/c-api.md) | Using A0 from C |
 | [docs/python.md](docs/python.md) | Writing a language in Python |
 | [docs/playground.md](docs/playground.md) | The browser playground: building it, how it works |
+| [docs/debugging.md](docs/debugging.md) | The debugger every language gets, and native debug information |
+| [docs/repl.md](docs/repl.md) | The REPL every language gets |
 | [docs/decisions.md](docs/decisions.md) | Design decisions and why |
 | [docs/milestones.md](docs/milestones.md) | What was built when, with measurements and open questions |
 | [CHANGELOG.md](CHANGELOG.md) | Releases |

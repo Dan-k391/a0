@@ -31,7 +31,7 @@ printed at exit), `A0_OPT=0` (no HIR optimizer),
 diagnostic snapshots after a deliberate change).
 Every language driver also has `lang lsp`, the language server (`docs/editors.md`), and `lang dap`,
 the debugger (`docs/debugging.md`); the VS Code extension in `editors/vscode` starts both.
-`lang build -g` writes DWARF for gdb and lldb.
+`lang build -g` writes DWARF for gdb and lldb, and `lang repl` is a REPL (`docs/repl.md`).
 
 ## Layer map and dependency rules
 
@@ -121,7 +121,7 @@ layer, decision D17). A new crate goes into the table above and into `[workspace
 - Each example language has `tests/lsp.rs`: its server's outline, definitions, hovers,
   diagnostics and quick fixes on a small program, through `a0_driver::lsp::session`; and
   `tests/dap.rs`: a debugging session (breakpoint, stack, locals, steps) through
-  `a0_driver::dap::Client`.
+  `a0_driver::dap::Client`; and `tests/repl.rs`: a REPL session (`lang repl` on piped input).
 - Each example language has `tests/diagnostics/`: programs whose full output (rendered
   diagnostics, runtime errors) must match their `.out` files, natively too
   (`a0_driver::snapshots::check`; `A0_BLESS=1` rewrites them). A new kind of diagnostic or runtime
@@ -144,6 +144,7 @@ layer, decision D17). A new crate goes into the table above and into `[workspace
 | Grammar DSL (including `@def`/`@scope`) | `docs/grammar.md` |
 | The language server or the editor extension | `docs/editors.md` |
 | The debugger (`dap.rs`, debug types, the runtime's hooks) or native debug information | `docs/debugging.md` |
+| The REPL (`repl.rs`, `Language::repl_main`) | `docs/repl.md` |
 | Diagnostics: rendering, codes (`a0_diag::codes`), the builder's reporting API | `docs/diagnostics.md` (its code table is tested) |
 | A design choice with alternatives | a new `D<n>` entry in `docs/decisions.md` |
 | A milestone ends | `docs/milestones.md` (done / changed / open questions); `CHANGELOG.md` (under Unreleased) |

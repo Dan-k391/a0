@@ -55,7 +55,9 @@ output, and report errors with source locations.
    quick fix; and `tests/dap.rs`, a debugging session with `a0_driver::dap::Client` (copy
    `examples/minnow/tests/dap.rs`: a breakpoint, the stack, locals, a step). The debugger needs a
    span on every HIR expression (literals too), `set_closure_name` for functions that are
-   closures, and a C runtime of the language's own that writes with `a0_rt_write`.
+   closures, and a C runtime of the language's own that writes with `a0_rt_write`. Add
+   `tests/repl.rs` too (`lang repl` on piped input); a language whose statements live in `main`
+   sets `repl_main` (`docs/repl.md`).
 7. `examples/foo/README.md` - what the language is, the file map, deliberate differences.
 
 ## Files to update

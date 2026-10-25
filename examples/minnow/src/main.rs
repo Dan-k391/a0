@@ -22,6 +22,7 @@ fn main() -> ExitCode {
             start: minnow::start,
             compile: minnow::compile_file,
         }),
+        repl_main: Some("fn main() {\n{}}\n"),
     }
     .main()
 }

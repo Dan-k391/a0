@@ -40,7 +40,21 @@ jobs:
       - name: Build
         run: cargo build --workspace --all-targets --locked
       - name: Test
-        run: cargo test --workspace --locked
+        shell: bash
+        run: cargo test --workspace --locked 2>&1 | tee test.log; exit ${PIPESTATUS[0]}
+      - name: Report failures
+        # As annotations, which can be read without access to the logs.
+        if: failure()
+        shell: bash
+        run: |
+          $(command -v python3 || command -v python) - <<'EOF'
+          import re
+          log = open("test.log", encoding="utf-8", errors="replace").read()
+          blocks = re.findall(r"---- (\S+) stdout ----\n(.*?)(?=\n---- |\nfailures:)", log, re.S)
+          for name, text in blocks[:10]:
+              text = text[-6000:].replace("%", "%25").replace("\r", "").replace("\n", "%0A")
+              print(f"::error title={name}::{text}")
+          EOF
 
   lint:
     runs-on: ubuntu-latest

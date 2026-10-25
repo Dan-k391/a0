@@ -51,6 +51,8 @@ struct Symbol {
     extent: Span,
     parent: Option<u32>,
     scope: Option<NodeId>,
+    /// The text of the scope it is declared in (`None`: the file's).
+    scope_span: Option<Span>,
 }
 
 /// The tokens, symbols and references of one file. Symbols are numbered in source order.
@@ -217,6 +219,39 @@ impl SyntaxIndex {
     pub fn symbol_is_global(&self, s: u32) -> bool {
         self.symbols[s as usize].scope.is_none()
     }
+
+    /// The symbols a name at `offset` could refer to, for completion: those of the scopes around
+    /// it, declared before it unless they are hoisted (functions, types), members excepted; of
+    /// several with one name, the innermost.
+    pub fn visible_at(&self, offset: u32) -> Vec<u32> {
+        let mut best: HashMap<&str, (u32, u32)> = HashMap::new();
+        for (i, s) in self.symbols.iter().enumerate() {
+            if s.kind.is_member() {
+                continue;
+            }
+            let width = match s.scope_span {
+                None => u32::MAX,
+                Some(span) if span.start <= offset && offset <= span.end => span.end - span.start,
+                Some(_) => continue,
+            };
+            let declared = s.name_span.start <= offset
+                && !(s.extent.start <= offset && offset < s.extent.end && !s.kind.is_hoisted());
+            if !declared && !(s.kind.is_hoisted() && s.scope.is_none()) {
+                continue;
+            }
+            let entry = best.entry(s.name.as_str()).or_insert((i as u32, width));
+            if width < entry.1
+                || (width == entry.1
+                    && s.name_span.start > self.symbols[entry.0 as usize].name_span.start
+                    && s.name_span.start <= offset)
+            {
+                *entry = (i as u32, width);
+            }
+        }
+        let mut out: Vec<u32> = best.into_values().map(|(s, _)| s).collect();
+        out.sort();
+        out
+    }
 }
 
 /// Classifies every token kind. Named tokens are classified by what they match: the grammar's own
@@ -328,6 +363,7 @@ impl Indexer<'_> {
             extent,
             parent,
             scope,
+            scope_span: scope.map(|s| self.tree.span(s)),
         });
         self.symbols.len() as u32 - 1
     }

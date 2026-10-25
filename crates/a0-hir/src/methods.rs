@@ -521,3 +521,47 @@ pub(crate) fn vtables_of(m: &HirModule) -> Vec<(Owner, InterfaceId, Vec<FuncId>)
     }
     out
 }
+
+impl HirModule {
+    /// What a value of type `t` can be followed by after `.`, for editors: its struct's fields, then
+    /// its methods (or an interface's), each with its type or signature as messages write them and
+    /// whether it is a method.
+    pub fn members(&self, t: TypeId) -> Vec<(String, String, bool)> {
+        let t = self.shallow(t);
+        let mut out = Vec::new();
+        if let Some(s) = self.struct_of(t) {
+            for i in 0..self.struct_field_count(s) {
+                let (name, ty) = self.struct_field(s, i);
+                out.push((name.to_string(), self.display_type(ty), false));
+            }
+        }
+        if let TypeKind::Interface(i) = self.kind(t) {
+            for sig in &self.interfaces[i.index()].methods {
+                let params: Vec<String> =
+                    sig.params.iter().map(|&p| self.display_type(p)).collect();
+                let ret = match sig.ret {
+                    TypeId::UNIT => String::new(),
+                    r => format!(" -> {}", self.display_type(r)),
+                };
+                out.push((
+                    sig.name.clone(),
+                    format!("fn({}){ret}", params.join(", ")),
+                    true,
+                ));
+            }
+        }
+        if let Some(owner) = owner_of(self, t) {
+            let mut methods: Vec<(&String, FuncId)> = self
+                .methods
+                .iter()
+                .filter(|((o, _), _)| *o == owner)
+                .map(|((_, name), &f)| (name, f))
+                .collect();
+            methods.sort();
+            for (name, f) in methods {
+                out.push((name.clone(), self.item_signature(Item::Func(f)), true));
+            }
+        }
+        out
+    }
+}

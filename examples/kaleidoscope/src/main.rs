@@ -18,6 +18,7 @@ fn main() -> ExitCode {
         grammar: Some(kaleidoscope::GRAMMAR),
         codes: Codes::A0,
         modules: None,
+        repl_main: None,
     }
     .main()
 }

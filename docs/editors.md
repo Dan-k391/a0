@@ -13,6 +13,9 @@ Protocol on stdin and stdout. A language needs no code for it. It passes its gra
 | Outline (document symbols) | `@def`: declarations nested in the declarations around them, without parameters and local variables |
 | Go to definition | `@def` and `@scope`: lexical resolution, every member of that name after `.` or `::` |
 | Hover | the declaration's first line and kind, plus its type when the compiler builds HIR with spans (Minnow: `variable total: int`) |
+| Completion | the names in scope at the cursor (`@def`, `@scope`), the modules and names a file imports, and the grammar's keywords; after `p.`, the fields and methods of `p`'s type when the HIR knows it, after `alias.` the module's items |
+| Find references | every name that resolves to the declaration: in its file by the grammar's scopes, in other files of the program where they import it (`alias.name`, or the name imported unqualified) |
+| Rename | the same occurrences, edited in every file; refused for a keyword, a member name shared with another type, or while syntax errors keep the program from loading |
 
 For a language with modules, a document is analyzed as the main file of its program: the files it
 imports are read from documents open in the editor or from disk, their diagnostics are published
@@ -20,9 +23,12 @@ for them, and go-to-definition on another module's item (`util.twice`) opens tha
 over one, or over the standard library's (`str.split`), shows its signature. Types on hover and
 definitions keep working while the program has errors.
 
-The server keeps whole documents (full sync), re-analyzes a document when it changes, and survives
-a panicking compiler by reporting it as a diagnostic. Positions are UTF-16 code units, as the protocol
-requires. Tests drive it with `a0_driver::lsp::session` (see `examples/*/tests/lsp.rs`).
+The server keeps whole documents (full sync). An edit reindexes the document only; the program is
+analyzed again once edits pause for 200 ms, or before a request that needs it (hover, definition,
+references, rename), so typing stays responsive in large programs: fifty edits in a row are one
+analysis. Completion answers from the last analysis, since the line being typed (`p.`) rarely
+compiles. The server survives a panicking compiler by reporting it as a diagnostic. Positions are UTF-16 code units, as the protocol
+requires. Tests drive it with `a0_driver::lsp::session` and `session_requests` (see `examples/*/tests/lsp.rs`).
 
 ## VS Code
 
@@ -96,6 +102,7 @@ Code take breakpoints in their files.
 
 ## Limits
 
-Resolution is lexical and knows no types, so `p.x` offers every member named `x`, and names a language
-declares without a grammar rule (Lox's fields, assigned in methods) have no definition. Renaming,
-completion and find-references are not implemented yet; all three can be built on `SyntaxIndex`.
+Resolution is lexical and knows no types, so `p.x` offers every member named `x` (completion asks
+the HIR for the type), and names a language declares without a grammar rule (Lox's fields, assigned
+in methods) have no definition. A member name that several types declare cannot be renamed, since
+its uses cannot be told apart without types.

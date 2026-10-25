@@ -54,6 +54,7 @@ pub fn lang(args: &[String]) -> ExitCode {
         grammar: Some(Box::leak(text.into_boxed_str())),
         codes: Codes::A0,
         modules: None,
+        repl_main: None,
     };
     language.run(rest)
 }

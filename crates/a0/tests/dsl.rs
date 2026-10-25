@@ -300,3 +300,24 @@ fn calc_programs_can_be_debugged() {
     c.finish();
     std::fs::remove_dir_all(&dir).ok();
 }
+
+#[test]
+fn calc_has_a_repl() {
+    use std::io::Write;
+    let mut child = Command::new(env!("CARGO_BIN_EXE_a0"))
+        .current_dir(root())
+        .args(["lang", "examples/calc/calc.a0g", "repl"])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let input = "let total = 1\nrepeat 3 {\n  total = total * 2\n}\nprint total\nprint total + 1\n";
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(input.as_bytes())
+        .unwrap();
+    let out = child.wait_with_output().unwrap();
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "8\n9\n");
+}

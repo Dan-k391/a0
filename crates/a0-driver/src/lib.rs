@@ -11,6 +11,7 @@
 //! lang hir <file>                print the HIR (languages that compile to the HIR)
 //! lang lsp                       serve the Language Server Protocol on stdin and stdout
 //! lang dap                       serve the Debug Adapter Protocol (a debugger) on stdin and stdout
+//! lang repl                      a read-eval-print loop
 //! lang explain <code>            explain an error code
 //! lang <file> [args...]          the same as `run`, if the language says so
 //! ```
@@ -27,6 +28,7 @@ pub mod dap;
 pub mod json;
 pub mod lsp;
 pub mod program;
+mod repl;
 pub mod snapshots;
 mod values;
 
@@ -166,6 +168,10 @@ pub struct Language {
     /// For a language whose programs have several files: how to compile them. `compile` is then
     /// only used for single files given by text (the C API, tests).
     pub modules: Option<Modules>,
+    /// For a language whose statements live in a function: the REPL's program, with `{}` where
+    /// the statements typed so far go (`"fn main() {\n{}}\n"`). `None` when statements run at the
+    /// top level, in the order they come (Lox, Kaleidoscope).
+    pub repl_main: Option<&'static str>,
 }
 
 /// A parsed command line.
@@ -190,6 +196,8 @@ pub enum Command {
     Lsp,
     /// The Debug Adapter Protocol (`dap.rs`).
     Dap,
+    /// The read-eval-print loop (`repl.rs`).
+    Repl,
     /// `explain <code>`: the code is the invocation's `file`.
     Explain,
 }
@@ -221,9 +229,12 @@ impl Language {
             return ExitCode::from(self.exit_codes.usage);
         };
         if inv.command == Command::Lsp {
-            let stdin = std::io::stdin();
-            let code = self.serve_lsp(&mut stdin.lock(), &mut std::io::stdout());
+            let input = Box::new(std::io::BufReader::new(std::io::stdin()));
+            let code = self.serve_lsp(input, &mut std::io::stdout());
             return ExitCode::from(code);
+        }
+        if inv.command == Command::Repl {
+            return ExitCode::from(repl::repl(self));
         }
         if inv.command == Command::Dap {
             let input = Box::new(std::io::BufReader::new(std::io::stdin()));
@@ -241,7 +252,15 @@ impl Language {
                 }
             };
         }
-        let text = match std::fs::read_to_string(&inv.file) {
+        // `-` is standard input (the REPL runs its programs this way); imports are found from the
+        // current directory then.
+        let read = if inv.file == "-" {
+            let mut text = String::new();
+            std::io::Read::read_to_string(&mut std::io::stdin(), &mut text).map(|_| text)
+        } else {
+            std::fs::read_to_string(&inv.file)
+        };
+        let text = match read {
             Ok(t) => t,
             Err(e) => {
                 eprintln!("{}: cannot read {}: {e}", self.name, inv.file);
@@ -249,10 +268,15 @@ impl Language {
             }
         };
         let mut sources = SourceMap::new();
+        let name = match inv.file.as_str() {
+            "-" if std::env::var_os("A0_REPL").is_some() => "<repl>",
+            "-" => "<stdin>",
+            file => file,
+        };
         let compiled = match self.modules {
-            Some(modules) => self.compile_program(&modules, &inv.file, &text, &mut sources),
+            Some(modules) => self.compile_program(&modules, name, &text, &mut sources),
             None => {
-                let id = sources.add(&inv.file, &text);
+                let id = sources.add(name, &text);
                 (self.compile)(&text, id)
             }
         };
@@ -270,8 +294,10 @@ impl Language {
                 return ExitCode::from(self.exit_codes.compile);
             }
         };
+        // The REPL runs its program for each input; warnings would come each time.
         if let Program::Hir(m) = &program
             && !m.warnings().is_empty()
+            && std::env::var_os("A0_REPL").is_none()
         {
             let w = self.codes.apply(m.warnings());
             eprint!("{}", w.render_with(&sources, &RenderOptions::stderr()));
@@ -349,7 +375,7 @@ impl Language {
                     Err(d) => self.internal_error(&d, &sources),
                 }
             }
-            Command::Hir | Command::Lsp | Command::Dap | Command::Explain => {
+            Command::Hir | Command::Lsp | Command::Dap | Command::Repl | Command::Explain => {
                 unreachable!("handled above")
             }
         }
@@ -395,7 +421,7 @@ impl Language {
 
     /// Serves the Language Server Protocol until the client exits or the input ends; returns the
     /// exit status (0 after a `shutdown` request).
-    pub fn serve_lsp(&self, input: &mut dyn BufRead, output: &mut dyn Write) -> u8 {
+    pub fn serve_lsp(&self, input: Box<dyn BufRead + Send>, output: &mut dyn Write) -> u8 {
         lsp::serve(self, input, output)
     }
 
@@ -407,13 +433,13 @@ impl Language {
     /// Parses a command line, or returns `None` if it is not valid.
     pub fn parse_args(&self, args: &[String]) -> Option<Invocation> {
         if let [only] = args
-            && (only == "lsp" || only == "dap")
+            && matches!(only.as_str(), "lsp" | "dap" | "repl")
         {
             return Some(Invocation {
-                command: if only == "lsp" {
-                    Command::Lsp
-                } else {
-                    Command::Dap
+                command: match only.as_str() {
+                    "lsp" => Command::Lsp,
+                    "dap" => Command::Dap,
+                    _ => Command::Repl,
                 },
                 file: String::new(),
                 output: None,
@@ -508,6 +534,7 @@ mod tests {
             grammar: None,
             codes: Codes::A0,
             modules: None,
+            repl_main: None,
         }
     }
 

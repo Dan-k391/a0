@@ -25,6 +25,7 @@ fn main() -> ExitCode {
         grammar: Some({{crate}}::GRAMMAR),
         codes: Codes::A0,
         modules: None,
+        repl_main: Some("fn main() {\n{}}\n"),
     }
     .main()
 }

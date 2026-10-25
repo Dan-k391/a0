@@ -37,6 +37,7 @@ fn main() -> ExitCode {
         grammar: Some(lox::GRAMMAR),
         codes: Codes::A0,
         modules: None,
+        repl_main: None,
     }
     .main()
 }

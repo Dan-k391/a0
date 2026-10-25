@@ -184,6 +184,15 @@ class Pebble(unittest.TestCase):
                 self.assertEqual(out.stdout, "before\n")
                 self.assertIn("panic: index out of bounds", out.stderr)
 
+    def test_repl(self):
+        session = ("let x = 20;\nfn twice(n: int) -> int {\n  return n * 2;\n}\n"
+                   "print(twice(x) + 2);\nprint(nope);\nprint(\"done\");\n")
+        out = subprocess.run([sys.executable, os.path.join(PEBBLE, "pebble.py"), "repl"],
+                             input=session, capture_output=True, text=True)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertEqual(out.stdout, "42\ndone\n")
+        self.assertIn("unknown name `nope`", out.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()

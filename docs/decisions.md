@@ -696,3 +696,29 @@ Mach-O objects, relocated against the functions, and runs `dsymutil` on macOS. N
 whose locations would come from Cranelift's value labels and need location lists; and Windows, whose
 debuggers read PDB, a format of its own (CodeView) that no library we use writes. `lang dap` covers
 both.
+
+## D60. Completion, references and rename are syntactic, across files through imports
+
+v0.4 asks for completion, rename and find-references that stay responsive on multi-file projects.
+They could come from the HIR (exact, but there only for programs that compile, and with spans on
+expressions, not on type names) or from the grammar's indexes (`@def`, `@scope`) and the program's
+imports (`@import`). They come from the indexes: a top-level item is found in the other files of
+the program where they import it, as `alias.name` or as a name imported unqualified, so rename
+works on programs with type errors and reaches type annotations too. The HIR adds the members of a
+value's type after `.` for completion. What syntax cannot tell apart is refused rather than guessed
+(a member name several types declare). For responsiveness the server reads messages on a thread of
+its own: an edit only reindexes the document, and the program is analyzed when edits pause (200 ms)
+or a request needs it, which turns a burst of edits into one analysis (a program of 10,000 lines
+analyzes in about a quarter of a second).
+
+## D61. The REPL reruns the program the inputs make, in a process of its own
+
+v0.4 asks for a REPL for every language. An incremental one would keep the program's state between
+inputs, which needs the interpreter to add functions to a running program and the runtime to keep
+its heap across modules; the runtime's global state means one process runs one program. So the
+REPL keeps the inputs as a program (top-level statements in order, or declarations and `main` for
+a language that says how, `Language::repl_main`), runs all of it again for each input with `lang
+run -` in a process of its own, and shows the output beyond what was shown before. The price:
+earlier statements run again (output is not repeated, other side effects are), and an input costs
+a run of the whole session. Inputs that fail are dropped, so the session always runs; the grammar
+tells declarations from statements and unfinished lines, so a language needs at most one line.
