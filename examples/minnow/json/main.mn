@@ -1,0 +1,90 @@
+// json: a small tool for JSON files, written in Minnow on A0's standard library.
+//
+//   json pretty [file]      the file, indented
+//   json compact [file]     the file on one line
+//   json get PATH [file]    the value at PATH (`.items[0].name`)
+//   json stats [file]       how many values of each kind, and how deep they nest
+//
+// Without a file (or with `-`) it reads standard input. Errors go to standard error, exit 1.
+import std;
+import std.env;
+import std.fs;
+import std.io;
+import std.math;
+import std.str as s;
+import value as v;
+import reader;
+import writer;
+import query;
+
+fn main() -> int {
+  match run(env.args()) {
+    Ok(text) => {
+      io.write(text);
+      return 0;
+    }
+    Err(message) => {
+      io.write_error("json: " + message + "\n");
+      return 1;
+    }
+  }
+}
+
+fn usage() -> string {
+  return "usage: json pretty|compact|stats [file], json get PATH [file]";
+}
+
+fn run(args: [string]) -> std.Result<string, string> {
+  if len(args) == 0 { return std.Result::Err(usage()); }
+  let command = args[0];
+  if command == "get" {
+    if len(args) < 2 { return std.Result::Err(usage()); }
+    let x = load(args, 2)?;
+    return std.Result::Ok(writer.pretty(query.get(x, args[1])?) + "\n");
+  }
+  let x = load(args, 1)?;
+  if command == "pretty" { return std.Result::Ok(writer.pretty(x) + "\n"); }
+  if command == "compact" { return std.Result::Ok(writer.compact(x) + "\n"); }
+  if command == "stats" { return std.Result::Ok(stats(x)); }
+  return std.Result::Err("unknown command '" + command + "'; " + usage());
+}
+
+// The value in the file named by `args[at]`, or in standard input.
+fn load(args: [string], at: int) -> std.Result<v.Value, string> {
+  let path = "-";
+  if len(args) > at { path = args[at]; }
+  let text = "";
+  if path == "-" { text = io.read_all(); } else { text = fs.read(path)?; }
+  match reader.read(text) {
+    Ok(x) => { return std.Result::Ok(x); }
+    Err(message) => { return std.Result::Err(path + ": " + message); }
+  }
+}
+
+fn stats(x: v.Value) -> string {
+  let counts = new map {};
+  let deepest = count(x, counts, 1);
+  let out: [string] = [];
+  for kind in ["object", "array", "string", "number", "boolean", "null"] {
+    if has(counts, kind) { push(out, kind + ": " + str(counts[kind]) + "\n"); }
+  }
+  push(out, "depth: " + str(deepest) + "\n");
+  return s.join(out, "");
+}
+
+// Counts `x` and what it holds by kind; returns how deep it nests.
+fn count(x: v.Value, counts: map<string, int>, depth: int) -> int {
+  let kind = v.kind(x);
+  if has(counts, kind) { counts[kind] = counts[kind] + 1; } else { counts[kind] = 1; }
+  let deepest = depth;
+  match x {
+    Arr(items) => {
+      for item in items { deepest = math.max_int(deepest, count(item, counts, depth + 1)); }
+    }
+    Obj(o) => {
+      for key in o.keys { deepest = math.max_int(deepest, count(o.get(key)!, counts, depth + 1)); }
+    }
+    _ => {}
+  }
+  return deepest;
+}

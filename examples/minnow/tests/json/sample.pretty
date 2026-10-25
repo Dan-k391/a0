@@ -1,0 +1,30 @@
+{
+  "name": "A0",
+  "version": 0.2,
+  "languages": [
+    "Lox",
+    "Minnow",
+    "Kaleidoscope"
+  ],
+  "native": true,
+  "license": null,
+  "targets": [
+    {
+      "os": "linux",
+      "arch": "x86-64",
+      "tested": true
+    },
+    {
+      "os": "windows",
+      "arch": "x86-64",
+      "tested": true
+    }
+  ],
+  "escapes": "tab\there, quote \" and é😀",
+  "big": 1e+21,
+  "negative": -12.5,
+  "empty": {
+    "list": [],
+    "map": {}
+  }
+}

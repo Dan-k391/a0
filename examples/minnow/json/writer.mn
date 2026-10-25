@@ -1,0 +1,99 @@
+// Writes values as JSON text: on one line, or indented by two spaces per level.
+import std.str as s;
+import value as v;
+
+pub fn compact(x: v.Value) -> string {
+  let out: [string] = [];
+  write(x, out, false, 0);
+  return s.join(out, "");
+}
+
+pub fn pretty(x: v.Value) -> string {
+  let out: [string] = [];
+  write(x, out, true, 0);
+  return s.join(out, "");
+}
+
+fn newline(out: [string], pretty: bool, depth: int) {
+  if pretty { push(out, "\n" + s.repeat("  ", depth)); }
+}
+
+fn write(x: v.Value, out: [string], pretty: bool, depth: int) {
+  match x {
+    Null => push(out, "null"),
+    Bool(b) => push(out, str(b)),
+    Num(n) => push(out, str(n)),
+    Str(t) => push(out, quote(t)),
+    Arr(items) => {
+      if len(items) == 0 {
+        push(out, "[]");
+        return;
+      }
+      push(out, "[");
+      let first = true;
+      for item in items {
+        if !first { push(out, ","); }
+        first = false;
+        newline(out, pretty, depth + 1);
+        write(item, out, pretty, depth + 1);
+      }
+      newline(out, pretty, depth);
+      push(out, "]");
+    }
+    Obj(o) => {
+      if o.size() == 0 {
+        push(out, "{}");
+        return;
+      }
+      push(out, "{");
+      let first = true;
+      for key in o.keys {
+        if !first { push(out, ","); }
+        first = false;
+        newline(out, pretty, depth + 1);
+        push(out, quote(key));
+        if pretty { push(out, ": "); } else { push(out, ":"); }
+        write(o.get(key)!, out, pretty, depth + 1);
+      }
+      newline(out, pretty, depth);
+      push(out, "}");
+    }
+  }
+}
+
+// A string as JSON writes it, with quotes and escapes.
+fn quote(t: string) -> string {
+  let out: [string] = ["\""];
+  let start = 0;
+  let i = 0;
+  while i < len(t) {
+    let c = byte_at(t, i);
+    let escaped = "";
+    if c == 34 {
+      escaped = "\\\"";
+    } else if c == 92 {
+      escaped = "\\\\";
+    } else if c == 10 {
+      escaped = "\\n";
+    } else if c == 13 {
+      escaped = "\\r";
+    } else if c == 9 {
+      escaped = "\\t";
+    } else if c < 32 {
+      escaped = "\\u00" + hex(c / 16) + hex(c % 16);
+    }
+    if len(escaped) > 0 {
+      push(out, s.slice(t, start, i));
+      push(out, escaped);
+      start = i + 1;
+    }
+    i = i + 1;
+  }
+  push(out, s.slice(t, start, len(t)));
+  push(out, "\"");
+  return s.join(out, "");
+}
+
+fn hex(digit: int) -> string {
+  return s.from_byte(byte_at("0123456789abcdef", digit));
+}

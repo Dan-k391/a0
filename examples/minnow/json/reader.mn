@@ -1,0 +1,204 @@
+// Reads JSON text (RFC 8259) into values; an error says where, by line and column.
+import std;
+import std.str as s;
+import value as v;
+
+struct Reader { text: string, pos: int }
+
+// The byte of a one-character string, for comparing with the text.
+fn ch(c: string) -> int { return byte_at(c, 0); }
+
+pub fn read(text: string) -> std.Result<v.Value, string> {
+  let r = new Reader { text: text, pos: 0 };
+  let x = r.value()?;
+  r.space();
+  if r.pos < len(text) {
+    return std.Result::Err(r.error("unexpected text after the value"));
+  }
+  return std.Result::Ok(x);
+}
+
+impl Reader {
+  fn peek(self) -> int {
+    if self.pos < len(self.text) { return byte_at(self.text, self.pos); }
+    return -1;
+  }
+
+  fn space(self) {
+    while self.pos < len(self.text) && s.is_space(byte_at(self.text, self.pos)) {
+      self.pos = self.pos + 1;
+    }
+  }
+
+  // "line 3, column 7: expected ':'"
+  fn error(self, message: string) -> string {
+    let line = 1;
+    let column = 1;
+    let i = 0;
+    while i < self.pos && i < len(self.text) {
+      if byte_at(self.text, i) == 10 {
+        line = line + 1;
+        column = 1;
+      } else {
+        column = column + 1;
+      }
+      i = i + 1;
+    }
+    return "line " + str(line) + ", column " + str(column) + ": " + message;
+  }
+
+  fn expect(self, c: string) -> std.Result<bool, string> {
+    self.space();
+    if self.peek() != ch(c) { return std.Result::Err(self.error("expected '" + c + "'")); }
+    self.pos = self.pos + 1;
+    return std.Result::Ok(true);
+  }
+
+  fn value(self) -> std.Result<v.Value, string> {
+    self.space();
+    let c = self.peek();
+    if c == ch("{") { return self.object(); }
+    if c == ch("[") { return self.array(); }
+    if c == ch("\"") { return std.Result::Ok(v.Value::Str(self.string()?)); }
+    if c == ch("-") || s.is_digit(c) { return self.number(); }
+    if s.is_alpha(c) { return self.word(); }
+    if c == -1 { return std.Result::Err(self.error("unexpected end of input")); }
+    return std.Result::Err(self.error("unexpected '" + s.from_byte(c) + "'"));
+  }
+
+  fn word(self) -> std.Result<v.Value, string> {
+    let start = self.pos;
+    while s.is_alpha(self.peek()) { self.pos = self.pos + 1; }
+    let w = s.slice(self.text, start, self.pos);
+    if w == "true" { return std.Result::Ok(v.Value::Bool(true)); }
+    if w == "false" { return std.Result::Ok(v.Value::Bool(false)); }
+    if w == "null" { return std.Result::Ok(v.Value::Null); }
+    self.pos = start;
+    return std.Result::Err(self.error("unexpected '" + w + "'"));
+  }
+
+  fn number(self) -> std.Result<v.Value, string> {
+    let start = self.pos;
+    if self.peek() == ch("-") { self.pos = self.pos + 1; }
+    if !s.is_digit(self.peek()) { return std.Result::Err(self.error("expected a digit")); }
+    while s.is_digit(self.peek()) || self.peek() == ch(".") || self.peek() == ch("e")
+        || self.peek() == ch("E") || self.peek() == ch("+") || self.peek() == ch("-") {
+      self.pos = self.pos + 1;
+    }
+    let text = s.slice(self.text, start, self.pos);
+    match s.parse_float(text) {
+      Ok(n) => { return std.Result::Ok(v.Value::Num(n)); }
+      Err(_why) => {
+        self.pos = start;
+        return std.Result::Err(self.error("invalid number '" + text + "'"));
+      }
+    }
+  }
+
+  fn string(self) -> std.Result<string, string> {
+    self.pos = self.pos + 1;
+    let parts: [string] = [];
+    let start = self.pos;
+    while true {
+      let c = self.peek();
+      if c == -1 { return std.Result::Err(self.error("unterminated string")); }
+      if c == ch("\"") { break; }
+      if c == ch("\\") {
+        push(parts, s.slice(self.text, start, self.pos));
+        self.pos = self.pos + 1;
+        push(parts, self.escape()?);
+        start = self.pos;
+      } else {
+        if c < 32 { return std.Result::Err(self.error("control character in a string")); }
+        self.pos = self.pos + 1;
+      }
+    }
+    push(parts, s.slice(self.text, start, self.pos));
+    self.pos = self.pos + 1;
+    return std.Result::Ok(s.join(parts, ""));
+  }
+
+  fn escape(self) -> std.Result<string, string> {
+    let c = self.peek();
+    self.pos = self.pos + 1;
+    if c == ch("n") { return std.Result::Ok("\n"); }
+    if c == ch("t") { return std.Result::Ok("\t"); }
+    if c == ch("r") { return std.Result::Ok(s.from_byte(13)); }
+    if c == ch("b") { return std.Result::Ok(s.from_byte(8)); }
+    if c == ch("f") { return std.Result::Ok(s.from_byte(12)); }
+    if c == ch("/") || c == ch("\\") || c == ch("\"") { return std.Result::Ok(s.from_byte(c)); }
+    if c == ch("u") {
+      let code = self.hex4()?;
+      // A surrogate pair is one code point.
+      if code >= 55296 && code <= 56319 && self.peek() == ch("\\") {
+        self.pos = self.pos + 1;
+        if self.peek() != ch("u") { return std.Result::Err(self.error("expected a low surrogate")); }
+        self.pos = self.pos + 1;
+        let low = self.hex4()?;
+        code = 65536 + (code - 55296) * 1024 + (low - 56320);
+      }
+      return std.Result::Ok(s.from_code_point(code));
+    }
+    self.pos = self.pos - 1;
+    return std.Result::Err(self.error("invalid escape"));
+  }
+
+  fn hex4(self) -> std.Result<int, string> {
+    let n = 0;
+    let i = 0;
+    while i < 4 {
+      let c = self.peek();
+      let d = -1;
+      if s.is_digit(c) {
+        d = c - 48;
+      } else if c >= 97 && c <= 102 {
+        d = c - 87;
+      } else if c >= 65 && c <= 70 {
+        d = c - 55;
+      }
+      if d < 0 { return std.Result::Err(self.error("expected a hex digit")); }
+      n = n * 16 + d;
+      self.pos = self.pos + 1;
+      i = i + 1;
+    }
+    return std.Result::Ok(n);
+  }
+
+  fn array(self) -> std.Result<v.Value, string> {
+    self.pos = self.pos + 1;
+    let items: [v.Value] = [];
+    self.space();
+    if self.peek() == ch("]") {
+      self.pos = self.pos + 1;
+      return std.Result::Ok(v.Value::Arr(items));
+    }
+    while true {
+      push(items, self.value()?);
+      self.space();
+      if self.peek() == ch(",") { self.pos = self.pos + 1; } else { break; }
+    }
+    self.expect("]")?;
+    return std.Result::Ok(v.Value::Arr(items));
+  }
+
+  fn object(self) -> std.Result<v.Value, string> {
+    self.pos = self.pos + 1;
+    let o = v.object();
+    self.space();
+    if self.peek() == ch("}") {
+      self.pos = self.pos + 1;
+      return std.Result::Ok(v.Value::Obj(o));
+    }
+    while true {
+      self.space();
+      if self.peek() != ch("\"") { return std.Result::Err(self.error("expected a string key")); }
+      let key = self.string()?;
+      self.expect(":")?;
+      o.set(key, self.value()?);
+      self.space();
+      if self.peek() == ch(",") { self.pos = self.pos + 1; } else { break; }
+    }
+    self.expect("}")?;
+    return std.Result::Ok(v.Value::Obj(o));
+  }
+}

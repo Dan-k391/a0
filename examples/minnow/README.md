@@ -66,7 +66,8 @@ do that, Minnow was 1513 lines without enums, generics or nullable types.
 - **Items**: `struct Name<T> { field: type, ... }`, `enum Name<T> { Variant(type, ...), ... }` and
   `fn name<T>(param: type, ...) -> type { ... }`, in any order (type parameters are optional). The
   program starts at `fn main()`, which may return an `int` exit status.
-- **Types**: `int` (64-bit, wrapping), `float`, `bool`, `string`, `[T]` arrays, `fn(T, ...) -> R`
+- **Types**: `int` (64-bit, wrapping), `float`, `bool`, `string`, `[T]` arrays, `map<K, V>` maps
+  (keys `int`, `bool` or `string`), `fn(T, ...) -> R`
   functions (no `->` means no result), struct and enum names with type arguments (`Pair<int, string>`,
   inferred when left out), and `T?` for a reference that may be null. Values of struct, enum, array and
   function type are references; `==` compares them by identity and everything else by value.
@@ -83,7 +84,11 @@ do that, Minnow was 1513 lines without enums, generics or nullable types.
   `E::V(a)`, `match e { V(x) => e, _ => e }` (arms may be blocks), and closures
   `fn(x: int) -> int { return x + 1; }`, which capture variables by reference.
 - **Builtins**: `print(x)` for numbers, booleans and strings (with a newline), `str(x)`, `len(a)`
-  for arrays and strings, `push(a, x)`, `pop(a)`.
+  for arrays, maps and strings, `push(a, x)`, `pop(a)`, `has(m, k)`, `remove(m, k)`, `keys(m)`,
+  `substr(s, start, count)` and `byte_at(s, i)`. `new map {}` is an empty map; `m[k]` reads and
+  assigns entries.
+- **Programs of several files**, methods, interfaces and the standard library: see above;
+  `json/` is a real program that uses them.
 - **Inference**: a variable's type comes from its initializer; the element type of `[]`, the type
   arguments of generic calls and the type of `null` come from how they are used.
 - Indexing out of bounds, `pop` on an empty array, `!` on null and integer division by zero stop the

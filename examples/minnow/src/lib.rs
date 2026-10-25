@@ -727,6 +727,15 @@ impl<'a> Compiler<'a> {
         self.at(node);
         let name = self.field(node, "name");
         let sname = self.text(name);
+        // `new map {}`: an empty map, its key and value types inferred from its use.
+        if sname == "map"
+            && inits.is_empty()
+            && self.opt(node, "module").is_none()
+            && self.b.lookup_type_name("map").is_none()
+        {
+            let t = self.b.named_type("map", &[]);
+            return self.b.new_map(t);
+        }
         let found = match self.opt(node, "module") {
             Some(m) => {
                 self.at(name);

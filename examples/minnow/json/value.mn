@@ -1,0 +1,34 @@
+// JSON values. Objects keep their keys in the order they were read.
+pub enum Value { Null, Bool(bool), Num(float), Str(string), Arr([Value]), Obj(Object) }
+
+pub struct Object { keys: [string], items: map<string, Value> }
+
+pub fn object() -> Object {
+  return new Object { keys: [], items: new map {} };
+}
+
+impl Object {
+  fn set(self, key: string, value: Value) {
+    if !has(self.items, key) { push(self.keys, key); }
+    self.items[key] = value;
+  }
+
+  fn get(self, key: string) -> Value? {
+    if has(self.items, key) { return self.items[key]; }
+    return null;
+  }
+
+  fn size(self) -> int { return len(self.keys); }
+}
+
+// What kind of value `x` is, as messages and statistics name it.
+pub fn kind(x: Value) -> string {
+  return match x {
+    Null => "null",
+    Bool(_b) => "boolean",
+    Num(_n) => "number",
+    Str(_t) => "string",
+    Arr(_items) => "array",
+    Obj(_o) => "object",
+  };
+}

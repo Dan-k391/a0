@@ -1,0 +1,52 @@
+// Paths into values: `.name` and `[index]`, as in `.items[0].name`; `.` is the whole value.
+import std;
+import std.str as s;
+import value as v;
+
+pub fn get(x: v.Value, path: string) -> std.Result<v.Value, string> {
+  if path == "." { return std.Result::Ok(x); }
+  let at = x;
+  let i = 0;
+  while i < len(path) {
+    let c = byte_at(path, i);
+    if c == byte_at(".", 0) {
+      let start = i + 1;
+      i = start;
+      while i < len(path) && byte_at(path, i) != byte_at(".", 0) && byte_at(path, i) != byte_at("[", 0) {
+        i = i + 1;
+      }
+      at = field(at, s.slice(path, start, i))?;
+    } else if c == byte_at("[", 0) {
+      let end = s.find_from(path, "]", i);
+      if end < 0 { return std.Result::Err("unclosed '[' in the path"); }
+      let index = s.parse_int(s.slice(path, i + 1, end))?;
+      at = element(at, index)?;
+      i = end + 1;
+    } else {
+      return std.Result::Err("a path is made of .name and [index], as in .items[0].name");
+    }
+  }
+  return std.Result::Ok(at);
+}
+
+fn field(x: v.Value, key: string) -> std.Result<v.Value, string> {
+  match x {
+    Obj(o) => {
+      if let value = o.get(key) { return std.Result::Ok(value); }
+      return std.Result::Err("no key \"" + key + "\"");
+    }
+    _ => { return std.Result::Err("cannot take ." + key + " of " + v.kind(x)); }
+  }
+}
+
+fn element(x: v.Value, index: int) -> std.Result<v.Value, string> {
+  match x {
+    Arr(items) => {
+      if index < 0 || index >= len(items) {
+        return std.Result::Err("no element [" + str(index) + "] in an array of " + str(len(items)));
+      }
+      return std.Result::Ok(items[index]);
+    }
+    _ => { return std.Result::Err("cannot take [" + str(index) + "] of " + v.kind(x)); }
+  }
+}
