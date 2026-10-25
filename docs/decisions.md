@@ -37,7 +37,8 @@ holds an `Option` (a binding would use `A0_NONE`).
 The IR has no basic blocks: `if`/`loop` own nested regions, values are lexically scoped, and mutable
 state goes through function-local variables. This is what frontends naturally produce, it makes the
 interpreter a straightforward tree walk, and Cranelift's `cranelift-frontend` already turns variables
-into SSA, so we do not write SSA construction (or any optimizer) ourselves. See `docs/ir.md`.
+into SSA, so we do not write SSA construction ourselves. See `docs/ir.md`. (This also said we
+write no optimizer; D27 later added a small one on the HIR, which Cranelift cannot replace.)
 
 ## D4. Backends: interpreter first, Cranelift for native code, system linker
 

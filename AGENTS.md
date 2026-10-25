@@ -7,7 +7,7 @@ changes, change it here in the same commit.
 
 ```
 cargo build --workspace
-cargo test --workspace              # everything; the Lox suite runs three ways (~20 s)
+cargo test --workspace              # everything; the Lox suite runs six ways (~35 s)
 cargo test -p a0-ir                 # one crate
 cargo test -p lox --test suite      # the official Lox suite only
 cargo clippy --workspace --all-targets   # must report no warnings
@@ -32,7 +32,7 @@ extension in `editors/vscode` starts it.
 | base | `a0-diag` | nothing |
 | frontend | `a0-syntax` (grammar DSL, parser, trees), `a0-sema` (scopes, static types) | `a0-diag` |
 | core IR | `a0-ir` (model, builder, text format, verifier) | `a0-diag` |
-| high-level IR | `a0-hir` (typed tree, builder, checker, text, lowering) | `a0-ir`, `a0-syntax`, `a0-sema`, `a0-diag` |
+| high-level IR | `a0-hir` (typed tree, builder with inference, checker, text, monomorphization, optimizer, lowering) | `a0-ir`, `a0-syntax`, `a0-sema`, `a0-diag` |
 | targets | `a0-target` | nothing |
 | runtime | `a0-runtime` (C in `include/`, `c/`; Rust glue) | nothing |
 | backends | `a0-interp`, `a0-native` | `a0-ir`, `a0-runtime`, `a0-target`, `a0-diag` |
@@ -49,13 +49,17 @@ layer, decision D17). A new crate goes into the table above and into `[workspace
 
 - **Public APIs stay C-bindable** (decision D2 in `docs/decisions.md`): opaque owner types, `u32`
   handles, `&str`/`&[T]` inputs, no lifetimes, generics, closures, trait objects or data-carrying
-  enums in public signatures.
+  enums in public signatures. Returning an owned `String` is fine (the C wrapper keeps it), as are
+  enums with a text form (C passes their names) and methods that take `self` (they consume the C
+  object). Anything public that C should reach gets a binding in `a0-capi` and its header.
 - **Report, don't panic.** Libraries return `Diagnostics` (from `a0-diag`) for anything a user can
   cause. Builders record misuse as diagnostics. `panic!`/`unwrap` only for internal invariants.
 - **Interpreter and native code must behave identically**: same output, same stderr, same exit code.
   Traps and panics go through the C runtime (`a0_rt_trap`, exit 101).
 - No new dependencies without a reason recorded in `docs/decisions.md`. Never a code generator other
-  than Cranelift, never our own optimizer or linker.
+  than Cranelift and never our own linker. The one optimizer of our own is the HIR optimizer (D27):
+  keep it small, on by default, behavior-preserving, and leave per-function optimization to
+  Cranelift.
 - Every target-dependent choice goes through `a0_target::Target`; never `cfg!` in codegen.
 - Generalize only when two example languages need it (except the IR layers and the default runtime).
 - Rust edition 2024, rustfmt defaults, clippy clean. Comments explain why, not what; match the
@@ -89,7 +93,8 @@ layer, decision D17). A new crate goes into the table above and into `[workspace
 | Grammar DSL (including `@def`/`@scope`) | `docs/grammar.md` |
 | The language server or the editor extension | `docs/editors.md` |
 | A design choice with alternatives | a new `D<n>` entry in `docs/decisions.md` |
-| A milestone ends | `docs/milestones.md` (done / changed / open questions), `README.md` status |
+| A milestone ends | `docs/milestones.md` (done / changed / open questions); `CHANGELOG.md` (under Unreleased) |
+| A release | `CHANGELOG.md`, the version in `Cargo.toml`, `README.md` status, a `v<version>` tag |
 | A workflow or convention | this file and `.claude/skills/` |
 
 ## Commits

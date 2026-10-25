@@ -34,7 +34,8 @@ identically interpreted, natively and under `A0_GC_STRESS=1`.
 7. Runtime support, if needed: follow the `add-runtime-function` skill.
 8. `docs/hir.md` - the type/expression/builtin tables and lowering notes.
 9. Tests:
-   - a program in `tests/hir/<name>.hir` with `// expect-stdout:` lines (runs in all three modes);
+   - a program in `tests/hir/<name>.hir` with `// expect-stdout:` lines (runs in all six modes:
+     interpreted, native, GC stress, each with and without the optimizer);
    - typing errors in `crates/a0-hir/tests/hir.rs` (`type_errors_are_reported_with_locations`);
    - the round-trip test covers the new syntax automatically once a corpus file uses it.
 

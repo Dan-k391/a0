@@ -46,7 +46,7 @@ output, and report errors with source locations.
 ## Files to update
 
 - Root `Cargo.toml`: add `examples/foo` to `members`.
-- `README.md`: the layout table (and status if it is a milestone).
+- `README.md`: the repository layout table.
 - `AGENTS.md`: anything that changes how to build or test.
 - `editors/vscode/package.json`: a `contributes.languages` entry, its `semanticTokenScopes` and an
   `a0.languages` default, so VS Code starts `foo lsp` for its files.
@@ -61,7 +61,8 @@ output, and report errors with source locations.
   `// expect:` lines, error cases in `tests/minnow.rs`. It is the template for a typed language.
 - Lox: grammar `lox.a0g`, checks and resolver in `src/analyze.rs`, HIR generation in `src/emit.rs`,
   runtime semantics in HIR in `prelude.hir` (prefer changing the prelude over emitting more code).
-  The official suite (`tests/suite.rs`) must stay fully green in all three modes.
+  The official suite (`tests/suite.rs`) must stay fully green in all six modes (interpreted,
+  native, GC stress, each optimized and with `A0_OPT=0`).
 
 ## Checks that must pass
 
