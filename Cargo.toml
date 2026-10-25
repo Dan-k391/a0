@@ -13,6 +13,7 @@ members = [
     "crates/a0-build",
     "crates/a0-driver",
     "crates/a0-capi",
+    "crates/a0-playground",
     "examples/kaleidoscope",
     "examples/lox",
     "examples/minnow",

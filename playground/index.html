@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>A0 Playground</title>
+  <meta name="description" content="Define a language with a grammar and run programs in it, with A0 running in your browser.">
+  <link rel="stylesheet" href="style.css">
+  <script type="module" src="app.js"></script>
+</head>
+<body>
+  <header>
+    <h1>A0 <span>playground</span></h1>
+    <p class="intro">
+      A grammar defines a language: each rule says what its nodes mean with an <code>@hir</code> form
+      (<a href="https://github.com/Dan-k391/a0/blob/main/docs/grammar.md#languages-without-host-code-hir">the forms</a>).
+      A0 itself, compiled to WebAssembly, parses the program, checks it, and runs it in your browser.
+    </p>
+  </header>
+  <div class="toolbar">
+    <label>Example
+      <select id="examples"></select>
+    </label>
+    <div class="actions">
+      <button id="run" class="primary" title="Ctrl+Enter">Run</button>
+      <button id="tree" title="The program's syntax tree">Tree</button>
+      <button id="hir" title="The high-level IR the grammar's forms build">HIR</button>
+      <button id="ir" title="The core IR the HIR lowers to">IR</button>
+      <button id="share" title="Copy a link to this grammar and program">Copy link</button>
+    </div>
+  </div>
+  <main>
+    <section class="pane">
+      <h2>Grammar</h2>
+      <textarea id="grammar" spellcheck="false" autocomplete="off" aria-label="Grammar"></textarea>
+    </section>
+    <section class="pane">
+      <h2>Program</h2>
+      <textarea id="program" spellcheck="false" autocomplete="off" aria-label="Program"></textarea>
+    </section>
+    <section class="pane output">
+      <h2>Output <span id="status"></span></h2>
+      <pre id="output" aria-live="polite"></pre>
+    </section>
+  </main>
+  <footer>
+    <a href="https://github.com/Dan-k391/a0">A0</a> builds languages: a grammar, a typed IR, an interpreter
+    and native code, a collector and a language server. Here it runs as WebAssembly, with no native
+    backend.
+  </footer>
+</body>
+</html>

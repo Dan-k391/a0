@@ -14,6 +14,10 @@ APIs. `docs/milestones.md` has the details of each step, with measurements.
 - **Languages without host code**: grammar rules give their nodes HIR forms (`@hir(let)`, or a
   rule named `function`, `block`, `binary`, ...), and `a0 lang <grammar.a0g> run|build|hir|ir|lsp`
   runs such a language with both backends and a language server. Calc (`examples/calc`) is one.
+- **The playground** (`docs/playground.md`, https://dan-k391.github.io/a0/): A0 itself, built for
+  WebAssembly, in a page with a grammar, a program and its output, tree, HIR and IR. The runtime
+  builds for wasm32-wasip1 (64-bit pointer slots where generated code reads pointers, generated
+  call wrappers), and Lispy (`examples/lispy`) joins Calc as a grammar-only language.
 - **Python bindings** (`bindings/python`, `docs/python.md`): the package `a0` over the C API with
   ctypes (grammars, trees, both builders, running and native executables, and a driver), and
   Pebble, a language written in Python. The C API is also a shared library, and gained

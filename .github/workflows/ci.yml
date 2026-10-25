@@ -55,3 +55,31 @@ jobs:
         run: cargo fmt --all --check
       - name: clippy
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
+  # The browser playground: A0's engine (crates/a0-playground) built for WebAssembly with wasi-sdk,
+  # then run by Node the way the page runs it. pages.yml publishes it.
+  playground:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        run: rustup toolchain install stable --profile minimal --target wasm32-wasip1 && rustup default stable
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ~/wasi-sdk
+            target
+          key: playground-wasi-sdk-34-${{ hashFiles('Cargo.lock') }}
+          restore-keys: playground-wasi-sdk-34-
+      - name: Install wasi-sdk
+        run: |
+          if [ ! -x ~/wasi-sdk/bin/clang ]; then
+            curl -sSL https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-34/wasi-sdk-34.0-x86_64-linux.tar.gz | tar xz -C ~
+            mv ~/wasi-sdk-34.0-x86_64-linux ~/wasi-sdk
+          fi
+      - name: Build
+        run: WASI_SDK=$HOME/wasi-sdk sh playground/build.sh
+      - name: Test
+        run: node playground/test.mjs target/playground

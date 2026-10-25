@@ -1,0 +1,22 @@
+[
+  {
+    "name": "Calc: functions",
+    "grammar": "examples/calc/calc.a0g",
+    "program": "examples/calc/programs/functions.calc"
+  },
+  {
+    "name": "Calc: loops",
+    "grammar": "examples/calc/calc.a0g",
+    "program": "examples/calc/programs/loops.calc"
+  },
+  {
+    "name": "Calc: basics",
+    "grammar": "examples/calc/calc.a0g",
+    "program": "examples/calc/programs/basics.calc"
+  },
+  {
+    "name": "Lispy: the same forms in parentheses",
+    "grammar": "examples/lispy/lispy.a0g",
+    "program": "examples/lispy/programs/fib.lisp"
+  }
+]

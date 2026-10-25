@@ -26,7 +26,12 @@ The runtime is C, compiled once into a static library that the interpreter calls
      location.
    - If it allocates GC objects, every GC reference it holds across another allocation must be a
      root (see the GC section of `include/a0rt.h`).
-3. `crates/a0-runtime/c/symbols.c` - add `SYM(a0_<name>)` so the interpreter can resolve it.
+3. `crates/a0-runtime/c/symbols.c` - add `SYM(a0_<name>)` so the interpreter can resolve it. In
+   WebAssembly (the playground) the table holds wrappers that `build.rs` generates from the
+   declaration in `a0rt.h`, so keep the declaration on one prototype there (a C library function
+   goes into `C_LIBRARY` in `build.rs` instead). A field of a runtime structure that generated
+   code reads or writes as a pointer is declared with `A0_WORD_PTR` (a 64-bit word on every
+   target).
 4. Interpreter FFI limits: at most 8 arguments, each an integer, pointer or `double`; the result void,
    integer, pointer or `double`. No `float` (f32) and no structs by value. Keep signatures in this
    shape or the interpreter cannot call them.

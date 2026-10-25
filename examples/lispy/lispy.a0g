@@ -1,0 +1,41 @@
+// Lispy: the forms Calc uses (calc.a0g), in parentheses. A language defined by its grammar alone:
+// `a0 lang lispy.a0g run program.lisp`. Names may have `-`, `?` and `!` in them.
+grammar lispy;
+
+skip /[ \t\r\n]+/;
+skip /;[^\n]*/;
+token NUMBER /[0-9]+(\.[0-9]+)?/;
+token STRING /"([^"\\\n]|\\.)*"/;
+token NAME /[A-Za-z_][A-Za-z0-9_?!-]*/;
+error "unterminated string" /"([^"\\\n]|\\.)*/;
+unknown "unexpected character";
+
+program = (!EOF item)* EOF;
+item @inline @recover(before "(") = function | stmt;
+
+// (defn name (params...) body...)
+function @def(function) @scope
+    = "(" "defn" name:NAME ~ "expected a function name" "(" ~ "expected '('" param* ")"
+      ~ "expected ')'" body:body ")" ~ "expected ')'";
+param @def(parameter) = name:NAME;
+body @hir(block) = stmt+;
+
+stmt @inline = let_form | set_form | print_form | if_form | while_form | repeat_form
+             | return_form | do_form | eval_form;
+let_form @def(variable) @hir(let) = "(" "let" name:NAME value:expr ")" ~ "expected ')'";
+set_form @hir(assign) = "(" "set!" name:NAME value:expr ")" ~ "expected ')'";
+print_form @hir(print) = "(" "print" value:expr+ ")" ~ "expected ')'";
+if_form @hir(if) = "(" "if" cond:expr then:stmt else:stmt? ")" ~ "expected ')'";
+while_form @hir(while) = "(" "while" cond:expr body:body ")" ~ "expected ')'";
+repeat_form @hir(repeat) = "(" "repeat" count:expr body:body ")" ~ "expected ')'";
+return_form @hir(return) = "(" "return" value:expr? ")" ~ "expected ')'";
+// (do stmts...): a block
+do_form @hir(block) @scope = "(" "do" stmt* ")" ~ "expected ')'";
+eval_form @hir(eval) = expr;
+
+expr @inline = NUMBER | STRING | "true" | "false" | operation | call | variable;
+operation @hir(binary)
+    = "(" op:("+" | "-" | "*" | "/" | "<=" | ">=" | "<" | ">" | "==" | "!=" | "and" | "or")
+      left:expr ~ "expected an operand" right:expr ~ "expected an operand" ")" ~ "expected ')'";
+call = "(" callee:NAME arg:expr* ")" ~ "expected ')'";
+variable @hir(name) = NAME;

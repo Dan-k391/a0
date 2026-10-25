@@ -9,11 +9,14 @@
 /* Generated code relies on these offsets (see A0Type in a0rt.h); a wrong one fails to compile. */
 typedef char a0_object_type_offset_is_24[(sizeof(Header) - offsetof(Header, type) == 24) ? 1 : -1];
 typedef char a0_type_family_offset_is_24[(offsetof(A0Type, family) == 24) ? 1 : -1];
+typedef char a0_type_itable_offset_is_32[(offsetof(A0Type, itable) == 32) ? 1 : -1];
+typedef char a0_array_data_offset_is_16[(offsetof(A0Array, data) == 16) ? 1 : -1];
 
-const A0Type a0_builtin_string = {"string", A0_KIND_STRING, 0, NULL, &a0_builtin_string};
-const A0Type a0_builtin_array = {"array", A0_KIND_ARRAY, 0, NULL, &a0_builtin_array};
-const A0Type a0_builtin_map = {"map", A0_KIND_MAP, 0, NULL, &a0_builtin_map};
-const A0Type a0_builtin_int = {"int", A0_KIND_INT, 0, NULL, &a0_builtin_int};
+#define BUILTIN(var, text, k) const A0Type var = {.name = text, .kind = k, .family = &var}
+BUILTIN(a0_builtin_string, "string", A0_KIND_STRING);
+BUILTIN(a0_builtin_array, "array", A0_KIND_ARRAY);
+BUILTIN(a0_builtin_map, "map", A0_KIND_MAP);
+BUILTIN(a0_builtin_int, "int", A0_KIND_INT);
 
 static Header *objects;
 static size_t bytes_allocated;
@@ -61,16 +64,16 @@ const A0Type *a0_gc_type_of(const void *object) { return HEADER(object)->type; }
 /* ---- Allocation ------------------------------------------------------------------------------- */
 
 /* A0_GC_STATS=1 prints what the collector did when the program ends, to standard error. */
-static clock_t gc_time;
-static clock_t mark_time;
+static double gc_time;
+static double mark_time;
 static size_t peak_bytes;
 
 static void print_stats(void) {
     fprintf(stderr,
             "gc: %lld collections, %.1f ms (%.1f marking), peak %.1f MB, %lld objects live after the "
             "last\n",
-            (long long)collections, 1000.0 * (double)gc_time / CLOCKS_PER_SEC,
-            1000.0 * (double)mark_time / CLOCKS_PER_SEC, (double)peak_bytes / (1024.0 * 1024.0),
+            (long long)collections, 1000.0 * gc_time, 1000.0 * mark_time,
+            (double)peak_bytes / (1024.0 * 1024.0),
             (long long)live_objects);
 }
 
@@ -117,7 +120,7 @@ static size_t chunk_count, chunk_cap;
  * supported target; check rather than corrupt references silently where they might not. */
 static void *check_address(void *p, size_t size) {
     if (p == NULL) a0_panic("out of memory");
-    if (((uintptr_t)p + size) >> 48 != 0) a0_panic("heap address does not fit in 48 bits");
+    if (((uint64_t)(uintptr_t)p + size) >> 48 != 0) a0_panic("heap address does not fit in 48 bits");
     return p;
 }
 
@@ -304,13 +307,13 @@ static void finalize(void *object) {
 }
 
 void a0_gc_collect(void) {
-    clock_t start = clock();
+    double start = a0_clock();
     for (int64_t i = 0; i < shadow_top; i++) a0_gc_mark_word(shadow[i], A0_WORD_ANY);
     for (int64_t i = 0; i < root_count; i++) {
         a0_gc_mark_word(*(uint64_t *)roots[i].address, roots[i].kind);
     }
     while (gray_count > 0) trace(gray[--gray_count]);
-    mark_time += clock() - start;
+    mark_time += a0_clock() - start;
 
     int64_t live = 0;
     for (size_t k = 0; k < chunk_count; k++) {
@@ -345,7 +348,7 @@ void a0_gc_collect(void) {
     }
     live_objects = live;
     collections++;
-    gc_time += clock() - start;
+    gc_time += a0_clock() - start;
     next_gc = bytes_allocated * 2 < 1024 * 1024 ? 1024 * 1024 : bytes_allocated * 2;
 }
 

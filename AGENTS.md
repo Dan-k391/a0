@@ -11,6 +11,8 @@ cargo test --workspace              # everything; the Lox suite runs six ways (~
 cargo test -p a0-ir                 # one crate
 cargo test -p lox --test suite      # the official Lox suite only
 cargo test -p a0-capi --test python # the Python bindings and Pebble (needs Python 3)
+WASI_SDK=/path/to/wasi-sdk sh playground/build.sh && node playground/test.mjs target/playground
+                                    # the playground, built for WebAssembly (Linux, macOS)
 cargo clippy --workspace --all-targets   # must report no warnings
 cargo fmt --all                     # run before committing
 ```
@@ -41,11 +43,12 @@ extension in `editors/vscode` starts it.
 | targets | `a0-target` | nothing |
 | runtime | `a0-runtime` (C in `include/`, `c/`; Rust glue) | nothing |
 | backends | `a0-interp`, `a0-native` | `a0-ir`, `a0-runtime`, `a0-target`, `a0-diag` |
-| tools | `a0` (CLI), `a0-build` (build-script helper), `a0-driver` (language drivers) | anything |
+| tools | `a0` (CLI), `a0-build` (build-script helper), `a0-driver` (language drivers), `a0-playground` (the playground's engine; no native backend, builds for wasm32-wasip1) | anything |
 | C API | `a0-capi` (`include/a0.h`) | library crates, not the tools |
 | examples | `examples/*` | anything |
 | editors | `editors/vscode` (an extension that starts `lang lsp`; JavaScript) | nothing in Rust |
 | bindings | `bindings/python` (the package `a0`, ctypes over the C API's shared library) | the C API |
+| web | `playground/` (the browser playground: a page, a WASI shim and a worker; JavaScript) | the engine's wasm |
 
 Never make a lower layer depend on a higher one, and keep the frontend and the core IR independent
 of each other. `a0-hir` is the one layer that uses both (its text format is parsed with the grammar
@@ -85,6 +88,11 @@ layer, decision D17). A new crate goes into the table above and into `[workspace
   add a builtin to the HIR only for what the library cannot express.
 - `a0 new` copies `crates/a0/templates/starter` (D54); `crates/a0/tests/new.rs` builds and tests a
   generated project, so a change to the APIs it uses must keep the template working.
+- The runtime builds for wasm32-wasip1 too (D57, `docs/playground.md`): fields that generated code
+  reads as pointers are 64-bit words (`A0_WORD_PTR`), and the interpreter calls C through
+  wrappers generated from `a0rt.h`, so every function in the symbol table needs its prototype
+  there. `cfg!` is fine for what the host can do (threads, stack); codegen still goes through
+  `Target`.
 - Languages without host code (D55): `@hir` forms in `a0_hir::dsl`, run by `a0 lang`; Calc
   (`examples/calc`, tested by `crates/a0/tests/dsl.rs`) is the example. Keep the forms few.
 - Generalize only when two example languages need it (except the IR layers and the default runtime).

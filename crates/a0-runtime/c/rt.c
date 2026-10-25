@@ -184,4 +184,16 @@ void a0_free(void *ptr) { free(ptr); }
 
 /* ---- Time --------------------------------------------------------------------------------- */
 
+#ifdef __wasi__
+/* WASI has no processor-time clock; the time since the program started stands in for it. */
+double a0_clock(void) {
+    static double start = -1;
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    double now = (double)ts.tv_sec + (double)ts.tv_nsec * 1e-9;
+    if (start < 0) start = now;
+    return now - start;
+}
+#else
 double a0_clock(void) { return (double)clock() / (double)CLOCKS_PER_SEC; }
+#endif

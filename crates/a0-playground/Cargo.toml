@@ -1,0 +1,17 @@
+[package]
+name = "a0-playground"
+description = "The engine of A0's browser playground: a language defined by its grammar, run by the interpreter, built for WebAssembly"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "a0-playground"
+path = "src/main.rs"
+
+[dependencies]
+a0-diag.workspace = true
+a0-syntax.workspace = true
+a0-hir.workspace = true
+a0-interp.workspace = true
+a0-runtime.workspace = true

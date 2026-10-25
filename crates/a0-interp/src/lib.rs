@@ -325,8 +325,13 @@ enum Flow {
     Return(u64),
 }
 
-/// Default limit on nested calls before reporting a stack overflow trap.
-pub const DEFAULT_MAX_DEPTH: u32 = 10_000;
+/// Default limit on nested calls before reporting a stack overflow trap. In WebAssembly each call
+/// takes some 400 bytes of the engine's own stack, which is about 1 MB in browsers.
+pub const DEFAULT_MAX_DEPTH: u32 = if cfg!(target_family = "wasm") {
+    1_000
+} else {
+    10_000
+};
 
 /// A prepared program, ready to call into.
 pub struct Interpreter {
@@ -1231,6 +1236,12 @@ pub fn run_main(
     symbols: HostSymbols,
     args: Vec<String>,
 ) -> Result<Result<i32, Trap>, Diagnostics> {
+    // WebAssembly has no threads: the interpreter runs on the main thread, whose stack the program
+    // sets when it is linked (the playground's is large enough for `DEFAULT_MAX_DEPTH`).
+    if cfg!(target_family = "wasm") {
+        let mut interp = Interpreter::new(module, &symbols)?;
+        return Ok(interp.run_main(&args));
+    }
     let handle = std::thread::Builder::new()
         .name("a0-interp".to_string())
         .stack_size(1 << 30)

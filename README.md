@@ -99,6 +99,9 @@ a0 new mylang
 cd mylang && cargo run -- run examples/hello.mylang
 ```
 
+**Try it in the browser: [the playground](https://dan-k391.github.io/a0/)** runs A0 itself,
+compiled to WebAssembly: edit a grammar and a program and run it (`docs/playground.md`).
+
 A small language needs no compiler at all: its grammar can say what each rule means
 (`docs/grammar.md`, "Languages without host code"), and `a0 lang` runs it. [Calc](examples/calc)
 is a calculator language of one 54-line grammar, with functions, loops, the standard mathematics,
@@ -146,6 +149,7 @@ A0 is not published on crates.io; depend on it from git (`a0-hir = { git =
 | [docs/editors.md](docs/editors.md) | The language server and editor setup |
 | [docs/c-api.md](docs/c-api.md) | Using A0 from C |
 | [docs/python.md](docs/python.md) | Writing a language in Python |
+| [docs/playground.md](docs/playground.md) | The browser playground: building it, how it works |
 | [docs/decisions.md](docs/decisions.md) | Design decisions and why |
 | [docs/milestones.md](docs/milestones.md) | What was built when, with measurements and open questions |
 | [CHANGELOG.md](CHANGELOG.md) | Releases |
@@ -191,7 +195,8 @@ allocation.
 | `bindings/python` | The Python package `a0` over the C API, and Pebble, a language in Python |
 | `crates/a0` | The `a0` command-line tool |
 | `examples/kaleidoscope`, `examples/lox`, `examples/minnow` | The example languages |
-| `examples/calc` | A language defined by its grammar alone, run by `a0 lang` |
+| `examples/calc`, `examples/lispy` | Languages defined by their grammars alone, run by `a0 lang` |
+| `crates/a0-playground`, `playground` | The browser playground: its engine (built for WebAssembly) and its page |
 | `editors/vscode` | A VS Code extension that starts each language's server |
 | `tests/programs`, `tests/hir` | Core IR and HIR programs with expected output, run by both backends |
 

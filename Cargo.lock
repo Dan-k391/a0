@@ -99,6 +99,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "a0-playground"
+version = "0.2.0"
+dependencies = [
+ "a0-diag",
+ "a0-hir",
+ "a0-interp",
+ "a0-runtime",
+ "a0-syntax",
+]
+
+[[package]]
 name = "a0-runtime"
 version = "0.2.0"
 dependencies = [

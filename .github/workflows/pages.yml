@@ -1,0 +1,52 @@
+# Publishes the browser playground (playground/, docs/playground.md) to GitHub Pages from main. CI
+# builds and tests it too; this workflow only deploys, so that a problem with Pages never fails CI.
+name: Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        run: rustup toolchain install stable --profile minimal --target wasm32-wasip1 && rustup default stable
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ~/wasi-sdk
+            target
+          key: playground-wasi-sdk-34-${{ hashFiles('Cargo.lock') }}
+          restore-keys: playground-wasi-sdk-34-
+      - name: Install wasi-sdk
+        run: |
+          if [ ! -x ~/wasi-sdk/bin/clang ]; then
+            curl -sSL https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-34/wasi-sdk-34.0-x86_64-linux.tar.gz | tar xz -C ~
+            mv ~/wasi-sdk-34.0-x86_64-linux ~/wasi-sdk
+          fi
+      - name: Build
+        run: WASI_SDK=$HOME/wasi-sdk sh playground/build.sh
+      - name: Test
+        run: node playground/test.mjs target/playground
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: target/playground
+      - id: deployment
+        uses: actions/deploy-pages@v4

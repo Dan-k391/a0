@@ -19,6 +19,16 @@ extern "C" {
 #define A0_NORETURN __attribute__((noreturn))
 #endif
 
+/* A pointer field that generated code reads or writes as a 64-bit word (in A0Type, A0Array and
+ * the collector's header), so that the layout is the same for every pointer size: on 32-bit
+ * targets (wasm32, little-endian) the pointer is the low half of a word whose high half stays
+ * zero, as these structures are zeroed when they are allocated. */
+#if UINTPTR_MAX > 0xffffffffu
+#define A0_WORD_PTR(type, name) type name
+#else
+#define A0_WORD_PTR(type, name)     union {                             type name;                      uint64_t name##_word;       }
+#endif
+
 /* ---- Lifecycle ---------------------------------------------------------------------------- */
 
 /* Called once before the program's main function. */
@@ -186,16 +196,16 @@ enum { A0_KIND_FIXED = 0, A0_KIND_STRING = 1, A0_KIND_ARRAY = 2, A0_KIND_MAP = 3
  * pointer 24 bytes before the object (in the collector's header), a type's family is the field 24
  * bytes into its descriptor, and its interface table the field 32 bytes in. Keep them in sync. */
 typedef struct A0Type {
-    char *name;
+    A0_WORD_PTR(char *, name);
     int32_t kind;
     int32_t word_count;
-    uint8_t *layout;
+    A0_WORD_PTR(uint8_t *, layout);
     /* The enum a variant belongs to; a type's own descriptor otherwise. */
-    const struct A0Type *family;
-    /* For each interface of the program, the table of this type's methods for it (pointers to
-     * functions that take the object first), or NULL; NULL if it implements none. Set by
-     * generated code at startup. */
-    void ***itable;
+    A0_WORD_PTR(const struct A0Type *, family);
+    /* For each interface of the program, the table of this type's methods for it (64-bit words
+     * holding pointers to functions that take the object first), or NULL; NULL if it implements
+     * none. Set by generated code at startup. */
+    A0_WORD_PTR(void *, itable);
 } A0Type;
 
 /* Registers a FIXED type: `word_count` payload words traced as `layout[i]` says. `family` is the
@@ -283,7 +293,7 @@ A0String *a0_string_from_c(const char *s, int64_t required, uint64_t loc, void *
 typedef struct A0Array {
     int64_t len;
     int64_t cap;
-    uint64_t *data;
+    A0_WORD_PTR(uint64_t *, data); /* read by generated code (element access) */
     int64_t elem_kind;
 } A0Array;
 

@@ -657,3 +657,17 @@ header. Two functions were added to the C API for it, and are useful to C as wel
 `a0_diagnostics_render` (errors shown against their source) and `a0_hir_text`. A Python language
 gets the driver's `run`, `build`, `hir` and `ir` from `a0.driver`; not its language server, which
 needs the driver bound to C with a compile callback (left for later).
+
+## D57. The playground is A0 built for wasm32-wasip1, with 64-bit pointer slots and call wrappers
+
+v0.3 asks for a browser playground that runs A0 itself with nothing installed. The engine is the
+interpreter and the C runtime, so the runtime had to compile to WebAssembly. Emscripten brings its
+own JavaScript runtime; wasm64 would keep pointers 64-bit but is not in every browser; wasm32 with
+wasi-sdk keeps the runtime plain C and the page in charge of the little system it needs. It is
+wasm32-wasip1. Two things assumed 64-bit pointers: fields that generated code reads as words, now
+`A0_WORD_PTR` slots (the same layout on every target, so lowering is unchanged), and calls through
+a generic function pointer, which WebAssembly checks, so the symbol table holds generated wrappers
+there. The page implements the WASI calls itself (about 110 lines) rather than using a library or
+Node's built-in WASI, which crashed on these programs. The interpreter recurses on the engine's
+stack, so in WebAssembly calls nest at most 1000 deep. The playground is published to GitHub
+Pages from `main`; CI builds and tests it with Node on every push.

@@ -18,9 +18,9 @@ typedef struct {
 
 /* Every object is preceded by a header; object pointers point at the payload. */
 typedef struct Header {
-    struct Header *next;
-    const A0Type *type;
-    uint64_t size; /* header + payload, for accounting */
+    A0_WORD_PTR(struct Header *, next);
+    A0_WORD_PTR(const A0Type *, type); /* read by generated code */
+    uint64_t size;                      /* header + payload, for accounting */
     uint32_t marked;
     uint32_t reserved;
 } Header;

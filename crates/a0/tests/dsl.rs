@@ -1,5 +1,6 @@
-//! Calc (`examples/calc`), a language defined by its grammar alone, through `a0 lang`: its programs
-//! interpreted, under GC stress, without the optimizer and native; its errors; its language server.
+//! Calc and Lispy (`examples/calc`, `examples/lispy`), languages defined by their grammars alone,
+//! through `a0 lang`: their programs interpreted, under GC stress, without the optimizer and native;
+//! Calc's errors and language server.
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -11,39 +12,64 @@ fn root() -> PathBuf {
     std::path::absolute(Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")).unwrap()
 }
 
-fn calc(args: &[&str], env: &[(&str, &str)]) -> Output {
+fn lang(grammar: &str, args: &[&str], env: &[(&str, &str)]) -> Output {
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_a0"));
-    cmd.current_dir(root())
-        .args(["lang", "examples/calc/calc.a0g"])
-        .args(args);
+    cmd.current_dir(root()).args(["lang", grammar]).args(args);
     for (k, v) in env {
         cmd.env(k, v);
     }
     cmd.output().unwrap()
 }
 
-/// The lines after `# expect-stdout:`, each a comment.
-fn expected(text: &str) -> String {
+fn calc(args: &[&str], env: &[(&str, &str)]) -> Output {
+    lang("examples/calc/calc.a0g", args, env)
+}
+
+/// The lines after `<comment> expect-stdout:`, each a comment.
+fn expected(text: &str, comment: &str) -> String {
     let mut out = String::new();
-    let mut lines = text.lines().skip_while(|l| *l != "# expect-stdout:");
+    let mut lines = text
+        .lines()
+        .skip_while(|l| *l != format!("{comment} expect-stdout:"));
     lines.next();
     for line in lines {
-        let line = line.strip_prefix('#').unwrap_or(line);
+        let line = line.strip_prefix(comment).unwrap_or(line);
         out.push_str(line.strip_prefix(' ').unwrap_or(line));
         out.push('\n');
     }
     out
 }
 
-fn programs() -> Vec<PathBuf> {
-    let mut v: Vec<PathBuf> = std::fs::read_dir(root().join("examples/calc/programs"))
-        .unwrap()
-        .map(|e| e.unwrap().path())
-        .filter(|p| p.extension().is_some_and(|e| e == "calc"))
-        .collect();
-    v.sort();
-    assert!(v.len() >= 3);
-    v
+/// Each example's programs: the grammar, the program, and what it should print.
+fn programs() -> Vec<(&'static str, PathBuf, String)> {
+    let mut all = Vec::new();
+    for (grammar, dir, extension, comment) in [
+        (
+            "examples/calc/calc.a0g",
+            "examples/calc/programs",
+            "calc",
+            "#",
+        ),
+        (
+            "examples/lispy/lispy.a0g",
+            "examples/lispy/programs",
+            "lisp",
+            ";",
+        ),
+    ] {
+        let mut v: Vec<PathBuf> = std::fs::read_dir(root().join(dir))
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .filter(|p| p.extension().is_some_and(|e| e == extension))
+            .collect();
+        v.sort();
+        assert!(!v.is_empty(), "no programs in {dir}");
+        for p in v {
+            let want = expected(&std::fs::read_to_string(&p).unwrap(), comment);
+            all.push((grammar, p, want));
+        }
+    }
+    all
 }
 
 fn check(name: &str, mode: &str, out: &Output, want: &str) {
@@ -55,16 +81,15 @@ fn check(name: &str, mode: &str, out: &Output, want: &str) {
 
 #[test]
 fn programs_run_interpreted() {
-    for p in programs() {
+    for (grammar, p, want) in programs() {
         let name = p.file_name().unwrap().to_string_lossy().into_owned();
-        let want = expected(&std::fs::read_to_string(&p).unwrap());
         let file = p.to_string_lossy();
         for (mode, env) in [
             ("interpreted", &[][..]),
             ("GC stress", &[("A0_GC_STRESS", "1")][..]),
             ("unoptimized", &[("A0_OPT", "0")][..]),
         ] {
-            check(&name, mode, &calc(&["run", &file], env), &want);
+            check(&name, mode, &lang(grammar, &["run", &file], env), &want);
         }
     }
 }
@@ -73,11 +98,11 @@ fn programs_run_interpreted() {
 fn programs_run_natively() {
     let dir = std::env::temp_dir().join(format!("a0-calc-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
-    for p in programs() {
+    for (grammar, p, want) in programs() {
         let name = p.file_name().unwrap().to_string_lossy().into_owned();
-        let want = expected(&std::fs::read_to_string(&p).unwrap());
         let exe = dir.join(p.file_stem().unwrap());
-        let build = calc(
+        let build = lang(
+            grammar,
             &["build", &p.to_string_lossy(), "-o", &exe.to_string_lossy()],
             &[],
         );
