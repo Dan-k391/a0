@@ -200,9 +200,18 @@ fn the_platform_debugger_stops_at_a_line() {
     let mut text = text;
     if !text.contains("lines.hir:4") && cfg!(target_os = "macos") {
         for command in [
-            &["dsymutil", "-s", "./lines"][..],
-            &["ls", "-laR", "lines.dSYM"][..],
-            &["dwarfdump", "--debug-line", "lines.dSYM"][..],
+            &[
+                "lldb",
+                "--batch",
+                "-o",
+                "target create ./lines",
+                "-o",
+                "image list",
+                "-o",
+                "image dump line-table lines.hir",
+            ][..],
+            &["sh", "-c", "dsymutil -s ./lines | grep -E 'N_(OSO|FUN|SO)'"][..],
+            &["dwarfdump", "--debug-info", "lines.dSYM"][..],
         ] {
             let out = Command::new(command[0])
                 .args(&command[1..])
