@@ -16,9 +16,15 @@ grammar ──a0-syntax──▶ syntax tree ──your compiler──▶ HIR �
 - **A parser from a grammar file**, loaded at run time: tokens, rules, operator precedence tables,
   error messages (`~ "expected ')'"`) and error recovery, so one run reports every syntax error.
 - **A high-level IR** with strings, arrays, maps, structs, enums with `match`, generics, closures,
-  nullable references (narrowed with `if let`) and dynamic (`any`) values. The builder resolves
-  names, infers and checks types and reports errors in the language's own syntax, so a typed
-  language needs no checker.
+  nullable references (narrowed with `if let`) and dynamic (`any`) values, methods and interfaces
+  with dynamic dispatch and generics bounded by them, and errors both ways: exceptions (`throw`,
+  `try`/`catch`) and results (`?`). The builder resolves names, infers and checks types and
+  reports errors in the language's own syntax, so a typed language needs no checker.
+- **Programs of several files**: imports found through the grammar, modules with their own names
+  and visibility, supported by the driver, the language server and diagnostics.
+- **A standard library** every language can offer: files, standard input, arguments, the
+  environment, time, mathematics and strings. Calling C functions that take strings and arrays
+  takes only their declaration.
 - **Two backends that agree**: an interpreter, and native code through Cranelift linked by the
   system linker, on Linux (x86-64, aarch64), macOS (aarch64, x86-64) and Windows (x86-64). Same
   output, errors and exit codes, checked on every test program.
@@ -35,10 +41,11 @@ grammar ──a0-syntax──▶ syntax tree ──your compiler──▶ HIR �
 
 The example languages show the scale. [Kaleidoscope](examples/kaleidoscope), the language of
 LLVM's tutorial, is about 580 lines including its grammar and is what the tutorial builds;
-[Minnow](examples/minnow), a typed language with structs, enums, generics, closures and nullable
-references, is about 760; [Lox](examples/lox), from *Crafting Interpreters*, passes all 241 tests of
-the official suite, and its native programs run faster than they did with a hand-written C
-runtime.
+[Minnow](examples/minnow), a typed language with modules, structs, enums, generics, interfaces,
+closures and nullable references, is about 1000, and [`json`](examples/minnow/json), a JSON tool
+written in it, about 480; [Lox](examples/lox), from *Crafting Interpreters*, passes all 241 tests
+of the official suite (and has exceptions as an extension), and its native programs run faster
+than they did with a hand-written C runtime.
 
 ```
 // examples/minnow/tests/programs/closures.mn
@@ -95,7 +102,7 @@ Then:
    exit codes.
 
 A0 is not published on crates.io; depend on it from git (`a0-hir = { git =
-"https://github.com/Dan-k391/a0", tag = "v0.1.0" }`) or work inside this repository.
+"https://github.com/Dan-k391/a0", tag = "v0.2.0" }`) or work inside this repository.
 
 ## Documentation
 
@@ -170,5 +177,5 @@ x86-64 and aarch64 Linux, aarch64 macOS and x86-64 Windows.
 
 ## Status
 
-Version 0.1.0 (`CHANGELOG.md`). Not yet: cross-compiled executables (object files for other
-targets work), wasm, bindings other than C, aarch64 Windows. A0 is MIT-licensed.
+Version 0.2.0 (`CHANGELOG.md`). Not yet: cross-compiled executables (object files for other
+targets work), wasm, bindings other than C, a debugger, aarch64 Windows. A0 is MIT-licensed.
