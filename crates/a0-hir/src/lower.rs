@@ -223,7 +223,8 @@ struct TypeDesc {
 
 struct FnState {
     body: BodyId,
-    frame: Value,
+    /// The shadow-stack frame, or `None` for a body with nothing to root (see `needs_frame`).
+    frame: Option<Value>,
     slot_count: Value,
     next: u32,
     max: u32,
@@ -719,7 +720,7 @@ impl<'a> Lowerer<'a> {
     }
 
     fn slot_addr(&mut self, s: u32) -> Value {
-        let frame = self.st().frame;
+        let frame = self.st().frame.expect("a body with slots has a frame");
         let off = self.b.iconst(Type::I64, 8 * s as i64);
         self.b.ptradd(frame, off)
     }
@@ -841,7 +842,11 @@ impl<'a> Lowerer<'a> {
         let m = self.m;
         self.b.begin_function(ir);
         let slot_count = self.b.iconst(Type::I64, 0);
-        let frame = self.b.call(self.rt.frame_push, &[slot_count]).unwrap();
+        let frame = if self.needs_frame(body, closure) {
+            Some(self.b.call(self.rt.frame_push, &[slot_count]).unwrap())
+        } else {
+            None
+        };
         self.f = Some(FnState {
             body,
             frame,
@@ -961,10 +966,43 @@ impl<'a> Lowerer<'a> {
 
     /// Clears the slots in use and pops the frame, before a return.
     fn pop_frame(&mut self) {
+        if self.st().frame.is_none() {
+            return;
+        }
         let next = self.st().next;
         self.clear_slots(0, next);
         let n = self.st().slot_count;
         self.b.call(self.rt.frame_pop, &[n]);
+    }
+
+    /// Whether a body can need a frame slot: only references and `any` values are rooted, so a body
+    /// without any (no such local, capture or expression) skips pushing a frame. Numeric code then
+    /// makes no runtime calls at all.
+    fn needs_frame(&self, body: BodyId, closure: bool) -> bool {
+        let m = self.m;
+        if closure && !self.captures[&body].is_empty() {
+            return true;
+        }
+        let gc_local = m
+            .locals
+            .iter()
+            .enumerate()
+            .any(|(i, l)| l.body == body && (self.captured[i] || self.is_gc(l.ty)));
+        if gc_local {
+            return true;
+        }
+        let Some(root) = m.body_root(body) else {
+            return false;
+        };
+        // Closures are bodies of their own; creating one is itself a reference.
+        let mut stack = vec![root];
+        while let Some(e) = stack.pop() {
+            if self.is_gc(m.expr_type(e)) {
+                return true;
+            }
+            visit_children(m, e, &mut |c| stack.push(c));
+        }
+        false
     }
 
     // ---------------------------------------------------------------- may allocate?

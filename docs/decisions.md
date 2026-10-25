@@ -359,3 +359,15 @@ instead binds a new local of type `T` for one branch. It is one node with a loca
 language can spell it as it likes (Minnow has `if let` and builds `while let` from it with `loop`
 and `break`), and it costs one null test, the same as `!`. Lox's prelude uses it for its call fast
 paths, and Minnow's programs lost their `!`s where a test came first.
+
+## D35. Kaleidoscope is built on the HIR, and numeric code pushes no frame
+
+Kaleidoscope emitted the core IR because it has one type, which made it the one example language
+without the builder's name resolution and without the optimizer, and the tutorial taught a path
+other languages do not take. It now builds HIR by name like Minnow: 745 lines became 556, its unknown
+names and wrong argument counts are reported by the builder, and its user-defined operators are
+inlined. What it kept is what is Kaleidoscope's own: operator precedence decided while compiling
+(`resolve_precedence`), its prototype rules, and conditions that treat NaN as false. To keep numeric
+code free of the collector's costs, lowering skips the shadow-stack frame of a body that has no
+reference or `any` value at all (no such local, capture or expression), so such functions make no
+runtime calls; `fib` runs as fast as from the core IR, and a loop calling an operator 40% faster.

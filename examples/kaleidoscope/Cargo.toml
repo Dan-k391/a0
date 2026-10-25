@@ -9,12 +9,14 @@ build = "build.rs"
 [dependencies]
 a0-driver.workspace = true
 a0-diag.workspace = true
-a0-ir.workspace = true
+a0-hir.workspace = true
 a0-syntax.workspace = true
-a0-sema.workspace = true
 a0-interp.workspace = true
 a0-native.workspace = true
 a0-runtime.workspace = true
+
+[dev-dependencies]
+a0-ir.workspace = true
 
 [build-dependencies]
 a0-build.workspace = true

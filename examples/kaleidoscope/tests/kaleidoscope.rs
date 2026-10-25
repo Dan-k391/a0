@@ -1,5 +1,6 @@
-//! Runs every program in `tests/programs` interpreted and as a native executable, and checks
-//! compile errors. Expected output lines are written as `# expect: <line>` comments.
+//! Runs every program in `tests/programs` interpreted, as a native executable and under GC stress,
+//! each with the HIR optimizer on and off, and checks compile errors. Expected output lines are
+//! written as `# expect: <line>` comments.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -44,35 +45,38 @@ fn check(file: &Path, output: std::process::Output, mode: &str) -> Option<String
     }
 }
 
-#[test]
-fn programs_run_in_the_interpreter() {
-    let failures: Vec<String> = programs()
-        .iter()
-        .filter_map(|f| {
-            let out = Command::new(env!("CARGO_BIN_EXE_kaleidoscope"))
-                .arg("run")
-                .arg(f)
-                .output()
-                .unwrap();
-            check(f, out, "interpreted")
-        })
-        .collect();
-    assert!(failures.is_empty(), "{}", failures.join("\n"));
-}
-
-#[test]
-fn programs_run_natively() {
-    let dir = std::env::temp_dir().join(format!("kaleidoscope-test-{}", std::process::id()));
+/// Runs every program interpreted or natively, with the HIR optimizer on or off and the collector
+/// running on every allocation or not.
+fn run_all(native: bool, optimize: bool, stress: bool) {
+    let mode = format!(
+        "{}{}{}",
+        if native { "native" } else { "interpreted" },
+        if optimize { "" } else { ", A0_OPT=0" },
+        if stress { ", A0_GC_STRESS=1" } else { "" }
+    );
+    let dir = std::env::temp_dir().join(format!(
+        "kaleidoscope-test-{}-{native}-{optimize}-{stress}",
+        std::process::id()
+    ));
     std::fs::create_dir_all(&dir).unwrap();
+    let kaleidoscope = || {
+        let mut cmd = Command::new(env!("CARGO_BIN_EXE_kaleidoscope"));
+        cmd.env("A0_OPT", if optimize { "1" } else { "0" });
+        cmd.env("A0_GC_STRESS", if stress { "1" } else { "0" });
+        cmd
+    };
     let failures: Vec<String> = programs()
         .iter()
         .filter_map(|f| {
+            if !native {
+                return check(f, kaleidoscope().arg("run").arg(f).output().unwrap(), &mode);
+            }
             let exe = dir.join(format!(
                 "{}{}",
                 f.file_stem().unwrap().to_string_lossy(),
                 std::env::consts::EXE_SUFFIX
             ));
-            let build = Command::new(env!("CARGO_BIN_EXE_kaleidoscope"))
+            let build = kaleidoscope()
                 .arg("build")
                 .arg(f)
                 .arg("-o")
@@ -86,11 +90,31 @@ fn programs_run_natively() {
                     String::from_utf8_lossy(&build.stderr)
                 ));
             }
-            check(f, Command::new(&exe).output().unwrap(), "native")
+            let mut run = Command::new(&exe);
+            run.env("A0_GC_STRESS", if stress { "1" } else { "0" });
+            check(f, run.output().unwrap(), &mode)
         })
         .collect();
     std::fs::remove_dir_all(&dir).ok();
     assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+#[test]
+fn programs_run_in_the_interpreter() {
+    run_all(false, true, false);
+    run_all(false, false, false);
+}
+
+#[test]
+fn programs_run_natively() {
+    run_all(true, true, false);
+    run_all(true, false, false);
+}
+
+#[test]
+fn programs_survive_gc_stress() {
+    run_all(false, true, true);
+    run_all(false, false, true);
 }
 
 /// Compiles `src` and returns the rendered diagnostics (empty if it compiled).
@@ -106,12 +130,10 @@ fn errors(src: &str) -> String {
 #[test]
 fn compile_errors_are_reported_with_locations() {
     let cases: &[(&str, &str)] = &[
-        ("def f(x) y;", "unknown variable 'y'"),
-        ("def f(x) g(x);", "unknown function 'g'"),
-        (
-            "def f(x y) x; f(1);",
-            "'f' takes 2 argument(s) but 1 were given",
-        ),
+        // Names are resolved, and calls checked, by A0's HIR builder.
+        ("def f(x) y;", "unknown name `y`"),
+        ("def f(x) g(x);", "unknown function `g`"),
+        ("def f(x y) x; f(1);", "expected 2 arguments, found 1"),
         ("def f(x) x | 1;", "unknown binary operator '|'"),
         ("def f(x) !x;", "unknown unary operator '!'"),
         (
@@ -125,7 +147,7 @@ fn compile_errors_are_reported_with_locations() {
         ("def binary| 200 (a b) a;", "invalid precedence"),
         (
             "def binary| (a) a;",
-            "a binary operator takes 2 operands, not 1",
+            "a binary operator takes 2 operand(s), not 1",
         ),
         (
             "def binary+ (a b) a;",
@@ -158,8 +180,8 @@ fn compile_errors_are_reported_with_locations() {
 fn several_errors_are_reported_at_once() {
     // Name errors in different functions are all reported.
     let out = errors("def f(x) y;\ndef g(x) x;\ndef h(x) z;\n");
-    assert!(out.contains("unknown variable 'y'"), "{out}");
-    assert!(out.contains("unknown variable 'z'"), "{out}");
+    assert!(out.contains("unknown name `y`"), "{out}");
+    assert!(out.contains("unknown name `z`"), "{out}");
     // A syntax error stops compilation before name resolution, but recovery still finds every
     // syntax error in the file.
     let out = errors("def f(x) (x;\ndef g() (1;\n");
@@ -187,7 +209,7 @@ fn ir_output_is_valid_text() {
         .unwrap();
     assert!(out.status.success());
     let text = String::from_utf8(out.stdout).unwrap();
-    assert!(text.contains("func @fibi(%0: f64) -> f64 {"), "{text}");
+    assert!(text.contains("func @hir.fibi(%0: f64) -> f64 {"), "{text}");
     // The printed IR parses and verifies on its own.
     a0_ir::parse_and_verify(&text, a0_diag::SourceId(0)).unwrap();
 }

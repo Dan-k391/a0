@@ -20,7 +20,7 @@ it green; a test that only passes on one OS is a bug.
 
 Needs a C compiler: MSVC on Windows (found automatically), `cc` on Linux/macOS. Useful while
 debugging: `a0 run|build|fmt|check file.a0ir|file.hir`, `a0 lower file.hir` (the core IR a HIR
-module becomes), `a0 parse lang.a0g input`, `lox hir|ir file.lox`, `minnow hir|ir file.mn`, `kaleidoscope ir file.k`, and
+module becomes), `a0 parse lang.a0g input`, `lox hir|ir file.lox`, `minnow hir|ir file.mn`, `kaleidoscope hir|ir file.k`, and
 `A0_GC_STRESS=1` (the collector runs on every allocation), `A0_OPT=0` (no HIR optimizer).
 Every language driver also has `lang lsp`, the language server (`docs/editors.md`); the VS Code
 extension in `editors/vscode` starts it.
@@ -75,9 +75,8 @@ layer, decision D17). A new crate goes into the table above and into `[workspace
   on and off (`A0_OPT=0`) (`crates/a0/tests/programs.rs`). Add a program there for any new IR, HIR,
   optimizer or runtime behavior.
 - HIR text must round-trip: `print(parse(print(m))) == print(m)` is tested for every corpus file.
-- Example languages test interpreted and native output (`examples/*/tests`); languages on the HIR
-  (Lox, Minnow) also run under GC stress, optimized and not. The Lox suite must stay at all 241
-  passing in all six modes.
+- Example languages test interpreted and native output (`examples/*/tests`), all three under GC
+  stress too, optimized and not. The Lox suite must stay at all 241 passing in all six modes.
 - Each example language has `tests/lsp.rs`: its server's outline, definitions, hovers and
   diagnostics on a small program, through `a0_driver::lsp::session`.
 - Object emission is checked for every supported target except aarch64-windows (out of scope).

@@ -54,8 +54,10 @@ output, and report errors with source locations.
 
 ## When extending an existing language
 
-- Kaleidoscope: grammar in `kaleidoscope.a0g`, lowering in `src/lib.rs`; add a program to
-  `tests/programs/*.k` with `# expect:` lines.
+- Kaleidoscope: grammar in `kaleidoscope.a0g`, the compiler to HIR in `src/lib.rs` (by name, like
+  Minnow); add a program to `tests/programs/*.k` with `# expect:` lines. `docs/tutorial.md` quotes
+  `src/lib.rs` and the grammar between `ANCHOR:` markers, and a test checks the quotes match:
+  update the tutorial with the code.
 - Minnow: grammar `minnow.a0g`, the whole compiler in `src/lib.rs` (one walk building HIR by name;
   the HIR builder resolves names and checks types); programs in `tests/programs/*.mn` with
   `// expect:` lines, error cases in `tests/minnow.rs`. It is the template for a typed language.

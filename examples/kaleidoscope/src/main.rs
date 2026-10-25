@@ -8,7 +8,7 @@ fn main() -> ExitCode {
     Language {
         name: "kaleidoscope",
         compile: |text, source| match kaleidoscope::compile(text, source) {
-            Ok(m) => Ok(Program::Ir(m)),
+            Ok(m) => Ok(Program::Hir(m)),
             Err(d) => Err(CompileError::Diagnostics(d)),
         },
         exit_codes: ExitCodes::default(),

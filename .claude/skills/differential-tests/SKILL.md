@@ -11,7 +11,7 @@ description: Run and debug A0's differential tests, which require the interprete
 |---|---|---|
 | IR and HIR programs `tests/programs/*.a0ir`, `tests/hir/*.hir` | `crates/a0/tests/programs.rs` | `a0 run`, `a0 build` + run, `a0 run` + `A0_GC_STRESS=1` |
 | Objects for every target | `crates/a0-native/tests/objects.rs` | object inspection only |
-| Kaleidoscope `examples/kaleidoscope/tests/programs/*.k` | `examples/kaleidoscope/tests/kaleidoscope.rs` | interpreted, native |
+| Kaleidoscope `examples/kaleidoscope/tests/programs/*.k` | `examples/kaleidoscope/tests/kaleidoscope.rs` | interpreted, native, interpreted + `A0_GC_STRESS=1` |
 | Minnow `examples/minnow/tests/programs/*.mn` | `examples/minnow/tests/minnow.rs` | interpreted, native, interpreted + `A0_GC_STRESS=1` |
 | Lox official suite | `examples/lox/tests/suite.rs` | interpreted, native, interpreted + `A0_GC_STRESS=1` |
 
