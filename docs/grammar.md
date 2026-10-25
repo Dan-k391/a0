@@ -148,3 +148,47 @@ module_path = NAME ("." NAME)*;
 ```
 
 `a0_syntax::imports(&grammar, &tree)` lists a file's imports.
+
+## Languages without host code: `@hir`
+
+A language can be defined by its grammar alone: each rule says what its nodes mean, and
+`a0 lang <grammar.a0g> <command> <file>` compiles programs by those meanings (`a0_hir::dsl`). The
+commands are those of every language's driver (`run`, `build`, `hir`, `ir`, `lsp`, `explain`), so
+such a language gets the interpreter, native executables, the language server and A0's diagnostics
+with no code of its own. `examples/calc` is one.
+
+`@hir(form)` gives a rule's nodes a form; a rule named after a form (`function`, `block`, `binary`,
+...) has it without the attribute. A node without a form that has a single child means that child,
+which is how `@inline` rules, `primary = call | paren | ...` and wrappers need nothing. Forms read
+their parts from fields:
+
+| Form | Fields | Meaning |
+|---|---|---|
+| `program` | its children | `function`s, and the other statements in order as `main` |
+| `function` | `name`, `param` nodes or fields, `type`, `body` | a function; untyped parameters and results are inferred |
+| `param` | `name`, `type` (or the node is the name) | a parameter |
+| `block` | its children | statements in a scope of their own |
+| `let`, `assign` | `name`, `value`, `type` | declare a variable; assign to one |
+| `print` | `value`s | print them on a line, separated by spaces |
+| `if`, `while` | `cond`, `then`, `else`; `cond`, `body` | |
+| `repeat` | `count`, `body` | the body `count` times |
+| `return`, `eval` | `value`; its child | |
+| `binary`, `unary` | `left`, `op`, `right`; `op`, `operand` | the operators of the HIR, `and`/`&&`, `or`/`||`, `not`/`!` |
+| `call` | `callee` (or `operand`), `arg`s, or an `args` node of `arg`s | a function, a builtin (`str`, `len`, ...) or `std.math` (`sqrt`, `floor`, `pi`, ...) |
+| `name`, `paren` | the text; `inner` | |
+| `number`, `float`, `int`, `string`, `bool` | the text | literals (`number`s are floats) |
+
+Tokens named `NUMBER`, `INT`, `FLOAT`, `STRING`, `NAME`, `IDENT` or `IDENTIFIER` and the literals
+`true` and `false` have the form their name says. A node the grammar gives no meaning, an unknown
+form, or a form without a field it needs is reported as an error.
+
+```
+function @def(function) @scope = "fn" name:NAME "(" (param ("," param)*)? ")" body:block;
+param @def(parameter) = name:NAME;
+let_stmt @def(variable) @hir(let) = "let" name:NAME "=" value:expr;
+print_stmt @hir(print) = "print" value:expr ("," value:expr)*;
+variable @hir(name) = NAME;
+```
+
+The forms are deliberately few: a language that needs types of its own, modules, or a meaning the
+table does not have is written as a compiler (`a0 new`), which builds the same HIR.

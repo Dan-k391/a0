@@ -20,7 +20,8 @@ it green; a test that only passes on one OS is a bug.
 
 Needs a C compiler: MSVC on Windows (found automatically), `cc` on Linux/macOS. Useful while
 debugging: `a0 run|build|fmt|check file.a0ir|file.hir`, `a0 lower file.hir` (the core IR a HIR
-module becomes), `a0 parse lang.a0g input`, `lox hir|ir file.lox`, `minnow hir|ir file.mn`, `kaleidoscope hir|ir file.k`, and
+module becomes), `a0 parse lang.a0g input`, `a0 lang calc.a0g hir|ir|run file` (a language
+defined by its grammar alone), `lox hir|ir file.lox`, `minnow hir|ir file.mn`, `kaleidoscope hir|ir file.k`, and
 `A0_GC_STRESS=1` (the collector runs on every allocation), `A0_GC_STATS=1` (what the collector did,
 printed at exit), `A0_OPT=0` (no HIR optimizer),
 `a0 explain E2001` (what an error code means), `A0_BLESS=1` (rewrite the tutorial's listings and the
@@ -80,6 +81,8 @@ layer, decision D17). A new crate goes into the table above and into `[workspace
   add a builtin to the HIR only for what the library cannot express.
 - `a0 new` copies `crates/a0/templates/starter` (D54); `crates/a0/tests/new.rs` builds and tests a
   generated project, so a change to the APIs it uses must keep the template working.
+- Languages without host code (D55): `@hir` forms in `a0_hir::dsl`, run by `a0 lang`; Calc
+  (`examples/calc`, tested by `crates/a0/tests/dsl.rs`) is the example. Keep the forms few.
 - Generalize only when two example languages need it (except the IR layers and the default runtime).
 - Rust edition 2024, rustfmt defaults, clippy clean. Comments explain why, not what; match the
   surrounding density. C code: C11, `a0_` prefix for runtime symbols, no global state without a reason.

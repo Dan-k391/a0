@@ -284,6 +284,17 @@ pub fn session(
     text: &str,
     requests: &[(&str, u32, u32)],
 ) -> io::Result<Vec<Json>> {
+    session_with_args(server, &["lsp"], uri, text, requests)
+}
+
+/// [`session`] with a server started by other arguments (`a0 lang calc.a0g lsp`).
+pub fn session_with_args(
+    server: &std::path::Path,
+    args: &[&str],
+    uri: &str,
+    text: &str,
+    requests: &[(&str, u32, u32)],
+) -> io::Result<Vec<Json>> {
     let message = |id: Option<u32>, method: &str, params: Json| {
         let mut m = vec![("jsonrpc".to_string(), "2.0".into())];
         if let Some(id) = id {
@@ -326,7 +337,7 @@ pub fn session(
     input.push(message(Some(u32::MAX), "shutdown", Json::Null));
     input.push(message(None, "exit", Json::Null));
     let mut child = std::process::Command::new(server)
-        .arg("lsp")
+        .args(args)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .spawn()?;

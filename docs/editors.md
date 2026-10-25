@@ -46,7 +46,13 @@ language is one entry in `a0.languages`:
 ```
 
 `${workspaceFolder}` in a command is the folder of the file being edited, which is how a project
-made with `a0 new` points at the language server it builds (its `.vscode/settings.json`).
+made with `a0 new` points at the language server it builds (its `.vscode/settings.json`). An entry's
+`args` replace `lsp`, for a language defined by its grammar alone (`docs/grammar.md`), whose server
+is `a0 lang <grammar> lsp`:
+
+```json
+{ "extensions": [".calc"], "command": "a0", "args": ["lang", "${workspaceFolder}/calc.a0g", "lsp"] }
+```
 
 VS Code colors names (functions, types, parameters) from semantic tokens with any theme, but keywords,
 strings, numbers and comments only through a TextMate grammar or a `semanticTokenScopes` mapping; the

@@ -261,6 +261,10 @@ types in the language's syntax and `set_term` names its concepts; `set_name_span
 text (Lox's `natives.hir`, which uses the standard library). Item names are free: one that is a HIR keyword
 (`map`) or not an identifier is written in backquotes in the text format.
 
+`a0_hir::dsl` is a frontend of this kind that needs no code from the language: it builds HIR by
+name from any syntax tree whose grammar gives its rules `@hir` forms (`docs/grammar.md`,
+"Languages without host code"), and is what `a0 lang` runs.
+
 ## Modules
 
 A program can have several files, each a module of one HIR module. A language opts in by giving the

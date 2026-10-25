@@ -25,6 +25,7 @@
 
 mod builder;
 mod check;
+pub mod dsl;
 mod frontend;
 mod lower;
 mod methods;

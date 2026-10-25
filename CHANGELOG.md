@@ -11,8 +11,11 @@ APIs. `docs/milestones.md` has the details of each step, with measurements.
 - **`a0 new <name>`** creates a language project: grammar, compiler, driver, tests of its programs
   (interpreted and native) and of its language server, an example and VS Code settings; `cargo
   test` passes in it from the start.
-- The VS Code extension expands `${workspaceFolder}` in commands and colors keywords, strings,
-  numbers and comments of every language.
+- **Languages without host code**: grammar rules give their nodes HIR forms (`@hir(let)`, or a
+  rule named `function`, `block`, `binary`, ...), and `a0 lang <grammar.a0g> run|build|hir|ir|lsp`
+  runs such a language with both backends and a language server. Calc (`examples/calc`) is one.
+- The VS Code extension expands `${workspaceFolder}` in commands and their `args` (which replace
+  `lsp`), and colors keywords, strings, numbers and comments of every language.
 
 ## [0.2.0] - 2026-10-25
 

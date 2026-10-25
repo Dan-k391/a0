@@ -337,3 +337,19 @@ fn lookahead_and_repetition() {
     assert!(diags.is_empty());
     assert_eq!(tree.fields_named(tree.root(), "item").len(), 3);
 }
+
+#[test]
+fn rules_can_give_their_nodes_hir_forms() {
+    let g = grammar(
+        "token N /[0-9]+/; skip / +/; program = (item)*; item @inline = let_stmt | N;
+         let_stmt @hir(let) = \"let\" value:N;",
+    );
+    let kind = |name: &str| g.kind(name).unwrap();
+    assert_eq!(g.hir_form(kind("let_stmt")), Some("let"));
+    assert_eq!(g.hir_form(kind("program")), None);
+    assert_eq!(g.hir_form(kind("N")), None);
+    let e = grammar_errors("token N /[0-9]+/; program = x; x @inline @hir(int) = N;");
+    assert!(e.contains("'x' is @inline"), "{e}");
+    let e = grammar_errors("token N /[0-9]+/; program @hir = N;");
+    assert!(e.contains("expected '('"), "{e}");
+}

@@ -6,6 +6,7 @@ use a0_diag::{Diagnostics, RenderOptions, SourceMap};
 use a0_ir::Module;
 use a0_native::Target;
 
+mod lang;
 mod new;
 
 const USAGE: &str = "usage: a0 <command> [options] <file>
@@ -26,6 +27,9 @@ commands:
   explain <code>            explain an error code (E2001)
   new <name> [--dir D] [--ext E] [--a0 PATH]
                             create a language project (grammar, compiler, tests, editor setup)
+  lang <grammar.a0g> <command> ...
+                            a language defined by its grammar's @hir forms: run, build, hir,
+                            ir, lsp or explain, as with any language's driver
 
 targets: x86_64-linux, aarch64-linux, x86_64-macos, aarch64-macos, x86_64-windows,
          aarch64-windows (or full triples); the default is the host
@@ -47,6 +51,7 @@ fn main() -> ExitCode {
         "obj" => build(rest, false),
         "parse" => parse_with_grammar(rest),
         "new" => new::new(rest),
+        "lang" => lang::lang(rest),
         "explain" => match rest {
             [code] => match a0_diag::codes::explain(code) {
                 Some(c) => {

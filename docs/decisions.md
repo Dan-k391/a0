@@ -631,3 +631,16 @@ its driver, tests of its programs in both backends and of its language server, a
 settings and a README. The project depends on A0 by git tag of the `a0` that made it, or on a local
 checkout (`--a0`), which is how a test builds a generated project and runs its tests on every CI
 run, so the template cannot rot.
+
+## D55. Languages without host code are grammars whose rules name HIR forms
+
+v0.3 asks for a small DSL defined with no host code. The meaning could have come from a second file
+(a table from node kinds to HIR, which must be kept in step with the grammar), from HIR templates
+with holes in the grammar (powerful, but a second language to learn inside the first), or from the
+rules themselves. It is the last: `@hir(form)` on a rule, or a rule named after a form, picks one of
+a fixed set of forms (`function`, `let`, `if`, `binary`, `call`, ...) whose parts are the rule's
+fields, and `a0_hir::dsl` builds HIR from the tree with the ordinary builder, so names, inference,
+diagnostics and the language server are A0's. A node without a form that has one child means that
+child, which leaves wrappers and precedence nodes unannotated. `a0 lang <grammar>` runs such a
+language with the usual driver commands. The set is small on purpose (numbers are floats, no types
+of a language's own, no modules): past it, a language is a compiler, and `a0 new` starts one.

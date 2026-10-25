@@ -1,0 +1,54 @@
+// Calc, a small calculator language defined by this grammar alone: no compiler of its own. Each
+// rule says what its nodes mean, with `@hir(form)` or by being named after a form (`function`,
+// `block`, `binary`, ...), and `a0 lang calc.a0g run program.calc` runs a program
+// (`docs/grammar.md`, "Languages without host code").
+grammar calc;
+
+skip /[ \t\r\n]+/;
+skip /#[^\n]*/;
+token NUMBER /[0-9]+(\.[0-9]+)?/;
+token STRING /"([^"\\\n]|\\.)*"/;
+token NAME /[A-Za-z_][A-Za-z0-9_]*/;
+error "unterminated string" /"([^"\\\n]|\\.)*/;
+unknown "unexpected character";
+
+// Functions anywhere; the other statements are the program, run in order.
+program = (!EOF item)* EOF;
+item @inline @recover(before "fn" "let" "print" "if" "while" "repeat" "return")
+    = function | stmt;
+
+function @def(function) @scope
+    = "fn" name:NAME ~ "expected a function name" "(" ~ "expected '('"
+      (param ("," param)*)? ")" ~ "expected ')'" body:block ~ "expected '{'";
+param @def(parameter) = name:NAME;
+
+block @scope = "{" (!"}" !EOF stmt)* "}" ~ "expected '}'";
+
+stmt @inline = let_stmt | print_stmt | if_stmt | while_stmt | repeat_stmt | return_stmt
+             | block | assign_stmt | expr_stmt;
+let_stmt @def(variable) @hir(let)
+    = "let" name:NAME ~ "expected a name" "=" ~ "expected '='" value:expr ~ "expected a value";
+assign_stmt @hir(assign) = name:NAME "=" value:expr ~ "expected a value";
+print_stmt @hir(print) = "print" value:expr ~ "expected a value" ("," value:expr)*;
+if_stmt @hir(if) = "if" cond:expr ~ "expected a condition" then:block ~ "expected '{'"
+                   ("else" (else:if_stmt | else:block) ~ "expected '{' or 'if'")?;
+while_stmt @hir(while) = "while" cond:expr ~ "expected a condition" body:block ~ "expected '{'";
+// `repeat n { ... }`: the block n times.
+repeat_stmt @hir(repeat) = "repeat" count:expr ~ "expected a count" body:block ~ "expected '{'";
+return_stmt @hir(return) = "return" value:expr?;
+expr_stmt @hir(eval) = expr;
+
+expr @inline = @prec primary ~ "expected an expression" {
+    left "or" => binary;
+    left "and" => binary;
+    left "==" "!=" => binary;
+    left "<" "<=" ">" ">=" => binary;
+    left "+" "-" => binary;
+    left "*" "/" => binary;
+    prefix "-" "not" => unary;
+};
+
+primary = call | paren | NUMBER | STRING | "true" | "false" | variable;
+call = callee:NAME "(" (arg:expr ("," arg:expr)*)? ")" ~ "expected ')'";
+paren = "(" inner:expr ")" ~ "expected ')'";
+variable @hir(name) = NAME;

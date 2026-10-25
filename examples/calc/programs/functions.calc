@@ -1,0 +1,24 @@
+# Functions, called before or after they are defined, recursion and the standard mathematics.
+print hypot(3, 4)
+print fib(20)
+
+fn hypot(a, b) {
+  return sqrt(a * a + b * b)
+}
+
+fn fib(n) {
+  if n < 2 { return n }
+  return fib(n - 1) + fib(n - 2)
+}
+
+fn greet(who) {
+  print "hello,", who
+}
+
+greet("calc")
+print floor(pi() * 100) / 100, max(2, 3), round(2.5)
+# expect-stdout:
+# 5
+# 6765
+# hello, calc
+# 3.14 3 3

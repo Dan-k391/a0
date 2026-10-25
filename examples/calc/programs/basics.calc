@@ -1,0 +1,17 @@
+# Numbers, strings, variables and printing.
+let x = 6
+let y = 7
+print x * y
+print "x + y =", x + y
+print 7 / 2, -x
+x = x + 0.5
+print x
+print "half" + "-" + "way"
+print x > y, x < y and y < 10, not (x == 6.5)
+# expect-stdout:
+# 42
+# x + y = 13
+# 3.5 -6
+# 6.5
+# half-way
+# false true false

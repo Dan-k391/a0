@@ -99,6 +99,15 @@ a0 new mylang
 cd mylang && cargo run -- run examples/hello.mylang
 ```
 
+A small language needs no compiler at all: its grammar can say what each rule means
+(`docs/grammar.md`, "Languages without host code"), and `a0 lang` runs it. [Calc](examples/calc)
+is a calculator language of one 54-line grammar, with functions, loops, the standard mathematics,
+native executables and a language server:
+
+```
+a0 lang examples/calc/calc.a0g run examples/calc/programs/functions.calc
+```
+
 By hand:
 
 1. Write a grammar (`docs/grammar.md`): tokens, rules, `@prec` operator tables, `~ "message"` error
@@ -171,6 +180,7 @@ allocation.
 | `crates/a0-capi` | The C API: a static library and `include/a0.h` |
 | `crates/a0` | The `a0` command-line tool |
 | `examples/kaleidoscope`, `examples/lox`, `examples/minnow` | The example languages |
+| `examples/calc` | A language defined by its grammar alone, run by `a0 lang` |
 | `editors/vscode` | A VS Code extension that starts each language's server |
 | `tests/programs`, `tests/hir` | Core IR and HIR programs with expected output, run by both backends |
 

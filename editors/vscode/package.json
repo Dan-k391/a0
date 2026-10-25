@@ -48,13 +48,14 @@
       "properties": {
         "a0.languages": {
           "type": "array",
-          "description": "Languages to start a language server for. `command` is the language's driver (run as `command lsp`); `extensions` match files by name, `language` by VS Code language id.",
+          "description": "Languages to start a language server for. `command` is the language's driver (run as `command lsp`, or with `args` instead of `lsp`); `extensions` match files by name, `language` by VS Code language id. `${workspaceFolder}` in `command` and `args` is the folder of the file.",
           "items": {
             "type": "object",
             "properties": {
               "language": { "type": "string" },
               "extensions": { "type": "array", "items": { "type": "string" } },
-              "command": { "type": "string" }
+              "command": { "type": "string" },
+              "args": { "type": "array", "items": { "type": "string" } }
             },
             "required": ["command"]
           },

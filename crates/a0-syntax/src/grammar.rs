@@ -223,6 +223,8 @@ pub struct Grammar {
     pub(crate) definitions: Vec<Option<Definition>>,
     /// Per kind: whether its nodes import a module (`@import`).
     pub(crate) imports: Vec<bool>,
+    /// Per kind: the form its rule gives with `@hir(form)`.
+    pub(crate) hir_forms: Vec<Option<String>>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -293,6 +295,12 @@ impl Grammar {
     /// Whether nodes of this kind import a module (`@import`).
     pub fn is_import(&self, kind: KindId) -> bool {
         self.imports.get(kind.0 as usize).copied().unwrap_or(false)
+    }
+
+    /// The form `@hir(form)` gives nodes of this kind, for languages defined by their grammar
+    /// alone (`a0_hir::dsl`).
+    pub fn hir_form(&self, kind: KindId) -> Option<&str> {
+        self.hir_forms.get(kind.0 as usize)?.as_deref()
     }
 }
 
@@ -504,6 +512,8 @@ enum Item {
         scope: bool,
         def: Option<DefAttr>,
         import: bool,
+        /// `@hir(form)`: what its nodes mean, for languages defined without host code.
+        hir: Option<(String, Span)>,
         body: RuleBody,
     },
 }
@@ -650,6 +660,7 @@ impl DslParser {
         let mut scope = false;
         let mut def = None;
         let mut import = false;
+        let mut hir = None;
         while let Tok::Attr(a) = self.peek().clone() {
             match a.as_str() {
                 "inline" => {
@@ -663,6 +674,14 @@ impl DslParser {
                 "scope" => {
                     self.bump();
                     scope = true;
+                }
+                "hir" => {
+                    let span = self.span();
+                    self.bump();
+                    self.punct("(")?;
+                    let (form, _) = self.ident("a form")?;
+                    self.punct(")")?;
+                    hir = Some((form, span));
                 }
                 "def" => {
                     let span = self.span();
@@ -720,6 +739,7 @@ impl DslParser {
             scope,
             def,
             import,
+            hir,
             body,
         })
     }
@@ -1039,6 +1059,7 @@ impl Builder {
 
         // Second pass: rule bodies.
         let mut annotations = Vec::new();
+        let mut hir_forms = vec![None; self.kinds.len()];
         for item in rule_items {
             let Item::Rule {
                 name: rname,
@@ -1047,12 +1068,22 @@ impl Builder {
                 scope,
                 def,
                 import,
+                hir,
                 body,
                 ..
             } = item
             else {
                 continue;
             };
+            if let Some((form, at)) = hir {
+                match self.rule_map.get(&rname).and_then(|&r| rules[r].kind) {
+                    Some(kind) => hir_forms[kind.0 as usize] = Some(form),
+                    None => self.error(
+                        Some(at),
+                        &format!("'{rname}' is @inline, so it has no nodes to give an @hir form"),
+                    ),
+                }
+            }
             if scope || def.is_some() || import {
                 annotations.push((rname.clone(), span, scope, def, import));
             }
@@ -1127,6 +1158,7 @@ impl Builder {
             scopes,
             definitions,
             imports,
+            hir_forms,
         })
     }
 
