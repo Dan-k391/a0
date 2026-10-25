@@ -14,6 +14,10 @@ APIs. `docs/milestones.md` has the details of each step, with measurements.
 - **Languages without host code**: grammar rules give their nodes HIR forms (`@hir(let)`, or a
   rule named `function`, `block`, `binary`, ...), and `a0 lang <grammar.a0g> run|build|hir|ir|lsp`
   runs such a language with both backends and a language server. Calc (`examples/calc`) is one.
+- **Python bindings** (`bindings/python`, `docs/python.md`): the package `a0` over the C API with
+  ctypes (grammars, trees, both builders, running and native executables, and a driver), and
+  Pebble, a language written in Python. The C API is also a shared library, and gained
+  `a0_diagnostics_render` and `a0_hir_text`.
 - The VS Code extension expands `${workspaceFolder}` in commands and their `args` (which replace
   `lsp`), and colors keywords, strings, numbers and comments of every language.
 

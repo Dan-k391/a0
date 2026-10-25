@@ -18,7 +18,9 @@ cargo build --release -p a0-capi
 ```
 
 produces the static library `target/release/a0_capi.lib` (Windows) or `liba0_capi.a` (Linux,
-macOS). Compile with `-I crates/a0-capi/include` and link the library together with the system
+macOS), and the shared library `a0_capi.dll`, `liba0_capi.so` or `liba0_capi.dylib`, which needs
+nothing else at run time (the runtime that native executables link is inside it). Python uses the
+shared library (`docs/python.md`). Compile with `-I crates/a0-capi/include` and link the library together with the system
 libraries Rust's standard library needs, which `rustc --print native-static-libs` lists for a
 target, and on Windows also `ole32.lib oleaut32.lib advapi32.lib`. For example:
 
@@ -110,5 +112,6 @@ including what makes good diagnostics: `a0_hir_set_name_span`, `a0_hir_set_param
 `a0_hir_call_member`), methods and interfaces (`a0_hir_declare_method`, `a0_hir_implement`,
 `a0_hir_method_call`), exceptions (`a0_hir_throw`, `a0_hir_try_catch`), the codes of diagnostics (`a0_diagnostics_code`),
 HIR text, the core IR builder and text format, the interpreter (`a0_run`) and the native backend
-(`a0_write_object`, `a0_build_executable`). Not bound: `a0-sema`, `SyntaxIndex` and the driver
+(`a0_write_object`, `a0_build_executable`). Diagnostics render against their source the way the
+`a0` tool shows them (`a0_diagnostics_render`). Not bound: `a0-sema`, `SyntaxIndex` and the driver
 (D20). The runtime and the collector keep global state, so use A0 from one thread at a time.

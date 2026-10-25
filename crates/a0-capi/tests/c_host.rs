@@ -11,13 +11,14 @@ fn profile_dir() -> PathBuf {
     exe.parent().unwrap().parent().unwrap().to_path_buf()
 }
 
-/// The static library cargo built along with this test: the newest `a0_capi-<hash>.lib` or
-/// `liba0_capi-<hash>.a` in `deps` (`cargo test` does not copy it up to `target/<profile>`).
+/// The static library cargo built along with this test: the newest `a0_capi.lib` or
+/// `liba0_capi.a` in `deps` (`cargo test` does not copy it up to `target/<profile>`). Cargo leaves
+/// the hash out of the name because the crate is also a cdylib, but older builds may have one.
 fn static_library(msvc: bool) -> PathBuf {
     let (prefix, suffix) = if msvc {
-        ("a0_capi-", ".lib")
+        ("a0_capi", ".lib")
     } else {
-        ("liba0_capi-", ".a")
+        ("liba0_capi", ".a")
     };
     let deps = profile_dir().join("deps");
     std::fs::read_dir(&deps)
@@ -25,7 +26,9 @@ fn static_library(msvc: bool) -> PathBuf {
         .filter_map(Result::ok)
         .filter(|e| {
             let name = e.file_name().to_string_lossy().into_owned();
-            name.starts_with(prefix) && name.ends_with(suffix)
+            name.strip_prefix(prefix)
+                .and_then(|rest| rest.strip_suffix(suffix))
+                .is_some_and(|hash| hash.is_empty() || hash.starts_with('-'))
         })
         .max_by_key(|e| e.metadata().and_then(|m| m.modified()).ok())
         .map(|e| e.path())

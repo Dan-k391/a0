@@ -63,6 +63,11 @@ const char *a0_diagnostics_code(const A0Diagnostics *d, size_t i, size_t *len);
 int a0_diagnostics_span(const A0Diagnostics *d, size_t i, uint32_t *start, uint32_t *end);
 /* All diagnostics, one per line ("error[code]: message"). */
 const char *a0_diagnostics_text(const A0Diagnostics *d, size_t *len);
+/* The diagnostics rendered against `source`, the text their spans refer to, shown as the file
+ * `name`: the way the a0 tool shows errors, with the lines they are about. Valid until the next
+ * call or a0_diagnostics_free. */
+const char *a0_diagnostics_render(A0Diagnostics *d, const char *name, size_t name_len,
+                                  const char *source, size_t source_len, size_t *len);
 void a0_diagnostics_free(A0Diagnostics *d);
 
 /* ---- Building core IR (docs/ir.md) -------------------------------------------------------- */
@@ -186,6 +191,8 @@ A0Node a0_tree_field(const A0Tree *t, A0Node n, const char *field, size_t len);
 A0Hir *a0_hir_parse(const char *text, size_t len, A0Diagnostics **diags);
 /* Lowers (and optimizes) a HIR module with a `main` to core IR. */
 A0Module *a0_hir_lower(const A0Hir *h, A0Diagnostics **diags);
+/* The module in the text format; valid until the next call or a0_hir_free. */
+const char *a0_hir_text(A0Hir *h, size_t *len);
 void a0_hir_free(A0Hir *h);
 /* Sets *warnings to the warnings found when the module was built (a0_hir_enable_warning), or to
  * NULL if there are none. */

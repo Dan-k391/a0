@@ -204,7 +204,7 @@ pub unsafe extern "C" fn a0_hir_builder_from(h: *mut A0Hir) -> *mut A0HirBuilder
     if h.is_null() {
         return ptr::null_mut();
     }
-    let A0Hir(m) = *unsafe { Box::from_raw(h) };
+    let A0Hir(m, _) = *unsafe { Box::from_raw(h) };
     unsafe {
         give(A0HirBuilder {
             b: HirBuilder::from_module(m),
@@ -277,7 +277,7 @@ pub unsafe extern "C" fn a0_hir_finish(
     match result {
         Ok(m) if !errors.has_errors() => {
             unsafe { report(diags, None) };
-            unsafe { give(A0Hir(m)) }
+            unsafe { give(A0Hir(m, String::new())) }
         }
         result => {
             // The C layer's mistakes first: the builder's errors may follow from them.

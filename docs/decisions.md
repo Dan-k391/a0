@@ -644,3 +644,16 @@ diagnostics and the language server are A0's. A node without a form that has one
 child, which leaves wrappers and precedence nodes unannotated. `a0 lang <grammar>` runs such a
 language with the usual driver commands. The set is small on purpose (numbers are floats, no types
 of a language's own, no modules): past it, a language is a compiler, and `a0 new` starts one.
+
+## D56. Python reaches A0 through the C API with ctypes, from a table checked against the header
+
+v0.3 asks that languages can be built from Python on top of the C API. The choices were PyO3 (a
+second binding of the Rust API, a build step for every user and a new dependency), cffi (a compiler
+or a dependency at install time) or ctypes over the C API's shared library (`a0-capi` is now also a
+cdylib). It is ctypes: nothing to install but the library, and Python exercises the same API C
+does. Most of the binding is a table of the builders' C signatures in a one-letter notation, from
+which the methods are made; a test parses `a0.h` and compares, so the table cannot drift from the
+header. Two functions were added to the C API for it, and are useful to C as well:
+`a0_diagnostics_render` (errors shown against their source) and `a0_hir_text`. A Python language
+gets the driver's `run`, `build`, `hir` and `ir` from `a0.driver`; not its language server, which
+needs the driver bound to C with a compile callback (left for later).

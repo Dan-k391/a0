@@ -30,6 +30,8 @@ use a0_ir::{Builder, FloatCC, FuncId, GlobalId, IntCC, Module, Opcode, Type, Val
 pub struct A0Diagnostics {
     diags: Diagnostics,
     text: String,
+    /// The last `a0_diagnostics_render`.
+    rendered: String,
 }
 
 pub struct A0Builder {
@@ -47,7 +49,8 @@ pub struct A0Grammar(a0_syntax::Grammar);
 
 pub struct A0Tree(a0_syntax::SyntaxTree);
 
-pub struct A0Hir(a0_hir::HirModule);
+/// A HIR module and its text, kept for `a0_hir_text`.
+pub struct A0Hir(a0_hir::HirModule, String);
 
 const NONE: u32 = u32::MAX;
 const SOURCE: SourceId = SourceId(0);
@@ -97,6 +100,7 @@ unsafe fn report(out: *mut *mut A0Diagnostics, diags: Option<Diagnostics>) {
             give(A0Diagnostics {
                 text: diags.summary(),
                 diags,
+                rendered: String::new(),
             })
         },
         None => ptr::null_mut(),
@@ -239,6 +243,28 @@ pub unsafe extern "C" fn a0_diagnostics_text(
 ) -> *const c_char {
     let text = unsafe { d.as_ref() }.map_or("", |d| d.text.as_str());
     unsafe { give_str(text, len) }
+}
+
+/// Renders the diagnostics against the text their spans refer to, the way the `a0` tool does.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn a0_diagnostics_render(
+    d: *mut A0Diagnostics,
+    name: *const c_char,
+    name_len: usize,
+    source: *const c_char,
+    source_len: usize,
+    len: *mut usize,
+) -> *const c_char {
+    let Some(d) = (unsafe { d.as_mut() }) else {
+        return unsafe { give_str("", len) };
+    };
+    let mut sources = a0_diag::SourceMap::new();
+    let id = sources.add(&unsafe { text(name, name_len) }, &unsafe {
+        text(source, source_len)
+    });
+    debug_assert_eq!(id, SOURCE);
+    d.rendered = d.diags.render(&sources);
+    unsafe { give_str(&d.rendered, len) }
 }
 
 #[unsafe(no_mangle)]
@@ -961,7 +987,7 @@ pub unsafe extern "C" fn a0_hir_parse(
     match a0_hir::parse(&src, SOURCE) {
         Ok(h) => {
             unsafe { report(diags, None) };
-            unsafe { give(A0Hir(h)) }
+            unsafe { give(A0Hir(h, String::new())) }
         }
         Err(d) => {
             unsafe { report(diags, Some(d)) };
@@ -989,6 +1015,16 @@ pub unsafe extern "C" fn a0_hir_lower(
             ptr::null_mut()
         }
     }
+}
+
+/// The module in the HIR text format (`docs/hir.md`).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn a0_hir_text(h: *mut A0Hir, len: *mut usize) -> *const c_char {
+    let Some(h) = (unsafe { h.as_mut() }) else {
+        return unsafe { give_str("", len) };
+    };
+    h.1 = h.0.to_string();
+    unsafe { give_str(&h.1, len) }
 }
 
 #[unsafe(no_mangle)]

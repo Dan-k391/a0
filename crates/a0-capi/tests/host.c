@@ -289,11 +289,24 @@ static void vars(const A0Grammar *g, const char *source) {
         const char *code = a0_diagnostics_code(d, 0, &code_len);
         a0_diagnostics_span(d, 0, &start, NULL);
         printf("vars error at %u: [%.*s] %.*s\n", start, (int)code_len, code, (int)len, message);
+        message = a0_diagnostics_render(d, A0_STR("vars.v"), source, strlen(source), &len);
+        if (!contains(message, len, "--> vars.v:1:18")) {
+            printf("vars: unexpected rendering:\n%.*s\n", (int)len, message);
+            failures++;
+        }
         a0_diagnostics_free(d);
         return;
     }
     m = a0_hir_lower(h, &d);
     check("lowering vars", d);
+    {
+        size_t len;
+        const char *text = a0_hir_text(h, &len);
+        if (!contains(text, len, "fn main() -> int")) {
+            printf("vars: unexpected HIR text:\n%.*s\n", (int)len, text);
+            failures++;
+        }
+    }
     a0_hir_free(h);
     if (m == NULL) return;
     printf("vars:\n");

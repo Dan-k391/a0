@@ -10,6 +10,7 @@ cargo build --workspace
 cargo test --workspace              # everything; the Lox suite runs six ways (~35 s)
 cargo test -p a0-ir                 # one crate
 cargo test -p lox --test suite      # the official Lox suite only
+cargo test -p a0-capi --test python # the Python bindings and Pebble (needs Python 3)
 cargo clippy --workspace --all-targets   # must report no warnings
 cargo fmt --all                     # run before committing
 ```
@@ -44,6 +45,7 @@ extension in `editors/vscode` starts it.
 | C API | `a0-capi` (`include/a0.h`) | library crates, not the tools |
 | examples | `examples/*` | anything |
 | editors | `editors/vscode` (an extension that starts `lang lsp`; JavaScript) | nothing in Rust |
+| bindings | `bindings/python` (the package `a0`, ctypes over the C API's shared library) | the C API |
 
 Never make a lower layer depend on a higher one, and keep the frontend and the core IR independent
 of each other. `a0-hir` is the one layer that uses both (its text format is parsed with the grammar
@@ -55,7 +57,9 @@ layer, decision D17). A new crate goes into the table above and into `[workspace
   handles, `&str`/`&[T]` inputs, no lifetimes, generics, closures, trait objects or data-carrying
   enums in public signatures. Returning an owned `String` is fine (the C wrapper keeps it), as are
   enums with a text form (C passes their names) and methods that take `self` (they consume the C
-  object). Anything public that C should reach gets a binding in `a0-capi` and its header.
+  object). Anything public that C should reach gets a binding in `a0-capi` and its header, and a
+  builder function also gets a line in the Python table (`bindings/python/a0/__init__.py`), which a
+  test checks against the header (D56).
 - **Report, don't panic.** Libraries return `Diagnostics` (from `a0-diag`) for anything a user can
   cause. Builders record misuse as diagnostics. `panic!`/`unwrap` only for internal invariants.
 - **Diagnostics as good as rustc's.** A problem a program can have gets its own code in

@@ -37,7 +37,7 @@ grammar ──a0-syntax──▶ syntax tree ──your compiler──▶ HIR �
   (`lsp`) for diagnostics with quick fixes, highlighting, outline, go-to-definition and hover, with
   a VS Code extension.
 - **A C API**, for hosts that are not written in Rust: a C program can build HIR with the same
-  builder, run it and compile it.
+  builder, run it and compile it. **Python bindings** over it, for languages written in Python.
 
 The example languages show the scale. [Kaleidoscope](examples/kaleidoscope), the language of
 LLVM's tutorial, is about 580 lines including its grammar and is what the tutorial builds;
@@ -108,6 +108,15 @@ native executables and a language server:
 a0 lang examples/calc/calc.a0g run examples/calc/programs/functions.calc
 ```
 
+A language can also be written in Python, through the C API (`docs/python.md`).
+[Pebble](bindings/python/examples/pebble) is a typed language with arrays whose compiler is a
+Python file:
+
+```
+cargo build -p a0-capi
+python bindings/python/examples/pebble/pebble.py run bindings/python/examples/pebble/programs/arrays.pb
+```
+
 By hand:
 
 1. Write a grammar (`docs/grammar.md`): tokens, rules, `@prec` operator tables, `~ "message"` error
@@ -136,6 +145,7 @@ A0 is not published on crates.io; depend on it from git (`a0-hir = { git =
 | [docs/diagnostics.md](docs/diagnostics.md) | Error messages: how they render, their codes, how a language makes them good |
 | [docs/editors.md](docs/editors.md) | The language server and editor setup |
 | [docs/c-api.md](docs/c-api.md) | Using A0 from C |
+| [docs/python.md](docs/python.md) | Writing a language in Python |
 | [docs/decisions.md](docs/decisions.md) | Design decisions and why |
 | [docs/milestones.md](docs/milestones.md) | What was built when, with measurements and open questions |
 | [CHANGELOG.md](CHANGELOG.md) | Releases |
@@ -177,7 +187,8 @@ allocation.
 | `crates/a0-runtime` | The C runtime (`include/a0rt.h`, `c/`): output, strings, collections, `any`, the collector |
 | `crates/a0-build` | Build-script helper for languages that ship C code (Kaleidoscope) |
 | `crates/a0-driver` | The driver every example language uses (run, build, ir, hir, lsp) |
-| `crates/a0-capi` | The C API: a static library and `include/a0.h` |
+| `crates/a0-capi` | The C API: a static and a shared library, and `include/a0.h` |
+| `bindings/python` | The Python package `a0` over the C API, and Pebble, a language in Python |
 | `crates/a0` | The `a0` command-line tool |
 | `examples/kaleidoscope`, `examples/lox`, `examples/minnow` | The example languages |
 | `examples/calc` | A language defined by its grammar alone, run by `a0 lang` |
