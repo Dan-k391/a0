@@ -133,11 +133,11 @@ By hand:
    `a0_hir::parse`. A language that needs full control can emit the core IR (`docs/ir.md`) with
    `a0_ir::Builder` instead.
 3. Give `a0_driver::Language` your compile function and grammar. It provides `run` (interpreter),
-   `build` (native executable), `ir`, `hir` and `lsp`, renders diagnostics and maps errors to your
-   exit codes.
+   `build` (native executable, `-g` for gdb and lldb), `ir`, `hir`, `lsp`, `dap` (debugger) and
+   `repl`, renders diagnostics and maps errors to your exit codes.
 
 A0 is not published on crates.io; depend on it from git (`a0-hir = { git =
-"https://github.com/Dan-k391/a0", tag = "v0.3.0" }`) or work inside this repository.
+"https://github.com/Dan-k391/a0", tag = "v0.4.0" }`) or work inside this repository.
 
 ## Documentation
 
@@ -219,6 +219,7 @@ x86-64 and aarch64 Linux, aarch64 macOS and x86-64 Windows.
 
 ## Status
 
-Version 0.3.0 (`CHANGELOG.md`). Not yet: cross-compiled executables (object files for other
-targets work), compiling languages to WebAssembly (A0 itself runs there, in the playground), a
-debugger, aarch64 Windows. A0 is MIT-licensed.
+Version 0.4.0 (`CHANGELOG.md`). Not yet: cross-compiled executables (object files for other
+targets work), compiling languages to WebAssembly (A0 itself runs there, in the playground),
+variables in native debug information and PDB for Windows' debuggers (`lang dap` covers both),
+aarch64 Windows. A0 is MIT-licensed.

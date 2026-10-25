@@ -6,6 +6,12 @@ APIs. `docs/milestones.md` has the details of each step, with measurements.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-25
+
+Tooling for language users: every language gets a debugger, native debug information, a REPL, and
+a language server that completes, finds references and renames, with no code of its own.
+Milestone M21 in `docs/milestones.md`.
+
 ### Added
 
 - **A debugger for every language** (`lang dap`, `docs/debugging.md`): the Debug Adapter Protocol
@@ -190,7 +196,8 @@ three example languages, editor support and a C API.
   IR, the HIR, editors and the C API; design decisions and milestone summaries.
 - **CI** on x86-64 and aarch64 Linux, aarch64 macOS and x86-64 Windows, with rustfmt and clippy.
 
-[Unreleased]: https://github.com/Dan-k391/a0/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/Dan-k391/a0/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/Dan-k391/a0/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/Dan-k391/a0/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/Dan-k391/a0/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/Dan-k391/a0/releases/tag/v0.1.0

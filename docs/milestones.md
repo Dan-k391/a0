@@ -796,6 +796,55 @@ One entry per milestone: what was done, what changed along the way, and open que
 - The `@hir` forms have numbers as floats only and no types, modules or collections of a
   language's own; past them a language is a compiler, which `a0 new` starts.
 
+## M21. v0.4: tooling for language users
+
+**Done**
+
+- A debugger for every language with no code of its own (D58, `docs/debugging.md`): `lang dap`
+  serves the Debug Adapter Protocol over the interpreter, which marks each new source line and
+  calls the debugger there and when the program fails, before unwinding. Breakpoints, pause, steps
+  over, in and out, the stack, locals shown by their source types (structs, arrays, maps, enum
+  variants, nullables, `any`, captured variables, interface values by their dynamic type), hovers,
+  and a stop at a panic with its message. Lowering records IR debug types for every local; the
+  runtime gives the debugger the program's output, failures and end. The VS Code extension has a
+  debugger of type `a0`; Minnow, Lox, Kaleidoscope, Calc and new projects test a session. Writing
+  it found that Lox gave its HIR no spans and Kaleidoscope's literals took stale ones (both fixed),
+  and Lox's functions now carry their names (`set_closure_name`).
+- Native debug information (D59): `lang build -g` (and `a0 build|obj -g`) writes DWARF line tables
+  and functions with gimli. gdb stops at `file:line` and prints backtraces in source terms, tested
+  on x86-64 and aarch64 Linux in CI, and lldb does the same on aarch64 macOS from the `.dSYM` that
+  `dsymutil` gathers. That took a fix: dsymutil and lldb read the addresses in Mach-O debug
+  sections as written, so A0 writes each function's address in the object there (as LLVM does),
+  not 0 with a relocation to the function; a test checks it on every host. The object files' DWARF
+  is read back for every DWARF target.
+  Not described: variables (they would need Cranelift's value locations) and Windows (PDB).
+- The language server completes, finds references and renames (D60): names in scope, keywords,
+  imported modules and their items, and the members of a value's type after `.`; references and
+  renames across a program's files through its imports, from the grammar's indexes, so they work
+  with type errors. It stays responsive: edits only reindex, and the program is analyzed when they
+  pause or a request needs it. On a generated program of 30 files and 9,664 lines (release build):
+  the first analysis and a hover take 178 ms, twenty edits in a row and a completion 79 ms (no
+  analysis), the next hover 164 ms (one analysis), find-references 1 ms.
+- A REPL for every language (D61, `docs/repl.md`), Python ones included: the inputs make a program
+  that reruns in a process of its own (`lang run -`), showing new output only; failing inputs are
+  dropped, unfinished ones continue. A language whose statements live in `main` says so in one line
+  (`repl_main`).
+
+**Changed**
+
+- `Language` gained `repl_main`; `serve_lsp` takes its input by value. `CodegenOptions` and
+  `BuildOptions` gained `debug_info`, `LinkOptions` likewise.
+- Runtime output goes through `a0_rt_write`; a language's own C runtime should use it too.
+- `a0_runtime::FailFn` is unsafe; the interpreter has `new_debug` and `debug_*` inspection.
+
+**Open questions**
+
+- Native variables for gdb and lldb need Cranelift's value labels and DWARF location lists.
+- The REPL reruns the whole session for each input; an incremental one needs the runtime to run
+  several programs in one process.
+- Debugging globals and evaluating expressions beyond names.
+- A Python language has no language server or debugger yet (the driver is not bound to C).
+
 ## Overall open questions
 
 None at the moment.

@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "a0"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "a0-diag",
  "a0-driver",
@@ -20,14 +20,14 @@ dependencies = [
 
 [[package]]
 name = "a0-build"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "cc",
 ]
 
 [[package]]
 name = "a0-capi"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "a0-diag",
  "a0-hir",
@@ -41,11 +41,11 @@ dependencies = [
 
 [[package]]
 name = "a0-diag"
-version = "0.3.0"
+version = "0.4.0"
 
 [[package]]
 name = "a0-driver"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "a0-diag",
  "a0-hir",
@@ -58,7 +58,7 @@ dependencies = [
 
 [[package]]
 name = "a0-hir"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "a0-diag",
  "a0-interp",
@@ -70,7 +70,7 @@ dependencies = [
 
 [[package]]
 name = "a0-interp"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "a0-diag",
  "a0-ir",
@@ -79,14 +79,14 @@ dependencies = [
 
 [[package]]
 name = "a0-ir"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "a0-diag",
 ]
 
 [[package]]
 name = "a0-native"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "a0-diag",
  "a0-ir",
@@ -103,7 +103,7 @@ dependencies = [
 
 [[package]]
 name = "a0-playground"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "a0-diag",
  "a0-hir",
@@ -114,28 +114,28 @@ dependencies = [
 
 [[package]]
 name = "a0-runtime"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "cc",
 ]
 
 [[package]]
 name = "a0-sema"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "a0-diag",
 ]
 
 [[package]]
 name = "a0-syntax"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "a0-diag",
 ]
 
 [[package]]
 name = "a0-target"
-version = "0.3.0"
+version = "0.4.0"
 
 [[package]]
 name = "adler2"
@@ -429,7 +429,7 @@ dependencies = [
 
 [[package]]
 name = "kaleidoscope"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "a0-build",
  "a0-diag",
@@ -456,7 +456,7 @@ checksum = "f9f8bd3e56ce4dfc153cf470fffbfa98c7620958b312ca5c3a4b8d5181fd13c6"
 
 [[package]]
 name = "lox"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "a0-diag",
  "a0-driver",
@@ -485,7 +485,7 @@ dependencies = [
 
 [[package]]
 name = "minnow"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "a0-diag",
  "a0-driver",
