@@ -70,6 +70,28 @@ void a0_panic_bytes(const uint8_t *message, int64_t len, uint64_t loc, void *fra
 
 void a0_print_i64(int64_t value) { printf("%lld", (long long)value); }
 
+int32_t a0_format_i64(int64_t value, char *buf) {
+    char digits[24];
+    int n = 0;
+    /* Through unsigned, so that the most negative value has a magnitude. */
+    uint64_t v = value < 0 ? 0 - (uint64_t)value : (uint64_t)value;
+    do {
+        digits[n++] = (char)('0' + v % 10);
+        v /= 10;
+    } while (v != 0);
+    int32_t len = 0;
+    if (value < 0) buf[len++] = '-';
+    while (n > 0) buf[len++] = digits[--n];
+    buf[len] = '\0';
+    return len;
+}
+
+/* Whether `digits` significant digits of `value` read back as `value`; leaves them in `sci`. */
+static int round_trips(double value, int digits, char *sci, size_t cap) {
+    snprintf(sci, cap, "%.*e", digits - 1, value);
+    return strtod(sci, NULL) == value;
+}
+
 int32_t a0_format_f64(double value, char *buf) {
     if (isnan(value)) {
         strcpy(buf, "nan");
@@ -83,14 +105,27 @@ int32_t a0_format_f64(double value, char *buf) {
         strcpy(buf, signbit(value) ? "-0" : "0");
         return signbit(value) ? 2 : 1;
     }
-    /* Find the fewest significant digits that read back exactly. */
+    /* Integers below 1e17 print as themselves (what the search below finds for them, faster). */
+    if (value == floor(value) && fabs(value) < 1e17) return a0_format_i64((int64_t)value, buf);
+    /* The fewest significant digits that read back exactly: one at a time for short numbers, then
+     * by bisection, since more digits never read back worse. 17 always do. */
     char sci[40];
-    int digits;
-    for (digits = 1; digits <= 17; digits++) {
-        snprintf(sci, sizeof sci, "%.*e", digits - 1, value);
-        if (strtod(sci, NULL) == value) break;
+    int digits = 0;
+    for (int d = 1; d <= 6 && digits == 0; d++) {
+        if (round_trips(value, d, sci, sizeof sci)) digits = d;
     }
-    if (digits > 17) digits = 17;
+    if (digits == 0) {
+        int lo = 7, hi = 17;
+        while (lo < hi) {
+            int mid = (lo + hi) / 2;
+            if (round_trips(value, mid, sci, sizeof sci)) {
+                hi = mid;
+            } else {
+                lo = mid + 1;
+            }
+        }
+        digits = lo;
+    }
     snprintf(sci, sizeof sci, "%.*e", digits - 1, value);
     int exponent = atoi(strchr(sci, 'e') + 1);
     /* Plain notation for "reasonable" magnitudes, scientific otherwise. */

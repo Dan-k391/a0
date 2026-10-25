@@ -433,6 +433,18 @@ fn the_optimizer_inlines_small_functions_and_folds_any_tests() {
 }
 
 #[test]
+fn functions_that_end_in_return_are_inlined() {
+    // The body's type is `never` (it ends in `return`), but it returns: it is no error path.
+    let m = parse_ok(
+        "module \"m\";\nfn peek(xs: array<int>, i: int) -> int {\n  if i < len(xs) { return xs[i]; }\n  return -1;\n}\nfn main() -> int {\n  peek([1, 2], 1) + peek([3], 5)\n}\n",
+    );
+    let ir = lower_with(&m, LowerOptions { optimize: true })
+        .unwrap()
+        .to_string();
+    assert!(!ir.contains("call @hir.peek"), "{ir}");
+}
+
+#[test]
 fn if_let_bindings_have_their_type_in_the_body() {
     // A `match` needs its scrutinee's enum while it is parsed, and here that depends on `r`.
     parse_ok(

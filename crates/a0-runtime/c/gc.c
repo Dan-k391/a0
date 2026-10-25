@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 /* Generated code relies on these offsets (see A0Type in a0rt.h); a wrong one fails to compile. */
 typedef char a0_object_type_offset_is_24[(sizeof(Header) - offsetof(Header, type) == 24) ? 1 : -1];
@@ -59,25 +60,58 @@ const A0Type *a0_gc_type_of(const void *object) { return HEADER(object)->type; }
 
 /* ---- Allocation ------------------------------------------------------------------------------- */
 
+/* A0_GC_STATS=1 prints what the collector did when the program ends, to standard error. */
+static clock_t gc_time;
+static clock_t mark_time;
+static size_t peak_bytes;
+
+static void print_stats(void) {
+    fprintf(stderr,
+            "gc: %lld collections, %.1f ms (%.1f marking), peak %.1f MB, %lld objects live after the "
+            "last\n",
+            (long long)collections, 1000.0 * (double)gc_time / CLOCKS_PER_SEC,
+            1000.0 * (double)mark_time / CLOCKS_PER_SEC, (double)peak_bytes / (1024.0 * 1024.0),
+            (long long)live_objects);
+}
+
+static int enabled(const char *name) {
+    const char *s = getenv(name);
+    return s != NULL && s[0] != '\0' && s[0] != '0';
+}
+
 static void maybe_collect(size_t incoming) {
     if (stress < 0) {
-        const char *s = getenv("A0_GC_STRESS");
-        stress = s != NULL && s[0] != '\0' && s[0] != '0';
+        stress = enabled("A0_GC_STRESS");
+        if (enabled("A0_GC_STATS")) atexit(print_stats);
     }
+    if (bytes_allocated > peak_bytes) peak_bytes = bytes_allocated;
     if (stress || bytes_allocated + incoming > next_gc) a0_gc_collect();
 }
 
 /* Small objects come from per-size free lists carved out of chunks, so allocating one is a list pop
- * and freeing it a list push; bigger ones use malloc. Chunks are never returned to the system. */
+ * and freeing it a list push; bigger ones use malloc. The collector sweeps small objects chunk by
+ * chunk, through memory in order (a free cell has a null type), and only big ones through the
+ * `objects` list. Buffers have chunks of their own, which are not swept. Chunks are never returned
+ * to the system. */
 #define GRANULE 16
 #define SMALL_LIMIT 256
 #define CHUNK_SIZE (64 * 1024)
+#define CLASSES (SMALL_LIMIT / GRANULE + 1)
 
 typedef struct FreeCell {
     struct FreeCell *next;
 } FreeCell;
 
-static FreeCell *free_lists[SMALL_LIMIT / GRANULE + 1];
+static FreeCell *object_cells[CLASSES];
+static FreeCell *buffer_cells[CLASSES];
+
+typedef struct {
+    char *base;
+    size_t cell;
+} Chunk;
+
+static Chunk *chunks;
+static size_t chunk_count, chunk_cap;
 
 /* `any` keeps only the low 48 bits of a reference (see a0rt.h). User-space addresses fit on every
  * supported target; check rather than corrupt references silently where they might not. */
@@ -87,38 +121,50 @@ static void *check_address(void *p, size_t size) {
     return p;
 }
 
-/* A zeroed cell of `size` bytes (a multiple of GRANULE, at most SMALL_LIMIT). */
-static Header *small_alloc(size_t size) {
+/* A zeroed cell of `size` bytes (a multiple of GRANULE, at most SMALL_LIMIT) from `lists`; a new
+ * chunk of objects is recorded for the sweep. */
+static void *small_alloc(FreeCell **lists, size_t size, int objects) {
     size_t cls = size / GRANULE;
-    if (free_lists[cls] == NULL) {
-        char *chunk = (char *)check_address(malloc(CHUNK_SIZE), CHUNK_SIZE);
-        for (size_t off = 0; off + size <= CHUNK_SIZE; off += size) {
+    if (lists[cls] == NULL) {
+        /* Zeroed, so that every cell's type is null until it is allocated. */
+        char *chunk = (char *)check_address(calloc(1, CHUNK_SIZE), CHUNK_SIZE);
+        if (objects) {
+            if (chunk_count == chunk_cap) {
+                chunk_cap = chunk_cap == 0 ? 64 : chunk_cap * 2;
+                chunks = (Chunk *)realloc(chunks, sizeof(Chunk) * chunk_cap);
+                if (chunks == NULL) a0_panic("out of memory");
+            }
+            chunks[chunk_count].base = chunk;
+            chunks[chunk_count].cell = size;
+            chunk_count++;
+        }
+        /* Pushed from the end, so that cells are handed out in address order. */
+        for (size_t off = (CHUNK_SIZE / size - 1) * size;; off -= size) {
             FreeCell *c = (FreeCell *)(chunk + off);
-            c->next = free_lists[cls];
-            free_lists[cls] = c;
+            c->next = lists[cls];
+            lists[cls] = c;
+            if (off == 0) break;
         }
     }
-    FreeCell *c = free_lists[cls];
-    free_lists[cls] = c->next;
+    FreeCell *c = lists[cls];
+    lists[cls] = c->next;
     memset(c, 0, size);
-    return (Header *)c;
+    return c;
 }
 
-static void small_free(void *p, size_t size) {
+static void small_free(FreeCell **lists, void *p, size_t size) {
     /* Under stress, poison dead memory so a missing root shows up as garbage, not stale data. */
     if (stress) memset(p, 0xdd, size);
     FreeCell *c = (FreeCell *)p;
-    c->next = free_lists[size / GRANULE];
-    free_lists[size / GRANULE] = c;
+    c->next = lists[size / GRANULE];
+    lists[size / GRANULE] = c;
 }
 
-static void object_free(Header *h) {
+/* A dead small object's cell goes back to its free list, its type null again. */
+static void object_cell_free(Header *h) {
     size_t size = h->size;
-    if (size > SMALL_LIMIT) {
-        free(h);
-    } else {
-        small_free(h, size);
-    }
+    small_free(object_cells, h, size);
+    h->type = NULL;
 }
 
 static size_t rounded(size_t size) { return (size + GRANULE - 1) / GRANULE * GRANULE; }
@@ -126,11 +172,16 @@ static size_t rounded(size_t size) { return (size + GRANULE - 1) / GRANULE * GRA
 void *a0_gc_alloc(const A0Type *type, size_t payload_size) {
     size_t size = (sizeof(Header) + payload_size + GRANULE - 1) / GRANULE * GRANULE;
     maybe_collect(size);
-    Header *h = size <= SMALL_LIMIT ? small_alloc(size) : (Header *)check_address(calloc(1, size), size);
+    Header *h;
+    if (size <= SMALL_LIMIT) {
+        h = (Header *)small_alloc(object_cells, size, 1);
+    } else {
+        h = (Header *)check_address(calloc(1, size), size);
+        h->next = objects;
+        objects = h;
+    }
     h->type = type;
     h->size = size;
-    h->next = objects;
-    objects = h;
     bytes_allocated += size;
     return PAYLOAD(h);
 }
@@ -141,7 +192,7 @@ void *a0_gc_new(A0Type *type) { return a0_gc_alloc(type, sizeof(uint64_t) * (siz
  * small objects. */
 void *a0_gc_buffer_alloc(size_t size) {
     size_t r = rounded(size > 0 ? size : 1);
-    void *p = r <= SMALL_LIMIT ? (void *)small_alloc(r) : calloc(1, r);
+    void *p = r <= SMALL_LIMIT ? small_alloc(buffer_cells, r, 0) : calloc(1, r);
     if (p == NULL) a0_panic("out of memory");
     bytes_allocated += size;
     return p;
@@ -167,7 +218,7 @@ void a0_gc_buffer_free(void *buffer, size_t size) {
     if (buffer == NULL) return;
     size_t r = rounded(size > 0 ? size : 1);
     if (r <= SMALL_LIMIT) {
-        small_free(buffer, r);
+        small_free(buffer_cells, buffer, r);
     } else {
         free(buffer);
     }
@@ -253,13 +304,31 @@ static void finalize(void *object) {
 }
 
 void a0_gc_collect(void) {
+    clock_t start = clock();
     for (int64_t i = 0; i < shadow_top; i++) a0_gc_mark_word(shadow[i], A0_WORD_ANY);
     for (int64_t i = 0; i < root_count; i++) {
         a0_gc_mark_word(*(uint64_t *)roots[i].address, roots[i].kind);
     }
     while (gray_count > 0) trace(gray[--gray_count]);
+    mark_time += clock() - start;
 
     int64_t live = 0;
+    for (size_t k = 0; k < chunk_count; k++) {
+        char *base = chunks[k].base;
+        size_t cell = chunks[k].cell;
+        for (size_t off = 0; off + cell <= CHUNK_SIZE; off += cell) {
+            Header *h = (Header *)(base + off);
+            if (h->type == NULL) continue;
+            if (h->marked) {
+                h->marked = 0;
+                live++;
+            } else {
+                finalize(PAYLOAD(h));
+                bytes_allocated -= h->size;
+                object_cell_free(h);
+            }
+        }
+    }
     Header **link = &objects;
     while (*link != NULL) {
         Header *h = *link;
@@ -271,11 +340,12 @@ void a0_gc_collect(void) {
             *link = h->next;
             finalize(PAYLOAD(h));
             bytes_allocated -= h->size;
-            object_free(h);
+            free(h);
         }
     }
     live_objects = live;
     collections++;
+    gc_time += clock() - start;
     next_gc = bytes_allocated * 2 < 1024 * 1024 ? 1024 * 1024 : bytes_allocated * 2;
 }
 

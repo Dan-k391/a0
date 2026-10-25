@@ -122,6 +122,8 @@ int32_t a0_putchar(int32_t c);
 void a0_eprint_bytes(const uint8_t *bytes, int64_t len);
 void a0_eprint_cstr(const char *s);
 /* Writes the shortest round-trip form of `value` into `buf` (at least 32 bytes); returns length. */
+/* `value` in decimal into `buf` (at least 24 bytes), NUL-terminated; returns the length. */
+int32_t a0_format_i64(int64_t value, char *buf);
 int32_t a0_format_f64(double value, char *buf);
 
 /* ---- Memory ------------------------------------------------------------------------------- */

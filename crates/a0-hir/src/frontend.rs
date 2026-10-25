@@ -482,13 +482,31 @@ impl HirBuilder {
         if let Some(t) = primitive {
             return t;
         }
+        // The HIR's own generic types, unless the language declares a type of that name.
+        if self.visible(name, true).is_none() {
+            let arg =
+                |b: &mut Self, i: usize| args.get(i).copied().unwrap_or_else(|| b.fresh_type());
+            match (name, args.len()) {
+                ("array", 0 | 1) => {
+                    let e = arg(self, 0);
+                    return self.array_type(e);
+                }
+                ("map", 0 | 2) => {
+                    let (k, v) = (arg(self, 0), arg(self, 1));
+                    return self.map_type(k, v);
+                }
+                _ => {}
+            }
+        }
         let item = match self.visible(name, true) {
             Some(item) => item,
             None => {
                 let mut candidates: Vec<String> =
                     self.type_scope.iter().map(|(n, _)| n.clone()).collect();
                 candidates.extend(self.visible_names(true));
-                candidates.extend(["bool", "int", "float", "string", "any"].map(str::to_string));
+                candidates.extend(
+                    ["bool", "int", "float", "string", "any", "array", "map"].map(str::to_string),
+                );
                 let candidates: Vec<&str> = candidates.iter().map(String::as_str).collect();
                 self.unknown(code::UNKNOWN_TYPE, "type", name, &candidates);
                 return self.fresh_type();

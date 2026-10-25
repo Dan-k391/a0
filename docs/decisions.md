@@ -608,3 +608,15 @@ calls, so generic code pays nothing at run time and value types (`int`) can sati
 being objects. Methods that use `Self` work through bounds but not on interface values, which do not
 know the object's type. Left for later: default methods, generic interfaces, and interfaces
 implemented by value types at run time (which would need boxing).
+
+## D53. The collector sweeps small objects chunk by chunk
+
+The JSON tool spent more time in the collector than in its own code, and most of that sweeping: the
+sweep followed a list linking every object, a cache miss per object. Small objects already lived
+in chunks of equal cells, so the sweep now walks each chunk's cells in memory order, a free cell
+being one whose type is null; only big objects (over 256 bytes, malloc'd) stay on a list. Buffers
+(array elements, map tables) moved to chunks of their own, since their cells hold anything. The
+header keeps its layout, so generated code still finds an object's type at the same offset.
+Alternatives were a mark bitmap per chunk (the same walk, with more bookkeeping) or a moving,
+generational collector, which would also cut marking, now the larger part, but needs the shadow
+stack to be precise about every reference's location and is a project of its own.

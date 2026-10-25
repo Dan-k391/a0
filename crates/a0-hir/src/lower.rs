@@ -110,7 +110,6 @@ struct Runtime {
     any_cast_failed: IrFunc,
     string_new: IrFunc,
     string_concat: IrFunc,
-    string_len: IrFunc,
     string_eq: IrFunc,
     string_compare: IrFunc,
     string_substr: IrFunc,
@@ -122,7 +121,6 @@ struct Runtime {
     string_eprint: IrFunc,
     string_panic: IrFunc,
     array_new: IrFunc,
-    array_len: IrFunc,
     array_get: IrFunc,
     array_set: IrFunc,
     array_push: IrFunc,
@@ -162,7 +160,6 @@ impl Runtime {
             any_cast_failed: f("a0_any_cast_failed", &[I64, Ptr, I64], None),
             string_new: f("a0_string_new", &[Ptr, I64], Some(Ptr)),
             string_concat: f("a0_string_concat", &[Ptr, Ptr], Some(Ptr)),
-            string_len: f("a0_string_len", &[Ptr], Some(I64)),
             string_eq: f("a0_string_eq", &[Ptr, Ptr], Some(I64)),
             string_compare: f("a0_string_compare", &[Ptr, Ptr], Some(I64)),
             string_substr: f("a0_string_substr", &[Ptr, I64, I64], Some(Ptr)),
@@ -174,7 +171,6 @@ impl Runtime {
             string_eprint: f("a0_string_eprint", &[Ptr], None),
             string_panic: f("a0_string_panic", &[Ptr], None),
             array_new: f("a0_array_new", &[I64, I64], Some(Ptr)),
-            array_len: f("a0_array_len", &[Ptr], Some(I64)),
             array_get: f("a0_array_get", &[Ptr, I64], Some(I64)),
             array_set: f("a0_array_set", &[Ptr, I64, I64], None),
             array_push: f("a0_array_push", &[Ptr, I64], None),
@@ -1037,6 +1033,70 @@ impl<'a> Lowerer<'a> {
         self.b.get(out)
     }
 
+    // Element access is inline: a bounds check, then a load or a store. Out of bounds, the runtime
+    // function does the access instead, which fails with the message and the stack trace.
+
+    /// Whether `index` is outside `0..len` of the string or array `object` (whose first word is its
+    /// length): one unsigned comparison.
+    fn out_of_bounds(&mut self, object: Value, index: Value) -> Value {
+        let len = self.load_word(object, 0);
+        self.b.icmp(IntCC::Uge, index, len)
+    }
+
+    /// `byte_at(s, i)`: the byte, after the length and hash words (`A0String`).
+    fn string_byte(&mut self, s: Value, i: Value) -> Value {
+        let result = self.b.declare_var("byte", Type::I64);
+        let bad = self.out_of_bounds(s, i);
+        self.b.if_(bad);
+        let r = self.b.call(self.rt.string_byte_at, &[s, i]).unwrap();
+        self.b.set(result, r);
+        self.b.else_();
+        let header = self.b.iconst(Type::I64, 16);
+        let bytes = self.b.ptradd(s, header);
+        let at = self.b.ptradd(bytes, i);
+        let byte = self.b.load(Type::I8, at);
+        let byte = self.b.cast(Opcode::Zext, byte, Type::I64);
+        self.b.set(result, byte);
+        self.b.end_if();
+        self.b.get(result)
+    }
+
+    /// The address of element `i` of an array (`A0Array`: length, capacity, then the pointer to
+    /// the elements).
+    fn element_address(&mut self, a: Value, i: Value) -> Value {
+        let data = self.load_word(a, 2);
+        let data = self.b.cast(Opcode::Inttoptr, data, Type::Ptr);
+        let eight = self.b.iconst(Type::I64, 8);
+        let offset = self.b.imul(i, eight);
+        self.b.ptradd(data, offset)
+    }
+
+    /// `a[i]`, as a word.
+    fn array_element(&mut self, a: Value, i: Value) -> Value {
+        let result = self.b.declare_var("element", Type::I64);
+        let bad = self.out_of_bounds(a, i);
+        self.b.if_(bad);
+        let r = self.b.call(self.rt.array_get, &[a, i]).unwrap();
+        self.b.set(result, r);
+        self.b.else_();
+        let at = self.element_address(a, i);
+        let w = self.b.load(Type::I64, at);
+        self.b.set(result, w);
+        self.b.end_if();
+        self.b.get(result)
+    }
+
+    /// `a[i] = w`.
+    fn set_array_element(&mut self, a: Value, i: Value, w: Value) {
+        let bad = self.out_of_bounds(a, i);
+        self.b.if_(bad);
+        self.b.call(self.rt.array_set, &[a, i, w]);
+        self.b.else_();
+        let at = self.element_address(a, i);
+        self.b.store(w, at);
+        self.b.end_if();
+    }
+
     fn load_word(&mut self, base: Value, index: u32) -> Value {
         let off = self.b.iconst(Type::I64, 8 * index as i64);
         let a = self.b.ptradd(base, off);
@@ -1381,9 +1441,7 @@ impl<'a> Lowerer<'a> {
                 let target = vs[0].val();
                 let vw = self.word_of(vs[2], m.expr_type(value));
                 match m.kind(m.expr_type(t)) {
-                    TypeKind::Array(_) => {
-                        self.b.call(self.rt.array_set, &[target, vs[1].val(), vw]);
-                    }
+                    TypeKind::Array(_) => self.set_array_element(target, vs[1].val(), vw),
                     _ => {
                         let kw = self.word_of(vs[1], m.expr_type(i));
                         self.b.call(self.rt.map_set, &[target, kw, vw]);
@@ -1578,10 +1636,7 @@ impl<'a> Lowerer<'a> {
                 };
                 let target = vs[0].val();
                 let w = match m.kind(m.expr_type(t)) {
-                    TypeKind::Array(_) => self
-                        .b
-                        .call(self.rt.array_get, &[target, vs[1].val()])
-                        .unwrap(),
+                    TypeKind::Array(_) => self.array_element(target, vs[1].val()),
                     _ => {
                         let kw = self.word_of(vs[1], m.expr_type(i));
                         self.b.call(self.rt.map_get, &[target, kw]).unwrap()
@@ -2116,14 +2171,11 @@ impl<'a> Lowerer<'a> {
         };
         let arg_ty = |i: usize| m.expr_type(args[i]);
         match op {
-            Builtin::Len => {
-                let f = match m.kind(arg_ty(0)) {
-                    TypeKind::String => self.rt.string_len,
-                    TypeKind::Array(_) => self.rt.array_len,
-                    _ => self.rt.map_len,
-                };
-                V::Val(self.b.call(f, &[vs[0].val()]).unwrap())
-            }
+            // Strings and arrays keep their length in their first word (references are never null).
+            Builtin::Len => match m.kind(arg_ty(0)) {
+                TypeKind::String | TypeKind::Array(_) => V::Val(self.load_word(vs[0].val(), 0)),
+                _ => V::Val(self.b.call(self.rt.map_len, &[vs[0].val()]).unwrap()),
+            },
             Builtin::Push => {
                 let TypeKind::Array(elem) = *m.kind(arg_ty(0)) else {
                     return V::Never;
@@ -2159,11 +2211,7 @@ impl<'a> Lowerer<'a> {
                     )
                     .unwrap(),
             ),
-            Builtin::ByteAt => V::Val(
-                self.b
-                    .call(self.rt.string_byte_at, &[vs[0].val(), vs[1].val()])
-                    .unwrap(),
-            ),
+            Builtin::ByteAt => V::Val(self.string_byte(vs[0].val(), vs[1].val())),
             Builtin::Str => V::Val(self.format(vs[0].val(), arg_ty(0))),
             Builtin::Print => {
                 let s = self.format(vs[0].val(), arg_ty(0));

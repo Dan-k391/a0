@@ -94,7 +94,7 @@ int64_t a0_string_byte_at(A0String *s, int64_t index, uint64_t loc, void *frame)
 
 A0String *a0_string_from_int(int64_t value) {
     char buf[32];
-    int n = snprintf(buf, sizeof buf, "%lld", (long long)value);
+    int32_t n = a0_format_i64(value, buf);
     return a0_string_new((const uint8_t *)buf, n);
 }
 

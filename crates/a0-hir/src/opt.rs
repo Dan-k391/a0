@@ -107,8 +107,11 @@ impl Opt<'_> {
                 continue;
             };
             // `main` runs once, and a function that never returns is an error path: keeping it a
-            // call keeps cold code out of hot functions.
-            if self.m.funcs[f.index()].name == "main" || self.m.expr_type(root) == TypeId::NEVER {
+            // call keeps cold code out of hot functions. (A body that ends in `return x` has type
+            // `never` too, but returns.)
+            let never_returns =
+                self.m.expr_type(root) == TypeId::NEVER && !self.contains_return(root);
+            if self.m.funcs[f.index()].name == "main" || never_returns {
                 continue;
             }
             let mut size = 0;

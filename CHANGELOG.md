@@ -8,6 +8,10 @@ APIs. `docs/milestones.md` has the details of each step, with measurements.
 
 ### Added
 
+- **`json`**, a JSON tool in Minnow (`examples/minnow/json`): reading, pretty and compact writing,
+  path queries and statistics over the standard library, in five modules. What writing it revealed
+  is fixed below.
+- `A0_GC_STATS=1` prints the collector's work at exit. Minnow has maps (`map<K, V>`, `new map {}`).
 - **A standard library** for every language (`docs/std.md`): `std.io` (standard input and
   output), `std.fs` (files and directories), `std.env` (arguments, environment variables),
   `std.time`, `std.math` (the C library's functions, random numbers) and `std.str` (searching,
@@ -64,6 +68,12 @@ APIs. `docs/milestones.md` has the details of each step, with measurements.
 
 ### Fixed
 
+- The optimizer never inlined a function whose body ends in `return x;` (every function of a
+  language with explicit returns, Minnow's included), taking it for one that never returns.
+- Faster code: lengths, `byte_at` and array elements are inline loads after a bounds check; float
+  formatting finds the shortest digits with a fast path for integers and a bisection (6x faster on
+  numbers); the collector sweeps memory chunk by chunk instead of following a list of every object
+  (10x faster sweeping, half the collector's time on the JSON tool's large inputs).
 - In the HIR text format, a `match` inside an `if let` whose type depended on the binding failed with
   "match needs an enum".
 

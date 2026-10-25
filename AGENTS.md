@@ -21,7 +21,8 @@ it green; a test that only passes on one OS is a bug.
 Needs a C compiler: MSVC on Windows (found automatically), `cc` on Linux/macOS. Useful while
 debugging: `a0 run|build|fmt|check file.a0ir|file.hir`, `a0 lower file.hir` (the core IR a HIR
 module becomes), `a0 parse lang.a0g input`, `lox hir|ir file.lox`, `minnow hir|ir file.mn`, `kaleidoscope hir|ir file.k`, and
-`A0_GC_STRESS=1` (the collector runs on every allocation), `A0_OPT=0` (no HIR optimizer),
+`A0_GC_STRESS=1` (the collector runs on every allocation), `A0_GC_STATS=1` (what the collector did,
+printed at exit), `A0_OPT=0` (no HIR optimizer),
 `a0 explain E2001` (what an error code means), `A0_BLESS=1` (rewrite the tutorial's listings and the
 diagnostic snapshots after a deliberate change).
 Every language driver also has `lang lsp`, the language server (`docs/editors.md`); the VS Code

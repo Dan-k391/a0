@@ -246,7 +246,8 @@ A frontend walks its syntax tree once and calls `HirBuilder`. Two styles mix fre
   blocks; `let_named` and `declare_local` declare locals (shadowing allowed; `is_declared_in_scope`
   for languages that forbid it), and `declare_if_let` the binding of an `if let` (typed from the
   value, for `if_let`); `name`, `call_named`, `assign_named` resolve locals, globals,
-  functions and builtins; `named_type` resolves type names; `new_struct_named` takes fields in any
+  functions and builtins; `named_type` resolves type names (and `array`, `map` with their type
+  arguments, unless the language declares types of those names); `new_struct_named` takes fields in any
   order, keeps their evaluation order and reports unknown, repeated and missing fields;
   `variant_named` and `field_named` look up by name.
 
@@ -315,7 +316,10 @@ replaced generic items with one copy per combination of type arguments:
 - **`any`.** Type tests of objects are inline: the object's type sits in the collector's header and
   its family in the type descriptor, at offsets `a0rt.h` fixes (D28). Equality of two `any` words is
   inline unless both are references (strings and boxed integers compare by value in the runtime).
-- Strings, arrays, maps, formatting and boxing of large integers are runtime calls.
+- Lengths of strings and arrays, `byte_at` and array elements are inline loads and stores after
+  a bounds check (out of bounds, the runtime function fails with the message and the trace);
+  everything else about strings, arrays and maps, formatting and boxing of large integers are
+  runtime calls.
 - Integer division by zero, and dividing the minimum `int` by -1, trap like the core IR's `sdiv`
   (`panic: integer division by zero` and the stack trace, exit 101).
 - Every IR instruction is attributed to the HIR expression it comes from (its span) and to the call

@@ -316,6 +316,43 @@ mod tests {
         String::from_utf8(bytes).unwrap()
     }
 
+    /// The shortest digits that read back, from Rust's own formatting, laid out as the runtime
+    /// does: plain for exponents from -5 to 16, else `d.ddde+XX`.
+    fn reference(v: f64) -> String {
+        let e = format!("{v:e}");
+        let (mantissa, exponent) = e.split_once('e').unwrap();
+        let exponent: i32 = exponent.parse().unwrap();
+        let digits = mantissa.chars().filter(char::is_ascii_digit).count() as i32;
+        if (-5..17).contains(&exponent) {
+            return format!("{:.*}", (digits - 1 - exponent).max(0) as usize, v);
+        }
+        let sign = if exponent < 0 { '-' } else { '+' };
+        format!("{mantissa}e{sign}{:02}", exponent.abs())
+    }
+
+    #[test]
+    fn formats_doubles_like_the_shortest_round_trip() {
+        let mut state = 0x2545f4914f6cdd1du64;
+        let mut next = move || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state
+        };
+        for i in 0..20000 {
+            let v = match i % 4 {
+                0 => f64::from_bits(next()),
+                1 => (next() % 1_000_000) as f64 / 100.0,
+                2 => (next() as i64 >> (next() % 60)) as f64,
+                _ => (next() % 10_000) as f64 * 10f64.powi((next() % 40) as i32 - 20),
+            };
+            if !v.is_finite() || v == 0.0 {
+                continue;
+            }
+            assert_eq!(fmt(v), reference(v), "{v:e}");
+        }
+    }
+
     #[test]
     fn formats_doubles_shortest() {
         assert_eq!(fmt(0.0), "0");
