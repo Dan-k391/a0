@@ -620,3 +620,14 @@ header keeps its layout, so generated code still finds an object's type at the s
 Alternatives were a mark bitmap per chunk (the same walk, with more bookkeeping) or a moving,
 generational collector, which would also cut marking, now the larger part, but needs the shadow
 stack to be precise about every reference's location and is a project of its own.
+
+## D54. `a0 new` writes a project from templates in the `a0` command
+
+v0.3 asks that one command create a working language project. The project could have been a cargo
+template (cargo-generate, an extra tool), a copy of an example language (too much to delete), or
+files the `a0` command writes. It is the last: templates under `crates/a0/templates/starter`,
+embedded in the binary, for a small typed language (functions, `let`, `if`, `while`, `print`) with
+its driver, tests of its programs in both backends and of its language server, an example, VS Code
+settings and a README. The project depends on A0 by git tag of the `a0` that made it, or on a local
+checkout (`--a0`), which is how a test builds a generated project and runs its tests on every CI
+run, so the template cannot rot.

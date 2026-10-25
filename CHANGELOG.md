@@ -6,6 +6,14 @@ APIs. `docs/milestones.md` has the details of each step, with measurements.
 
 ## [Unreleased]
 
+### Added
+
+- **`a0 new <name>`** creates a language project: grammar, compiler, driver, tests of its programs
+  (interpreted and native) and of its language server, an example and VS Code settings; `cargo
+  test` passes in it from the start.
+- The VS Code extension expands `${workspaceFolder}` in commands and colors keywords, strings,
+  numbers and comments of every language.
+
 ## [0.2.0] - 2026-10-25
 
 Real programs: languages built on A0 can write programs of several files that work with files,

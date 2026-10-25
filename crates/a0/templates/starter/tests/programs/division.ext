@@ -1,0 +1,14 @@
+// A runtime error stops the program with a message and where it happened.
+fn divide(a: int, b: int) -> int {
+  return a / b;
+}
+
+fn main() {
+  print(divide(7, 2));
+  print(divide(1, 0));
+}
+// expect: 3
+// expect-stderr: panic: integer division by zero
+// expect-stderr:     at divide (division.{{ext}}:3:10)
+// expect-stderr:     at main (division.{{ext}}:8:9)
+// expect-exit: 101

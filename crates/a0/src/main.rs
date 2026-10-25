@@ -6,6 +6,8 @@ use a0_diag::{Diagnostics, RenderOptions, SourceMap};
 use a0_ir::Module;
 use a0_native::Target;
 
+mod new;
+
 const USAGE: &str = "usage: a0 <command> [options] <file>
 
 Files are core IR (.a0ir) or high-level IR (.hir); HIR is lowered to core IR before running.
@@ -22,6 +24,8 @@ commands:
   parse <grammar.a0g> <file>
                             parse a file with a grammar; print the tree or the errors
   explain <code>            explain an error code (E2001)
+  new <name> [--dir D] [--ext E] [--a0 PATH]
+                            create a language project (grammar, compiler, tests, editor setup)
 
 targets: x86_64-linux, aarch64-linux, x86_64-macos, aarch64-macos, x86_64-windows,
          aarch64-windows (or full triples); the default is the host
@@ -42,6 +46,7 @@ fn main() -> ExitCode {
         "build" => build(rest, true),
         "obj" => build(rest, false),
         "parse" => parse_with_grammar(rest),
+        "new" => new::new(rest),
         "explain" => match rest {
             [code] => match a0_diag::codes::explain(code) {
                 Some(c) => {

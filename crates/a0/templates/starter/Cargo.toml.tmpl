@@ -1,0 +1,18 @@
+[package]
+name = "{{name}}"
+description = "{{Name}}, a language built on A0"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+a0-diag = {{a0:a0-diag}}
+a0-syntax = {{a0:a0-syntax}}
+a0-hir = {{a0:a0-hir}}
+a0-driver = {{a0:a0-driver}}
+
+# Debug builds are optimized a little, and A0 itself more, so programs compile and run quickly.
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 2

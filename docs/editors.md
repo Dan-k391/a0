@@ -45,10 +45,12 @@ language is one entry in `a0.languages`:
 ]
 ```
 
+`${workspaceFolder}` in a command is the folder of the file being edited, which is how a project
+made with `a0 new` points at the language server it builds (its `.vscode/settings.json`).
+
 VS Code colors names (functions, types, parameters) from semantic tokens with any theme, but keywords,
 strings, numbers and comments only through a TextMate grammar or a `semanticTokenScopes` mapping; the
-extension maps them for the three languages it declares. Add the same mapping to `package.json` for a
-new language to color those too.
+extension maps them for every language.
 
 ## Other editors
 

@@ -1,0 +1,54 @@
+// The grammar of {{Name}}, a language made with `a0 new`: change it, and the compiler in
+// src/lib.rs with it. `docs/grammar.md` in A0 describes the notation; `@def` and `@scope` tell
+// the language server what declares names.
+grammar {{crate}};
+
+skip /[ \t\r\n]+/;
+skip /\/\/[^\n]*/;
+token FLOAT /[0-9]+\.[0-9]+/;
+token INT /[0-9]+/;
+token STRING /"([^"\\\n]|\\.)*"/;
+token NAME /[A-Za-z_][A-Za-z0-9_]*/;
+error "unterminated string" /"([^"\\\n]|\\.)*/;
+unknown "unexpected character";
+
+program = (!EOF item)* EOF;
+
+item @inline @recover(before "fn") = fn_decl;
+
+fn_decl @def(function) @scope
+    = "fn" name:NAME ~ "expected a function name" "(" ~ "expected '('"
+      (param ("," param)*)? ")" ~ "expected ')'" ("->" ret:type ~ "expected a type")?
+      body:block ~ "expected '{'";
+param @def(parameter)
+    = name:NAME ~ "expected a parameter name" ":" ~ "expected ':'" type:type ~ "expected a type";
+type = name:NAME;
+
+block @scope = "{" (!"}" !EOF stmt)* "}" ~ "expected '}'";
+
+stmt @inline @recover(after ";" before "let" "if" "while" "return")
+    = let_stmt | if_stmt | while_stmt | return_stmt | block | expr_stmt;
+let_stmt @def(variable)
+    = "let" name:NAME ~ "expected a variable name" "=" ~ "expected '='" value:expr ";" ~ "expected ';'";
+if_stmt = "if" cond:expr ~ "expected a condition" then:block ~ "expected '{'"
+          ("else" (else:if_stmt | else:block) ~ "expected '{' or 'if'")?;
+while_stmt = "while" cond:expr ~ "expected a condition" body:block ~ "expected '{'";
+return_stmt = "return" value:expr? ";" ~ "expected ';'";
+expr_stmt = expr:expr ("=" value:expr ~ "expected an expression")? ";" ~ "expected ';'";
+
+expr @inline = @prec primary ~ "expected an expression" {
+    left "||" => logical;
+    left "&&" => logical;
+    left "==" "!=" => binary;
+    left "<" "<=" ">" ">=" => binary;
+    left "+" "-" => binary;
+    left "*" "/" "%" => binary;
+    prefix "-" "!" => unary;
+    postfix "(" args:args? ")" ~ "expected ')'" => call;
+};
+
+args = arg:expr ("," arg:expr)*;
+primary = literal | paren | name_expr;
+literal = "true" | "false" | INT | FLOAT | STRING;
+paren = "(" inner:expr ")" ~ "expected ')'";
+name_expr = NAME;

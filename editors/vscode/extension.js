@@ -13,26 +13,36 @@ function selector(entry) {
   return filters;
 }
 
-function start(entry) {
-  const key = entry.command;
+// `${workspaceFolder}` in a command is the folder of the document (or the first folder): projects
+// made with `a0 new` point at the server they build.
+function command(entry, document) {
+  const folder =
+    (document && vscode.workspace.getWorkspaceFolder(document.uri)) ||
+    (vscode.workspace.workspaceFolders || [])[0];
+  return folder ? entry.command.replace('${workspaceFolder}', folder.uri.fsPath) : entry.command;
+}
+
+function start(entry, document) {
+  const program = command(entry, document);
+  const key = program;
   if (clients.has(key)) {
     return;
   }
-  const name = entry.language || entry.command;
-  const server = { command: entry.command, args: ['lsp'] };
+  const name = entry.language || entry.command.split(/[\\/]/).pop();
+  const server = { command: program, args: ['lsp'] };
   const client = new LanguageClient(`a0-${name}`, `${name} (A0)`, { run: server, debug: server }, {
     documentSelector: selector(entry),
   });
   clients.set(key, client);
   client.start().catch((error) => {
-    vscode.window.showErrorMessage(`Could not start \`${entry.command} lsp\`: ${error.message}`);
+    vscode.window.showErrorMessage(`Could not start \`${program} lsp\`: ${error.message}`);
   });
 }
 
 function startFor(document) {
   for (const entry of vscode.workspace.getConfiguration('a0').get('languages', [])) {
     if (vscode.languages.match(selector(entry), document) > 0) {
-      start(entry);
+      start(entry, document);
     }
   }
 }

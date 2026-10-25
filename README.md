@@ -89,6 +89,18 @@ Then:
 
 ## Writing a language
 
+`a0 new mylang` creates a project to start from: a grammar and a compiler for a small typed
+language, its command (`run`, `build`, `lsp`, ...), tests that run its programs both ways and
+check its language server, and VS Code settings. `cargo test` in it passes from the start.
+
+```
+cargo install --path crates/a0
+a0 new mylang
+cd mylang && cargo run -- run examples/hello.mylang
+```
+
+By hand:
+
 1. Write a grammar (`docs/grammar.md`): tokens, rules, `@prec` operator tables, `~ "message"` error
    messages, `@recover` for error recovery, and `@def`/`@scope` to mark declarations and scopes for
    editors. Try it with `a0 parse lang.a0g input`.

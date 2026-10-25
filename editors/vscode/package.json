@@ -38,6 +38,7 @@
       }
     ],
     "semanticTokenScopes": [
+      { "scopes": { "keyword": ["keyword.control"], "comment": ["comment"], "string": ["string"], "number": ["constant.numeric"], "operator": ["keyword.operator"] } },
       { "language": "lox", "scopes": { "keyword": ["keyword.control"], "comment": ["comment"], "string": ["string"], "number": ["constant.numeric"], "operator": ["keyword.operator"] } },
       { "language": "minnow", "scopes": { "keyword": ["keyword.control"], "comment": ["comment"], "string": ["string"], "number": ["constant.numeric"], "operator": ["keyword.operator"] } },
       { "language": "kaleidoscope", "scopes": { "keyword": ["keyword.control"], "comment": ["comment"], "string": ["string"], "number": ["constant.numeric"], "operator": ["keyword.operator"] } }

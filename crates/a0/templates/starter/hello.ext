@@ -1,0 +1,8 @@
+// Run me: {{name}} run examples/hello.{{ext}}
+fn greet(name: string) -> string {
+  return "Hello, " + name + "!";
+}
+
+fn main() {
+  print(greet("{{Name}}"));
+}

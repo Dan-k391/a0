@@ -78,6 +78,8 @@ layer, decision D17). A new crate goes into the table above and into `[workspace
 - The standard library is HIR text (`crates/a0-hir/std/*.hir`) over `extern "a0"` C functions in
   `crates/a0-runtime/c/std.c` (D48, `docs/std.md`); prefer writing a library function in HIR, and
   add a builtin to the HIR only for what the library cannot express.
+- `a0 new` copies `crates/a0/templates/starter` (D54); `crates/a0/tests/new.rs` builds and tests a
+  generated project, so a change to the APIs it uses must keep the template working.
 - Generalize only when two example languages need it (except the IR layers and the default runtime).
 - Rust edition 2024, rustfmt defaults, clippy clean. Comments explain why, not what; match the
   surrounding density. C code: C11, `a0_` prefix for runtime symbols, no global state without a reason.
