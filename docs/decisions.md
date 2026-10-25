@@ -528,3 +528,32 @@ modules do not need them. Module 0 is the prelude every module sees; the main fi
 as they are so its `main` is the entry point, and other modules' items are `module.item`, which is
 also how stack traces name them. Visibility is the builder's: `set_public` before declarations,
 checked on `alias.item` and on imports by name.
+
+## D47. C functions take strings and arrays as pointers into A0's objects
+
+Calling C was limited to numbers, so every C function that takes a string needed a wrapper in a
+language's runtime. Now an `extern fn` takes strings as `const char *` and arrays of `int`, `float`
+or `bool` as pointers to their elements, pointing into the objects themselves: A0's strings are
+NUL-terminated and arrays are contiguous 64-bit words, and C code cannot start a collection, so
+nothing is copied or pinned (a string with a NUL byte looks shorter to C; the alternative, a copy per
+call, costs on every call). A string result is copied, since A0 cannot know who owns C's memory.
+Bools are passed as 64-bit 0 or 1, because Cranelift does not extend small integers at calls. The
+interpreter, which used to find only functions in registered tables, also looks the name up in the
+process (`dlsym`, the loaded modules' exports on Windows), so a declaration alone calls a C library
+function in both backends; native code links against the same libraries. Functions that need A0's
+own values (to return a new array, say) are declared `extern "a0"` and get the objects: the
+runtime's way to grow without a new builtin each time, and the standard library's (D48).
+
+## D48. The standard library is HIR over runtime functions, added on import
+
+A library every language can offer could have been builtins (typed and lowered one by one in the
+builder and the lowering), a C library each language wraps, or code in the HIR. It is HIR text,
+one module per area (`std.fs`, `std.str`, ...), over `extern "a0"` functions in the runtime's
+`std.c`: the builder parses a module into the program the first time the program imports it, so
+nothing is compiled unless used, functions are written in HIR where that is enough, and adding one
+needs no change to the builder, the checker or the lowering. Fallible operations return
+`std.Result<T, E>` with a message, which result-style languages use as it is and exception-style
+languages turn into their exceptions; the C side reports failure through a last-error message
+(one thread, and C functions return one value). Names `std` and `std.*` are reserved for the
+library, so a program's own `std/` directory is not a module. The library's code has no spans for
+now: its text is not in the driver's source map, so diagnostics and traces cannot point into it.

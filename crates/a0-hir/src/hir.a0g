@@ -30,7 +30,7 @@ variant = name:NAME ("(" type:type ("," type:type)* ")" ~ "expected ')'")?;
 global_decl = "global" name:NAME ~ "expected a global name" ":" ~ "expected ':'"
               type:type ~ "expected a type" ";" ~ "expected ';'";
 
-extern_decl = "extern" "fn" ~ "expected 'fn'" name:NAME ~ "expected a function name"
+extern_decl = "extern" abi:STRING? "fn" ~ "expected 'fn'" name:NAME ~ "expected a function name"
               "(" ~ "expected '('" (param_type:type ("," param_type:type)*)? ")" ~ "expected ')'"
               ("->" ret:type)? ";" ~ "expected ';'";
 

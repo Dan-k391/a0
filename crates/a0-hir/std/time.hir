@@ -1,0 +1,26 @@
+// Clocks. Times are seconds, as floats.
+module "std.time";
+
+extern fn a0_std_now() -> float;
+extern fn a0_std_monotonic() -> float;
+extern fn a0_std_sleep(float);
+extern "a0" fn a0_std_format_time(float) -> string;
+
+// Seconds since 1970-01-01 00:00 UTC.
+fn now() -> float {
+  a0_std_now()
+}
+
+// Seconds since some fixed moment, never going backwards: for measuring how long things take.
+fn monotonic() -> float {
+  a0_std_monotonic()
+}
+
+fn sleep(seconds: float) {
+  a0_std_sleep(seconds)
+}
+
+// A time as `2026-10-25T09:30:00Z` (UTC, whole seconds).
+fn format(seconds: float) -> string {
+  a0_std_format_time(seconds)
+}

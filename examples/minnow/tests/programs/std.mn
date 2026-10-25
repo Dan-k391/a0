@@ -1,0 +1,103 @@
+// The standard library: strings, math, files, the environment, time and standard input.
+import std.str as s;
+import std.math;
+import std.fs;
+import std.env;
+import std.time;
+import std.io;
+
+// stdin: first line
+// stdin: second line
+// args: one two
+
+fn strings() {
+  let parts = s.split("a,b,,c", ",");
+  print(str(len(parts)) + " " + s.join(parts, "|"));
+  print(s.join(s.words("  one two\tthree \n"), "+"));
+  print(str(s.find("hello", "l")) + " " + str(s.find_last("hello", "l")) + " " + str(s.find("hello", "z")));
+  print(s.contains("hello", "ell") && s.starts_with("hello", "he") && s.ends_with("hello", "lo"));
+  print(s.replace("a-b-c", "-", "::") + " [" + s.trim("  x  ") + "] " + s.upper("MiXed") + " " + s.lower("MiXed"));
+  print(s.repeat("ab", 3) + " " + s.slice("abcdef", 1, 4) + " " + s.fixed(math.pi(), 3));
+  print(s.from_code_point(233) == "é" && s.from_byte(65) == "A");
+  print(s.join(s.lines("one\r\ntwo\n\nfour"), ","));
+  print(s.from_bytes(s.bytes("bytes")));
+  match s.parse_int(" -42 ") { Ok(n) => print(n + 1), Err(e) => print(e) }
+  match s.parse_int("4x") { Ok(n) => print(n), Err(e) => print("error: " + e) }
+  match s.parse_int("99999999999999999999") { Ok(n) => print(n), Err(e) => print("error: " + e) }
+  match s.parse_float("2.5") { Ok(x) => print(x * 10.0), Err(e) => print(e) }
+  print(s.is_digit(55) && s.is_alpha(97) && s.is_space(10) && !s.is_alnum(45));
+}
+
+fn numbers() {
+  print(math.sqrt(16.0) + math.floor(2.7) + math.ceil(2.2));
+  print(str(math.max_int(3, 9)) + " " + str(math.min(1.5, 0.5)) + " " + str(math.abs_int(-4)));
+  print(math.is_nan(math.nan()) && !math.is_finite(math.inf()) && math.is_finite(1.0));
+  math.seed(7);
+  let a = math.random_int(1, 6);
+  let x = math.random();
+  math.seed(7);
+  print(a == math.random_int(1, 6) && x == math.random() && x >= 0.0 && x < 1.0);
+}
+
+fn files() {
+  let dir = env.get("A0_TEST_OUT")!;
+  let path = dir + "/notes.txt";
+  match fs.write(path, "one\n") { Ok(_written) => {}, Err(e) => print(e) }
+  match fs.append(path, "two\n") { Ok(_written) => {}, Err(e) => print(e) }
+  match fs.read(path) { Ok(text) => print(s.join(s.lines(text), ",")), Err(e) => print(e) }
+  match fs.write(dir + "/b.txt", "") { Ok(_written) => {}, Err(e) => print(e) }
+  match fs.list(dir) { Ok(names) => print(s.join(names, " ")), Err(e) => print(e) }
+  print(fs.exists(path) && !fs.is_dir(path) && fs.is_dir(dir));
+  match fs.remove(path) { Ok(_removed) => print(fs.exists(path)), Err(e) => print(e) }
+  match fs.read("no/such/file.txt") {
+    Ok(_text) => print("read a file that is not there"),
+    Err(e) => print(s.starts_with(e, "cannot read no/such/file.txt: ")),
+  }
+}
+
+fn main() {
+  strings();
+  numbers();
+  files();
+  print(s.join(env.args(), ","));
+  print(env.get("A0_STD_TEST_UNSET") == null);
+  let start = time.monotonic();
+  time.sleep(0.01);
+  print(time.monotonic() - start >= 0.005 && time.now() > 1700000000.0);
+  print(time.format(86400.5));
+  io.write("prompt> ");
+  io.flush();
+  print(io.read_line()!);
+  print(s.trim(io.read_all()));
+  print(io.read_line() == null);
+}
+// expect: 4 a|b||c
+// expect: one+two+three
+// expect: 2 3 -1
+// expect: true
+// expect: a::b::c [x] MIXED mixed
+// expect: ababab bcd 3.142
+// expect: true
+// expect: one,two,,four
+// expect: bytes
+// expect: -41
+// expect: error: not an integer
+// expect: error: integer out of range
+// expect: 25
+// expect: true
+// expect: 9
+// expect: 9 0.5 4
+// expect: true
+// expect: true
+// expect: one,two
+// expect: b.txt notes.txt
+// expect: true
+// expect: false
+// expect: true
+// expect: one,two
+// expect: true
+// expect: true
+// expect: 1970-01-02T00:00:00Z
+// expect: prompt> first line
+// expect: second line
+// expect: true

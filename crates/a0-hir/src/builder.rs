@@ -811,23 +811,80 @@ impl HirBuilder {
 
     /// Declares a C function. Its types must be `int`, `float`, `bool` or `unit`.
     pub fn declare_extern(&mut self, name: &str, params: &[TypeId], ret: TypeId) -> ExternId {
-        for &t in params.iter().chain([&ret]) {
-            if !matches!(t, TypeId::INT | TypeId::FLOAT | TypeId::BOOL | TypeId::UNIT) {
-                let tn = self.m.display_type(t);
+        self.declare_extern_abi(name, params, ret, Abi::C)
+    }
+
+    /// Declares a function written in C, called through `abi`. A C function takes `int`, `float`,
+    /// `bool`, strings and arrays of `int`, `float` or `bool` (or null for `T?`), and returns one of
+    /// the first three, `unit` or a string (`string?` if it can return `NULL`); a function of the
+    /// runtime takes and returns anything. Modules may declare the same C function, with the same
+    /// signature.
+    pub fn declare_extern_abi(
+        &mut self,
+        name: &str,
+        params: &[TypeId],
+        ret: TypeId,
+        abi: Abi,
+    ) -> ExternId {
+        if abi == Abi::C {
+            for &t in params {
+                if !self.c_param(t) {
+                    let tn = self.m.display_type(t);
+                    self.misuse(&format!(
+                        "extern fn {name} takes {tn}; C functions take int, float, bool, strings \
+                         and arrays of int, float or bool"
+                    ));
+                }
+            }
+            let string_result =
+                ret == TypeId::STRING || self.nullable_of(ret) == Some(TypeId::STRING);
+            if !(string_result
+                || matches!(
+                    ret,
+                    TypeId::INT | TypeId::FLOAT | TypeId::BOOL | TypeId::UNIT
+                ))
+            {
+                let tn = self.m.display_type(ret);
                 self.misuse(&format!(
-                    "extern fn {name} uses {tn}; externs take int, float, bool or unit"
+                    "extern fn {name} returns {tn}; C functions return int, float, bool, unit or a string"
                 ));
             }
+        }
+        if let Some(other) = self.m.externs.iter().find(|x| x.name == name)
+            && (other.params != params || other.ret != ret || other.abi != abi)
+        {
+            self.misuse(&format!("extern fn {name} is declared with two signatures"));
         }
         let x = ExternId(self.m.externs.len() as u32);
         self.m.externs.push(ExternDef {
             name: name.to_string(),
             params: params.to_vec(),
             ret,
+            abi,
             span: self.span,
         });
         self.add_value_name(name, Item::Extern(x));
         x
+    }
+
+    fn nullable_of(&self, t: TypeId) -> Option<TypeId> {
+        match self.m.kind(t) {
+            TypeKind::Nullable(inner) => Some(*inner),
+            _ => None,
+        }
+    }
+
+    /// Whether a C function can take a `t`.
+    fn c_param(&self, t: TypeId) -> bool {
+        if matches!(t, TypeId::INT | TypeId::FLOAT | TypeId::BOOL) {
+            return true;
+        }
+        let t = self.nullable_of(t).unwrap_or(t);
+        match self.m.kind(t) {
+            TypeKind::String => true,
+            TypeKind::Array(e) => matches!(*e, TypeId::INT | TypeId::FLOAT | TypeId::BOOL),
+            _ => false,
+        }
     }
 
     /// Declares a function with named parameters. Build its body expression and attach it with

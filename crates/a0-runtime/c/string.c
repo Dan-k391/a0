@@ -123,3 +123,11 @@ void a0_string_panic(A0String *message, uint64_t loc, void *frame) {
     check(message);
     a0_rt_fail_bytes(message->bytes, message->len, loc, frame);
 }
+
+A0String *a0_string_from_c(const char *s, int64_t required, uint64_t loc, void *frame) {
+    if (s == NULL) {
+        if (required) a0_rt_fail("a C function returned NULL for a string", loc, frame);
+        return NULL;
+    }
+    return a0_string_new((const uint8_t *)s, (int64_t)strlen(s));
+}

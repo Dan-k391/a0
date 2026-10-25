@@ -332,7 +332,38 @@ pub(crate) struct ExternDef {
     pub name: String,
     pub params: Vec<TypeId>,
     pub ret: TypeId,
+    pub abi: Abi,
     pub span: Option<Span>,
+}
+
+/// How an `extern fn` takes its arguments and returns its result (D47).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Abi {
+    /// A C function: `int`, `float` and `bool` as C's 64-bit integers, doubles and integers, strings
+    /// as NUL-terminated `const char *`, arrays of `int`, `float` or `bool` as pointers to their
+    /// 64-bit elements, null as `NULL`; a string result is copied.
+    C,
+    /// A function of A0's runtime (or a language's), which takes and returns A0's own values: a
+    /// string is an `A0String *`, an array an `A0Array *`. It may allocate.
+    A0,
+}
+
+impl Abi {
+    /// The name in the text format: `extern "C" fn`, `extern "a0" fn`.
+    pub fn name(self) -> &'static str {
+        match self {
+            Abi::C => "C",
+            Abi::A0 => "a0",
+        }
+    }
+
+    pub fn from_name(s: &str) -> Option<Abi> {
+        match s {
+            "C" => Some(Abi::C),
+            "a0" => Some(Abi::A0),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -663,6 +694,53 @@ impl HirModule {
         self.arms.len() as u32
     }
 
+    /// How tools show an item: a function's signature, a global's type, a struct's or enum's name,
+    /// with types in the language's syntax (`fn std.str.find(s: string, part: string) -> int`).
+    pub fn item_signature(&self, item: Item) -> String {
+        let ret = |t: TypeId| match t {
+            TypeId::UNIT => String::new(),
+            t => format!(" -> {}", self.display_type(t)),
+        };
+        match item {
+            Item::Func(f) => {
+                let body = self.func_body(f);
+                let params: Vec<String> = self
+                    .body_params(body)
+                    .iter()
+                    .map(|&l| {
+                        let t = self.display_type(self.local_type(l));
+                        format!("{}: {t}", self.local_source_name(l))
+                    })
+                    .collect();
+                let tparams = &self.funcs[f.index()].type_params;
+                let tparams = match tparams.is_empty() {
+                    true => String::new(),
+                    false => format!("<{}>", tparams.join(", ")),
+                };
+                let (name, r) = (self.func_name(f), ret(self.body_ret(body)));
+                format!("fn {name}{tparams}({}){r}", params.join(", "))
+            }
+            Item::Extern(x) => {
+                let def = &self.externs[x.index()];
+                let params: Vec<String> =
+                    def.params.iter().map(|&t| self.display_type(t)).collect();
+                format!(
+                    "extern fn {}({}){}",
+                    def.name,
+                    params.join(", "),
+                    ret(def.ret)
+                )
+            }
+            Item::Global(g) => format!(
+                "{}: {}",
+                self.global_name(g),
+                self.display_type(self.global_type(g))
+            ),
+            Item::Struct(s) => format!("struct {}", self.struct_name(s)),
+            Item::Enum(e) => format!("enum {}", self.enum_name(e)),
+        }
+    }
+
     pub fn local_name(&self, l: LocalId) -> &str {
         &self.locals[l.index()].name
     }
@@ -759,6 +837,10 @@ impl HirModule {
 
     pub fn extern_name(&self, x: ExternId) -> &str {
         &self.externs[x.index()].name
+    }
+
+    pub fn extern_abi(&self, x: ExternId) -> Abi {
+        self.externs[x.index()].abi
     }
 
     /// Where an item was declared, if it came from text or the builder had a span set.

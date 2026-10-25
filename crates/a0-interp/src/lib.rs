@@ -23,21 +23,27 @@ use a0_runtime::{A0Symbol, ffi_ret, trap};
 /// Names and addresses of C functions that `extern func` declarations may resolve to.
 pub struct HostSymbols {
     map: HashMap<String, usize>,
+    /// Whether names not registered are looked up among the process's C functions.
+    search_process: bool,
 }
 
 impl HostSymbols {
-    /// A registry pre-filled with the A0 runtime and common C library functions.
+    /// A registry pre-filled with the A0 runtime's functions, which also finds any other C function
+    /// the process can call (the C library's, those of loaded libraries).
     pub fn new() -> HostSymbols {
         let mut s = HostSymbols::empty();
+        s.search_process = true;
         for (name, addr) in a0_runtime::runtime_symbols() {
             s.map.insert(name, addr);
         }
         s
     }
 
+    /// A registry that finds only what is added to it.
     pub fn empty() -> HostSymbols {
         HostSymbols {
             map: HashMap::new(),
+            search_process: false,
         }
     }
 
@@ -56,7 +62,11 @@ impl HostSymbols {
     }
 
     pub fn lookup(&self, name: &str) -> Option<usize> {
-        self.map.get(name).copied()
+        match self.map.get(name) {
+            Some(&address) => Some(address),
+            None if self.search_process => a0_runtime::find_symbol(name),
+            None => None,
+        }
     }
 }
 

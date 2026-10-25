@@ -103,8 +103,20 @@ fn main() -> int {
 
 - `global` variables start at the zero value of their type (`0`, `0.0`, `false`, `()`, and `()` for
   `any`); one of reference type must be nullable and starts as `null`.
-- `extern fn` declares a C function; its parameter and result types must be `int`, `float`, `bool`
-  or `unit` (the interpreter's FFI rules apply).
+- `extern fn` declares a C function (D47). It takes `int` (`int64_t`), `float` (`double`), `bool`
+  (an `int64_t` 0 or 1), `string` (a NUL-terminated `const char *` to the string's own bytes, so a
+  string with a NUL byte looks shorter) and arrays of `int`, `float` or `bool` (a pointer to the
+  array's 64-bit elements, which the function may change but not add to), and `T?` of the last two
+  (`NULL` for null). It returns `int`, `float`, `bool` (C's `bool`), `unit` or `string`, which is
+  copied (`string?` if it may return `NULL`; for `string`, `NULL` panics). The interpreter finds
+  the function in the runtime, in the tables a language registers, or else in the process (the C
+  library, loaded libraries), so `extern fn getenv(string) -> string?;` works in both backends.
+  At most eight parameters (the interpreter's FFI).
+- `extern "a0" fn` declares a function of the runtime (or of a language's runtime library) that
+  takes and returns A0's own values, of any type (`A0String *`, `A0Array *`, structs and closures
+  as pointers to their objects, `any` as its 64-bit word; see `a0rt.h`). It may allocate: its
+  reference arguments stay rooted during the call. The standard library is built on these
+  (`docs/std.md`). Several modules may declare the same C function, with the same signature.
 - The entry point is `fn main() -> int` or `fn main()`; its result is the exit status.
 - Memory management is a per-module choice; `gc` (precise tracing collection) is the only mode so
   far and the default.
@@ -218,6 +230,8 @@ files in dependency order, each after `begin_module`, with its imports already i
   field access. A private item, an unknown one and an unknown module are reported (E1011, E1001
   with a suggestion, E1010).
 - `finish_keeping` returns the module with its diagnostics even when it has errors, for tools.
+- `std` and `std.*` are the standard library's modules (`docs/std.md`): importing one adds it to
+  the program, and the driver never looks for them as files.
 
 ## Text format
 

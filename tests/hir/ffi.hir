@@ -1,0 +1,44 @@
+// C functions that take strings and arrays and return strings: declared, then called directly,
+// from the C library, by the interpreter and by native code alike.
+// expect-stdout: strlen 5
+// expect-stdout: atof 2.5
+// expect-stdout: strtol 42
+// expect-stdout: strstr world
+// expect-stdout: strstr none
+// expect-stdout: getenv missing
+// expect-stdout: PATH set: true
+// expect-stdout: memcpy 1 2 3
+module "ffi";
+
+extern fn strlen(string) -> int;
+extern fn atof(string) -> float;
+extern fn strtol(string, array<int>?, int) -> int;
+extern fn strstr(string, string) -> string?;
+extern fn getenv(string) -> string?;
+extern fn memcpy(array<int>, array<int>, int) -> int;
+
+fn main() -> int {
+  print("strlen " + str(strlen("hello")) + "\n");
+  print("atof " + str(atof("2.5")) + "\n");
+  print("strtol " + str(strtol("42 apples", null<array<int>>, 10)) + "\n");
+  if let found = strstr("hello world", "wor") {
+    print("strstr " + found + "\n");
+  }
+  if let found = strstr("hello", "xyz") {
+    print("strstr " + found + "\n");
+  } else {
+    print("strstr none\n");
+  }
+  if let value = getenv("A0_FFI_TEST_UNSET_VARIABLE") {
+    print("getenv " + value + "\n");
+  } else {
+    print("getenv missing\n");
+  }
+  if let path = getenv("PATH") {
+    print("PATH set: " + str(len(path) > 0) + "\n");
+  }
+  let dst = [0, 0, 0];
+  memcpy(dst, [1, 2, 3], 24);
+  print("memcpy " + str(dst[0]) + " " + str(dst[1]) + " " + str(dst[2]) + "\n");
+  0
+}

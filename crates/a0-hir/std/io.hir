@@ -1,0 +1,33 @@
+// Standard input and output.
+module "std.io";
+
+extern "a0" fn a0_std_read_line() -> string?;
+extern "a0" fn a0_std_read_all() -> string;
+extern fn a0_rt_flush();
+
+// The next line of standard input without its line ending, or null at the end of the input.
+fn read_line() -> string? {
+  a0_std_read_line()
+}
+
+// The rest of standard input.
+fn read_all() -> string {
+  a0_std_read_all()
+}
+
+fn write(text: string) {
+  print(text)
+}
+
+fn write_line(text: string) {
+  print(text + "\n")
+}
+
+// Writes to standard error (after what was written to standard output).
+fn write_error(text: string) {
+  eprint(text)
+}
+
+fn flush() {
+  a0_rt_flush()
+}

@@ -1,4 +1,5 @@
 /* The runtime's symbol table, used by the interpreter to resolve `extern func` declarations. */
+#define _GNU_SOURCE /* RTLD_DEFAULT */
 #include "a0rt.h"
 
 #include <math.h>
@@ -71,6 +72,7 @@ const A0Symbol a0_rt_symbols[] = {
     SYM(a0_string_print),
     SYM(a0_string_eprint),
     SYM(a0_string_panic),
+    SYM(a0_string_from_c),
     /* arrays */
     SYM(a0_array_new),
     SYM(a0_array_len),
@@ -86,6 +88,42 @@ const A0Symbol a0_rt_symbols[] = {
     SYM(a0_map_set),
     SYM(a0_map_remove),
     SYM(a0_map_keys),
+    /* the standard library (std.c) */
+    SYM(a0_std_args),
+    SYM(a0_std_bytes),
+    SYM(a0_std_change_case),
+    SYM(a0_std_ends_with),
+    SYM(a0_std_error),
+    SYM(a0_std_failed),
+    SYM(a0_std_find),
+    SYM(a0_std_find_last),
+    SYM(a0_std_fixed),
+    SYM(a0_std_format_time),
+    SYM(a0_std_from_byte),
+    SYM(a0_std_from_bytes),
+    SYM(a0_std_from_code_point),
+    SYM(a0_std_join),
+    SYM(a0_std_lines),
+    SYM(a0_std_list_dir),
+    SYM(a0_std_monotonic),
+    SYM(a0_std_now),
+    SYM(a0_std_parse_float),
+    SYM(a0_std_parse_int),
+    SYM(a0_std_path_kind),
+    SYM(a0_std_random),
+    SYM(a0_std_random_int),
+    SYM(a0_std_read_all),
+    SYM(a0_std_read_file),
+    SYM(a0_std_read_line),
+    SYM(a0_std_remove),
+    SYM(a0_std_repeat),
+    SYM(a0_std_replace),
+    SYM(a0_std_seed),
+    SYM(a0_std_sleep),
+    SYM(a0_std_split),
+    SYM(a0_std_starts_with),
+    SYM(a0_std_trim),
+    SYM(a0_std_write_file),
     /* C math library */
     SYM(sin),
     SYM(cos),
@@ -127,3 +165,28 @@ const A0Symbol a0_rt_symbols[] = {
     SYM(exit),
     {NULL, NULL},
 };
+
+/* Any other C function the process can call: one exported by the executable or a library it has
+ * loaded (the C library, for one). Only the interpreter needs this, so native programs never link
+ * it. */
+#ifdef _WIN32
+#include <windows.h>
+#include <psapi.h>
+
+void *a0_rt_find_symbol(const char *name) {
+    HMODULE modules[512];
+    DWORD needed = 0;
+    if (!K32EnumProcessModules(GetCurrentProcess(), modules, sizeof modules, &needed)) return NULL;
+    size_t count = needed / sizeof(HMODULE);
+    if (count > sizeof modules / sizeof modules[0]) count = sizeof modules / sizeof modules[0];
+    for (size_t i = 0; i < count; i++) {
+        FARPROC p = GetProcAddress(modules[i], name);
+        if (p != NULL) return (void *)p;
+    }
+    return NULL;
+}
+#else
+#include <dlfcn.h>
+
+void *a0_rt_find_symbol(const char *name) { return dlsym(RTLD_DEFAULT, name); }
+#endif

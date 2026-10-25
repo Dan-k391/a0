@@ -1,0 +1,10 @@
+$ minnow run no_std_module.mn
+--- stderr
+error[E1010]: the standard library has no module `std.files`
+ --> no_std_module.mn:1:8
+  |
+1 | import std.files;
+  |        ^^^^^^^^^ not a module of the standard library
+  |
+  = note: its modules are std, std.io, std.fs, std.env, std.time, std.math, std.str
+--- exit 1

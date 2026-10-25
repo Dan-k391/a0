@@ -8,6 +8,14 @@ APIs. `docs/milestones.md` has the details of each step, with measurements.
 
 ### Added
 
+- **A standard library** for every language (`docs/std.md`): `std.io` (standard input and
+  output), `std.fs` (files and directories), `std.env` (arguments, environment variables),
+  `std.time`, `std.math` (the C library's functions, random numbers) and `std.str` (searching,
+  splitting, joining, trimming, parsing numbers, bytes and UTF-8), returning `std.Result` for what
+  can fail. It is HIR over runtime functions, added to a program only when imported.
+- **C functions that take strings and arrays**: `extern fn getenv(string) -> string?;` just works,
+  interpreted and native; the interpreter finds C library functions without registering them.
+  `extern "a0" fn` declares runtime functions that take and return A0's own values.
 - **Modules**: programs of several files, with imports found through the grammar (`@import`),
   visibility (`set_public`, Minnow's `pub`), qualified names in the IR and stack traces, errors for
   missing modules, private items and import cycles, and the language server analyzing a program's

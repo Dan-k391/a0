@@ -142,6 +142,9 @@ typedef struct A0Symbol {
 
 /* The runtime's own functions plus common C library functions (math, memory, character I/O). */
 extern const A0Symbol a0_rt_symbols[];
+/* The address of a C function exported by the executable or a library loaded into the process, or
+ * NULL. For the interpreter, after the tables. */
+void *a0_rt_find_symbol(const char *name);
 
 /* ---- FFI ---------------------------------------------------------------------------------- */
 
@@ -260,6 +263,8 @@ A0String *a0_string_from_bool(int64_t value);
 void a0_string_print(A0String *s);
 void a0_string_eprint(A0String *s);
 A0_NORETURN void a0_string_panic(A0String *message, uint64_t loc, void *frame);
+/* A copy of the NUL-terminated string a C function returned. NULL is null, or fails if `required`. */
+A0String *a0_string_from_c(const char *s, int64_t required, uint64_t loc, void *frame);
 
 /* ---- Arrays ------------------------------------------------------------------------------------ *
  * Elements are 64-bit words traced as `elem_kind` (A0_WORD_*). */
@@ -297,6 +302,45 @@ A0Array *a0_map_keys(A0Map *m);
 
 /* A null reference where the runtime needed an object. */
 A0_NORETURN void a0_panic_null(void);
+
+/* ---- The standard library's C side (std.c), declared by crates/a0-hir/std ---------------------- *
+ * Functions that can fail return NULL or 0 and leave a message for a0_std_error; the parsers also
+ * set the flag a0_std_failed reads. Booleans are 0 or 1. */
+A0String *a0_std_error(void);
+int64_t a0_std_failed(void);
+A0String *a0_std_read_line(void);
+A0String *a0_std_read_all(void);
+A0String *a0_std_read_file(A0String *path);
+int64_t a0_std_write_file(A0String *path, A0String *text, int64_t append);
+int64_t a0_std_path_kind(A0String *path);
+int64_t a0_std_remove(A0String *path);
+A0Array *a0_std_list_dir(A0String *path);
+A0Array *a0_std_args(void);
+double a0_std_now(void);
+double a0_std_monotonic(void);
+void a0_std_sleep(double seconds);
+A0String *a0_std_format_time(double seconds);
+void a0_std_seed(int64_t seed);
+double a0_std_random(void);
+int64_t a0_std_random_int(int64_t low, int64_t high);
+int64_t a0_std_find(A0String *s, A0String *part, int64_t from);
+int64_t a0_std_find_last(A0String *s, A0String *part);
+int64_t a0_std_starts_with(A0String *s, A0String *prefix);
+int64_t a0_std_ends_with(A0String *s, A0String *suffix);
+A0String *a0_std_replace(A0String *s, A0String *from, A0String *to);
+A0Array *a0_std_split(A0String *s, A0String *separator);
+A0Array *a0_std_lines(A0String *s);
+A0String *a0_std_join(A0Array *parts, A0String *separator);
+A0String *a0_std_trim(A0String *s, int64_t sides);
+A0String *a0_std_change_case(A0String *s, int64_t upper);
+A0String *a0_std_repeat(A0String *s, int64_t count);
+int64_t a0_std_parse_int(A0String *s);
+double a0_std_parse_float(A0String *s);
+A0String *a0_std_fixed(double x, int64_t decimals);
+A0String *a0_std_from_byte(int64_t byte);
+A0Array *a0_std_bytes(A0String *s);
+A0String *a0_std_from_bytes(A0Array *bytes);
+A0String *a0_std_from_code_point(int64_t c);
 
 #ifdef __cplusplus
 }

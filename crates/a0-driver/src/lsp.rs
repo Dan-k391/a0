@@ -776,8 +776,24 @@ impl Server<'_> {
         let Some(t) = index.token_at(offset) else {
             return Json::Null;
         };
+        let token = index.token(t);
         let Some(&s) = index.targets(t).first() else {
-            return Json::Null;
+            // Not declared in this file: another module's item, or the standard library's.
+            let item = doc
+                .hir
+                .as_ref()
+                .and_then(|m| Some((m, referenced_item(m, doc.source, offset)?)));
+            let Some((m, item)) = item else {
+                return Json::Null;
+            };
+            let value = format!("```{}\n{}\n```", self.lang.name, m.item_signature(item));
+            return Json::object([
+                (
+                    "contents",
+                    Json::object([("kind", "markdown".into()), ("value", value.into())]),
+                ),
+                ("range", doc.lines.range(&doc.text, token.start, token.end)),
+            ]);
         };
         let name = index.symbol_name(s);
         let kind = index.symbol_kind(s);
@@ -790,7 +806,6 @@ impl Server<'_> {
         if let Some(ty) = doc.hir.as_ref().and_then(|m| hir_type(m, doc, index, s)) {
             value.push_str(&format!(": `{ty}`"));
         }
-        let token = index.token(t);
         Json::object([
             (
                 "contents",
@@ -804,6 +819,11 @@ impl Server<'_> {
 /// Where the item that the innermost expression around `offset` (in file `source`) refers to is
 /// declared: the function it calls, the struct it builds, the global it reads.
 fn referenced_item_span(m: &HirModule, source: SourceId, offset: u32) -> Option<Span> {
+    m.item_span(referenced_item(m, source, offset)?)
+}
+
+/// The item the innermost expression around `offset` (in file `source`) refers to.
+fn referenced_item(m: &HirModule, source: SourceId, offset: u32) -> Option<Item> {
     let mut best: Option<(u32, Item)> = None;
     for e in 0..m.expr_count() {
         let e = a0_hir::ExprId(e);
@@ -816,7 +836,7 @@ fn referenced_item_span(m: &HirModule, source: SourceId, offset: u32) -> Option<
             best = Some((span.len(), item));
         }
     }
-    best.and_then(|(_, item)| m.item_span(item))
+    best.map(|(_, item)| item)
 }
 
 /// The file a `file:` URI names (`file:///D:/a0/x.mn` is `D:/a0/x.mn`, `file:///home/x.mn` is

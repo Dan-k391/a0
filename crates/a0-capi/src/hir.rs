@@ -686,6 +686,31 @@ pub unsafe extern "C" fn a0_hir_declare_extern(
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn a0_hir_declare_extern_abi(
+    b: *mut A0HirBuilder,
+    name: *const c_char,
+    len: usize,
+    params: *const u32,
+    count: usize,
+    ret: u32,
+    abi: *const c_char,
+    abi_len: usize,
+) -> u32 {
+    let (name, abi) = unsafe { (text(name, len), text(abi, abi_len)) };
+    unsafe {
+        with(b, |h| {
+            let params = h.ts(items(params, count))?;
+            let ret = h.t(ret)?;
+            let Some(abi) = a0_hir::Abi::from_name(&abi) else {
+                h.fail(format!("{abi} is not an ABI (\"C\" or \"a0\")"));
+                return None;
+            };
+            Some(h.b.declare_extern_abi(&name, &params, ret, abi).0)
+        })
+    }
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn a0_hir_declare_function(
     b: *mut A0HirBuilder,
     name: *const c_char,

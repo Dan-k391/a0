@@ -51,7 +51,7 @@ impl HirBuilder {
 
     /// Lets the current module refer to the public items of module `name` as `alias.item`.
     pub fn import_module(&mut self, name: &str, alias: &str) {
-        let Some(target) = self.lookup_module(name) else {
+        let Some(target) = self.lookup_module(name).or_else(|| self.load_std(name)) else {
             self.problem(
                 &Problem::new(code::UNKNOWN_MODULE, format!("unknown module `{name}`"))
                     .label("no module of this name"),
@@ -74,7 +74,7 @@ impl HirBuilder {
     /// Imports the public item `name` of module `module` into the current module, where it is
     /// then known by its name alone.
     pub fn import_item(&mut self, module: &str, name: &str) {
-        let Some(target) = self.lookup_module(module) else {
+        let Some(target) = self.lookup_module(module).or_else(|| self.load_std(module)) else {
             self.problem(
                 &Problem::new(code::UNKNOWN_MODULE, format!("unknown module `{module}`"))
                     .label("no module of this name"),

@@ -196,9 +196,19 @@ fn type_errors_are_reported_with_locations() {
             "`main` returns `int`",
         ),
         (
-            "extern fn f(string);\nfn main() -> int { 0 }",
+            "extern fn f(array<string>);\nfn main() -> int { 0 }",
             "hir.builder",
-            "externs take int, float, bool or unit",
+            "C functions take int, float, bool, strings and arrays of int, float or bool",
+        ),
+        (
+            "extern fn f() -> array<int>;\nfn main() -> int { 0 }",
+            "hir.builder",
+            "C functions return int, float, bool, unit or a string",
+        ),
+        (
+            "extern \"cobol\" fn f();\nfn main() -> int { 0 }",
+            "hir.text",
+            "unknown ABI",
         ),
     ];
     let mut failures = Vec::new();
@@ -561,4 +571,50 @@ fn modules_have_their_own_names_and_hide_private_items() {
             "E1001 module `lib` has no public `hiden`",
         ]
     );
+}
+
+#[test]
+fn the_standard_library_loads_on_import_and_round_trips() {
+    let mut b = HirBuilder::new("program");
+    b.begin_module("main", true);
+    for (i, name) in a0_hir::std_modules().into_iter().enumerate() {
+        b.import_module(name, &format!("m{i}"));
+    }
+    // Importing again, or a module a loaded one used, loads nothing new.
+    b.import_item("std", "Result");
+    let main = b.declare_function("main", &[], &[], TypeId::INT);
+    let body = b.function_body(main);
+    b.begin_body(body);
+    let text = b.string("a,b");
+    let comma = b.string(",");
+    let call = b.call_member("m6", "split", &[text, comma]);
+    let ty = b.fresh_type();
+    let parts = b.let_named("parts", ty, call);
+    let zero = b.int(0);
+    let root = b.block(&[parts], Some(zero));
+    b.end_body();
+    b.set_root(body, root);
+    let m = b.finish().unwrap_or_else(|d| panic!("{}", d.summary()));
+    assert_eq!(
+        m.func_name(
+            m.lookup_value("std.str.split")
+                .and_then(|i| match i {
+                    Item::Func(f) => Some(f),
+                    _ => None,
+                })
+                .unwrap()
+        ),
+        "std.str.split"
+    );
+    let text = print_module(&m);
+    let again = print_module(&parse_ok(&text));
+    assert_eq!(text, again);
+    // The library's C functions are private to it.
+    let mut b = HirBuilder::new("program");
+    b.import_module("std.str", "str");
+    let _ = b.member("str", "a0_std_find");
+    let Err(err) = b.finish() else {
+        panic!("a private C function was reachable");
+    };
+    assert!(err.summary().contains("private"), "{}", err.summary());
 }

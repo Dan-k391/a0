@@ -1,0 +1,169 @@
+// Operations on strings, which are byte strings (usually UTF-8): positions and lengths are in bytes.
+module "std.str";
+
+extern "a0" fn a0_std_find(string, string, int) -> int;
+extern "a0" fn a0_std_find_last(string, string) -> int;
+extern "a0" fn a0_std_starts_with(string, string) -> int;
+extern "a0" fn a0_std_ends_with(string, string) -> int;
+extern "a0" fn a0_std_replace(string, string, string) -> string;
+extern "a0" fn a0_std_split(string, string) -> array<string>;
+extern "a0" fn a0_std_lines(string) -> array<string>;
+extern "a0" fn a0_std_join(array<string>, string) -> string;
+extern "a0" fn a0_std_trim(string, int) -> string;
+extern "a0" fn a0_std_change_case(string, int) -> string;
+extern "a0" fn a0_std_repeat(string, int) -> string;
+extern "a0" fn a0_std_parse_int(string) -> int;
+extern "a0" fn a0_std_parse_float(string) -> float;
+extern "a0" fn a0_std_fixed(float, int) -> string;
+extern "a0" fn a0_std_from_byte(int) -> string;
+extern "a0" fn a0_std_from_code_point(int) -> string;
+extern "a0" fn a0_std_bytes(string) -> array<int>;
+extern "a0" fn a0_std_from_bytes(array<int>) -> string;
+extern "a0" fn a0_std_failed() -> int;
+extern "a0" fn a0_std_error() -> string;
+
+// Where `part` first occurs in `s`, or -1.
+fn find(s: string, part: string) -> int {
+  a0_std_find(s, part, 0)
+}
+
+// Where `part` first occurs in `s` at or after `start`, or -1.
+fn find_from(s: string, part: string, start: int) -> int {
+  a0_std_find(s, part, start)
+}
+
+// Where `part` last occurs in `s`, or -1.
+fn find_last(s: string, part: string) -> int {
+  a0_std_find_last(s, part)
+}
+
+fn contains(s: string, part: string) -> bool {
+  a0_std_find(s, part, 0) >= 0
+}
+
+fn starts_with(s: string, prefix: string) -> bool {
+  a0_std_starts_with(s, prefix) == 1
+}
+
+fn ends_with(s: string, suffix: string) -> bool {
+  a0_std_ends_with(s, suffix) == 1
+}
+
+// The bytes from `start` up to (not including) `end`.
+fn slice(s: string, start: int, end: int) -> string {
+  substr(s, start, end - start)
+}
+
+// `s` with every `from` replaced by `to`.
+fn replace(s: string, from: string, to: string) -> string {
+  a0_std_replace(s, from, to)
+}
+
+// The pieces of `s` between occurrences of `separator` (which must not be empty).
+fn split(s: string, separator: string) -> array<string> {
+  if len(separator) == 0 {
+    panic("std.str.split: the separator is empty")
+  }
+  a0_std_split(s, separator)
+}
+
+// The words of `s`: the pieces between runs of whitespace.
+fn words(s: string) -> array<string> {
+  a0_std_split(s, "")
+}
+
+// The lines of `s`, without their line endings.
+fn lines(s: string) -> array<string> {
+  a0_std_lines(s)
+}
+
+fn join(parts: array<string>, separator: string) -> string {
+  a0_std_join(parts, separator)
+}
+
+// `s` without whitespace at its start and end.
+fn trim(s: string) -> string {
+  a0_std_trim(s, 3)
+}
+
+fn trim_start(s: string) -> string {
+  a0_std_trim(s, 1)
+}
+
+fn trim_end(s: string) -> string {
+  a0_std_trim(s, 2)
+}
+
+// ASCII letters in upper case.
+fn upper(s: string) -> string {
+  a0_std_change_case(s, 1)
+}
+
+// ASCII letters in lower case.
+fn lower(s: string) -> string {
+  a0_std_change_case(s, 0)
+}
+
+fn repeat(s: string, count: int) -> string {
+  a0_std_repeat(s, count)
+}
+
+// A decimal integer such as `-42` (surrounding whitespace is allowed).
+fn parse_int(s: string) -> `std.Result`<int, string> {
+  let value = a0_std_parse_int(s);
+  if a0_std_failed() == 1 {
+    `std.Result`::Err(a0_std_error())
+  } else {
+    `std.Result`::Ok(value)
+  }
+}
+
+// A decimal number such as `2.5e-3` (surrounding whitespace is allowed).
+fn parse_float(s: string) -> `std.Result`<float, string> {
+  let value = a0_std_parse_float(s);
+  if a0_std_failed() == 1 {
+    `std.Result`::Err(a0_std_error())
+  } else {
+    `std.Result`::Ok(value)
+  }
+}
+
+// `x` with `decimals` digits after the point: `fixed(3.14159, 2)` is `3.14`.
+fn fixed(x: float, decimals: int) -> string {
+  a0_std_fixed(x, decimals)
+}
+
+// The one-byte string of `byte`.
+fn from_byte(byte: int) -> string {
+  a0_std_from_byte(byte)
+}
+
+// The UTF-8 encoding of a Unicode code point.
+fn from_code_point(c: int) -> string {
+  a0_std_from_code_point(c)
+}
+
+fn bytes(s: string) -> array<int> {
+  a0_std_bytes(s)
+}
+
+fn from_bytes(bytes: array<int>) -> string {
+  a0_std_from_bytes(bytes)
+}
+
+// Classes of ASCII bytes, for scanners.
+fn is_digit(b: int) -> bool {
+  b >= 48 && b <= 57
+}
+
+fn is_alpha(b: int) -> bool {
+  b >= 65 && b <= 90 || b >= 97 && b <= 122
+}
+
+fn is_alnum(b: int) -> bool {
+  is_digit(b) || is_alpha(b)
+}
+
+fn is_space(b: int) -> bool {
+  b == 32 || b >= 9 && b <= 13
+}

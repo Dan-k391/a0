@@ -1,0 +1,14 @@
+// A C function declared to return a string that returns NULL fails where it was called.
+// expect-stdout: before
+// expect-stderr: panic: a C function returned NULL for a string
+// expect-stderr:     at main (tests/hir/ffi_null.hir:12:9)
+// expect-exit: 101
+module "ffi_null";
+
+extern fn getenv(string) -> string;
+
+fn main() -> int {
+  print("before\n");
+  print(getenv("A0_FFI_TEST_UNSET_VARIABLE"));
+  0
+}

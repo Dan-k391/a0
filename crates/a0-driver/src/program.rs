@@ -4,7 +4,8 @@
 //! turn, and every file is compiled in dependency order into one HIR builder, each into a module of
 //! its own: the root file's names stay as they are, and another file's are `module.item`. A module
 //! name is resolved from the root file's directory (`text.json` is `text/json.<ext>` there); a
-//! string path from the importing file's. Imports may not form a cycle.
+//! string path from the importing file's. Imports may not form a cycle. Modules named `std` or
+//! `std.*` are the standard library's (`a0_hir::std_modules`), never files.
 
 use std::collections::HashMap;
 use std::path::{Component, Path, PathBuf};
@@ -26,6 +27,8 @@ pub struct ProgramFile {
     pub tree: SyntaxTree,
     /// Its imports, each with the index of the file it imports.
     pub imports: Vec<(Import, usize)>,
+    /// Its imports of the standard library's modules.
+    pub library: Vec<Import>,
 }
 
 /// The files of a program, in the order they are compiled: every file after the files it imports,
@@ -92,7 +95,25 @@ pub fn load(
             .map(Path::to_path_buf)
             .unwrap_or_default();
         let mut imports = Vec::new();
+        let mut library = Vec::new();
         for import in a0_syntax::imports(grammar, &tree) {
+            if !import.literal && a0_hir::is_std_module(&import.module) {
+                library.push(import);
+                continue;
+            }
+            if !import.literal && import.module.starts_with("std.") {
+                let modules = a0_hir::std_modules().join(", ");
+                diags.push(
+                    Diagnostic::error(
+                        code::UNKNOWN_MODULE,
+                        &format!("the standard library has no module `{}`", import.module),
+                    )
+                    .with_span(import.path_span)
+                    .with_primary_label("not a module of the standard library")
+                    .with_note(&format!("its modules are {modules}")),
+                );
+                continue;
+            }
             let (target, shown_target) = if import.literal {
                 let rel = Path::new(&import.file);
                 (normalize(&dir.join(rel)), display(&shown_base.join(rel)))
@@ -131,6 +152,7 @@ pub fn load(
             module,
             tree,
             imports,
+            library,
         });
     }
     if diags.has_errors() {
@@ -248,6 +270,14 @@ pub fn analyze(program: &Program, modules: &Modules, name: &str) -> (HirModule, 
     for (i, file) in program.files.iter().enumerate() {
         b.set_span(None);
         b.begin_module(&file.module, i == root);
+        for import in &file.library {
+            b.set_span(Some(import.span));
+            b.import_module(&import.module, &import.alias);
+            for (item, span) in &import.names {
+                b.set_span(Some(*span));
+                b.import_item(&import.module, item);
+            }
+        }
         for (import, target) in &file.imports {
             let module = &program.files[*target].module;
             b.set_span(Some(import.span));

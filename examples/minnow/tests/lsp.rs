@@ -232,3 +232,36 @@ fn programs_of_several_files_are_analyzed_together() {
     );
     assert_eq!(start(target), (0, 7));
 }
+
+#[test]
+fn the_standard_library_is_known_to_the_server() {
+    let main = "import std.str as s;\n\nfn main() {\n  print(s.find(\"abc\", \"b\"));\n  print(s.nope());\n}\n";
+    let minnow = Path::new(env!("CARGO_BIN_EXE_minnow"));
+    let dir = std::env::temp_dir().join(format!("minnow-lsp-std-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let uri = a0_driver::lsp::path_to_uri(&dir.join("main.mn"));
+    let requests = [
+        ("textDocument/hover", 3, 11),
+        ("textDocument/definition", 3, 11),
+    ];
+    let messages = session(minnow, &uri, main, &requests).unwrap();
+    std::fs::remove_dir_all(&dir).ok();
+    let diagnostics: Vec<String> = messages
+        .iter()
+        .filter(|m| m.get("method").as_str() == Some("textDocument/publishDiagnostics"))
+        .flat_map(|m| m.get("params").get("diagnostics").as_array().to_vec())
+        .map(|d| d.get("message").as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+    assert!(diagnostics[0].starts_with("module `std.str` has no public `nope`"));
+    // The library's functions have types but no place in a file to go to.
+    let hover = result(&messages, 1).get("contents").get("value");
+    assert!(
+        hover
+            .as_str()
+            .unwrap()
+            .contains("fn std.str.find(s: string, part: string) -> int"),
+        "{hover:?}"
+    );
+    assert!(result(&messages, 2).as_array().is_empty(), "{messages:?}");
+}

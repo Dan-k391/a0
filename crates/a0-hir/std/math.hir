@@ -1,0 +1,101 @@
+// Mathematics on floats (the C library's functions) and ints, and random numbers.
+module "std.math";
+
+extern fn sqrt(float) -> float;
+extern fn cbrt(float) -> float;
+extern fn exp(float) -> float;
+extern fn log(float) -> float;
+extern fn log2(float) -> float;
+extern fn log10(float) -> float;
+extern fn pow(float, float) -> float;
+extern fn sin(float) -> float;
+extern fn cos(float) -> float;
+extern fn tan(float) -> float;
+extern fn asin(float) -> float;
+extern fn acos(float) -> float;
+extern fn atan(float) -> float;
+extern fn atan2(float, float) -> float;
+extern fn sinh(float) -> float;
+extern fn cosh(float) -> float;
+extern fn tanh(float) -> float;
+extern fn hypot(float, float) -> float;
+extern fn floor(float) -> float;
+extern fn ceil(float) -> float;
+extern fn round(float) -> float;
+extern fn trunc(float) -> float;
+extern fn fmod(float, float) -> float;
+extern fn fabs(float) -> float;
+extern fn a0_std_seed(int);
+extern fn a0_std_random() -> float;
+extern fn a0_std_random_int(int, int) -> int;
+
+fn pi() -> float {
+  3.141592653589793
+}
+
+fn e() -> float {
+  2.718281828459045
+}
+
+fn inf() -> float {
+  1.0 / 0.0
+}
+
+fn nan() -> float {
+  0.0 / 0.0
+}
+
+fn is_nan(x: float) -> bool {
+  x != x
+}
+
+fn is_finite(x: float) -> bool {
+  x == x && x != 1.0 / 0.0 && x != -1.0 / 0.0
+}
+
+fn abs(x: float) -> float {
+  fabs(x)
+}
+
+fn min(a: float, b: float) -> float {
+  if a < b { a } else { b }
+}
+
+fn max(a: float, b: float) -> float {
+  if a > b { a } else { b }
+}
+
+fn abs_int(x: int) -> int {
+  if x < 0 { -x } else { x }
+}
+
+fn min_int(a: int, b: int) -> int {
+  if a < b { a } else { b }
+}
+
+fn max_int(a: int, b: int) -> int {
+  if a > b { a } else { b }
+}
+
+fn clamp(x: float, low: float, high: float) -> float {
+  if x < low { low } else { if x > high { high } else { x } }
+}
+
+fn clamp_int(x: int, low: int, high: int) -> int {
+  if x < low { low } else { if x > high { high } else { x } }
+}
+
+// Starts the random numbers over from `seed`; without a seed, every run gets the same numbers.
+fn seed(seed: int) {
+  a0_std_seed(seed)
+}
+
+// A random float in [0, 1).
+fn random() -> float {
+  a0_std_random()
+}
+
+// A random int in [low, high].
+fn random_int(low: int, high: int) -> int {
+  a0_std_random_int(low, high)
+}

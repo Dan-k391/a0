@@ -52,10 +52,14 @@ pub(crate) fn monomorphize(m: &HirModule) -> Result<Option<HirModule>, Diagnosti
             Item::Extern(x) => {
                 let def = &m.externs[x.index()];
                 let id = ExternId(mono.out.externs.len() as u32);
+                let none = Subst::default();
+                let params = def.params.iter().map(|&t| mono.ty(t, &none)).collect();
+                let ret = mono.ty(def.ret, &none);
                 mono.out.externs.push(ExternDef {
                     name: def.name.clone(),
-                    params: def.params.clone(),
-                    ret: def.ret,
+                    params,
+                    ret,
+                    abi: def.abi,
                     span: def.span,
                 });
                 mono.register_value(&def.name, Item::Extern(id));

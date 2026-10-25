@@ -19,7 +19,14 @@ pub fn print_module(m: &HirModule) -> String {
     let is_type = |i: &&Item| matches!(i, Item::Struct(_) | Item::Enum(_));
     let types = m.items().iter().filter(is_type);
     let rest = m.items().iter().filter(|i| !is_type(i));
+    // Modules may declare the same C function; the text declares it once.
+    let mut externs = std::collections::HashSet::new();
     for item in types.chain(rest) {
+        if let Item::Extern(x) = item
+            && !externs.insert(m.extern_name(*x))
+        {
+            continue;
+        }
         p.out.push('\n');
         p.item(*item);
     }
@@ -141,9 +148,13 @@ impl Printer<'_> {
             Item::Extern(x) => {
                 let def = &m.externs[x.index()];
                 let ps: Vec<String> = def.params.iter().map(|&t| self.ty(t)).collect();
+                let abi = match def.abi {
+                    Abi::C => String::new(),
+                    abi => format!("\"{}\" ", abi.name()),
+                };
                 let _ = writeln!(
                     self.out,
-                    "extern fn {}({}){};",
+                    "extern {abi}fn {}({}){};",
                     ident(&def.name),
                     ps.join(", "),
                     self.ret(def.ret)

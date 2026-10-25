@@ -2,25 +2,30 @@
 //! the collector running on every allocation, and checks compile errors.
 //!
 //! Programs state what they expect in comments: `// expect: <line>` for each line of stdout,
-//! `// expect-stderr: <line>` and `// expect-exit: <code>`.
+//! `// expect-stderr: <line>` and `// expect-exit: <code>`; `// stdin: <line>` for each line of
+//! their standard input and `// args: <arguments>`. `A0_TEST_OUT` names a directory of their own
+//! to write files in.
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
 use a0_diag::SourceMap;
 
-/// Runs a program, killing it after a minute so that a collector bug fails the test instead of
-/// hanging it.
-fn run(cmd: &mut Command) -> Output {
-    use std::io::Read;
+/// Runs a program with `stdin` as its input, killing it after a minute so that a collector bug
+/// fails the test instead of hanging it.
+fn run(cmd: &mut Command, stdin: &str) -> Output {
+    use std::io::{Read, Write};
     use std::process::Stdio;
     use std::time::{Duration, Instant};
     let mut child = cmd
-        .stdin(Stdio::null())
+        .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
         .unwrap();
+    let mut input = child.stdin.take().unwrap();
+    let text = stdin.to_string();
+    std::thread::spawn(move || input.write_all(text.as_bytes()).ok());
     let mut out = child.stdout.take().unwrap();
     let mut err = child.stderr.take().unwrap();
     let stdout = std::thread::spawn(move || {
@@ -69,6 +74,34 @@ fn programs() -> Vec<PathBuf> {
     files
 }
 
+/// What a program reads from standard input and its arguments.
+fn inputs(file: &Path) -> (String, Vec<String>) {
+    let text = std::fs::read_to_string(file).unwrap().replace("\r\n", "\n");
+    let (mut stdin, mut args) = (String::new(), Vec::new());
+    for line in text.lines() {
+        if let Some(rest) = line.strip_prefix("// stdin: ") {
+            stdin.push_str(rest);
+            stdin.push('\n');
+        } else if let Some(rest) = line.strip_prefix("// args: ") {
+            args.extend(rest.split_whitespace().map(str::to_string));
+        }
+    }
+    (stdin, args)
+}
+
+/// A directory of its own for each run of a program (modes run at the same time).
+fn scratch(file: &Path, mode: &str) -> PathBuf {
+    let name = format!(
+        "minnow-out-{}-{}-{}",
+        file.file_stem().unwrap().to_string_lossy(),
+        mode.replace([' ', ','], "-"),
+        std::process::id()
+    );
+    let dir = std::env::temp_dir().join(name);
+    std::fs::create_dir_all(&dir).unwrap();
+    dir
+}
+
 /// Compares a run with the program's expectations, returning a failure message.
 fn check(file: &Path, out: &Output, mode: &str) -> Option<String> {
     let text = std::fs::read_to_string(file).unwrap().replace("\r\n", "\n");
@@ -110,15 +143,21 @@ fn check_all(mode: &str, run_one: &dyn Fn(&Path) -> Output) {
 fn interpreted(mode: &str, opt: &str, stress: bool) {
     check_all(mode, &|f| {
         // Run where the program is, so that stack traces name it as its expectations do.
+        let (stdin, args) = inputs(f);
+        let out = scratch(f, mode);
         let mut cmd = Command::new(env!("CARGO_BIN_EXE_minnow"));
         cmd.current_dir(f.parent().unwrap())
             .arg("run")
             .arg(f.file_name().unwrap())
-            .env("A0_OPT", opt);
+            .args(&args)
+            .env("A0_OPT", opt)
+            .env("A0_TEST_OUT", &out);
         if stress {
             cmd.env("A0_GC_STRESS", "1");
         }
-        run(&mut cmd)
+        let output = run(&mut cmd, &stdin);
+        std::fs::remove_dir_all(&out).ok();
+        output
     });
 }
 
@@ -131,17 +170,30 @@ fn native(mode: &str, opt: &str) {
             f.file_stem().unwrap().to_string_lossy(),
             std::env::consts::EXE_SUFFIX
         ));
-        let build = run(Command::new(env!("CARGO_BIN_EXE_minnow"))
-            .current_dir(f.parent().unwrap())
-            .arg("build")
-            .arg(f.file_name().unwrap())
-            .arg("-o")
-            .arg(&exe)
-            .env("A0_OPT", opt));
+        let build = run(
+            Command::new(env!("CARGO_BIN_EXE_minnow"))
+                .current_dir(f.parent().unwrap())
+                .arg("build")
+                .arg(f.file_name().unwrap())
+                .arg("-o")
+                .arg(&exe)
+                .env("A0_OPT", opt),
+            "",
+        );
         if !build.status.success() {
             return build;
         }
-        run(&mut Command::new(&exe))
+        let (stdin, args) = inputs(f);
+        let out = scratch(f, mode);
+        let output = run(
+            Command::new(&exe)
+                .current_dir(f.parent().unwrap())
+                .args(&args)
+                .env("A0_TEST_OUT", &out),
+            &stdin,
+        );
+        std::fs::remove_dir_all(&out).ok();
+        output
     });
     std::fs::remove_dir_all(&dir).ok();
 }

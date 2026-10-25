@@ -1,0 +1,62 @@
+// Files and directories. Paths are UTF-8, relative to the working directory.
+module "std.fs";
+
+extern "a0" fn a0_std_read_file(string) -> string?;
+extern "a0" fn a0_std_write_file(string, string, int) -> int;
+extern "a0" fn a0_std_path_kind(string) -> int;
+extern "a0" fn a0_std_remove(string) -> int;
+extern "a0" fn a0_std_list_dir(string) -> array<string>?;
+extern "a0" fn a0_std_error() -> string;
+
+// The contents of a file.
+fn read(path: string) -> `std.Result`<string, string> {
+  if let text = a0_std_read_file(path) {
+    `std.Result`::Ok(text)
+  } else {
+    `std.Result`::Err(a0_std_error())
+  }
+}
+
+// Replaces the contents of a file, creating it if needed.
+fn write(path: string, text: string) -> `std.Result`<bool, string> {
+  if a0_std_write_file(path, text, 0) == 1 {
+    `std.Result`::Ok(true)
+  } else {
+    `std.Result`::Err(a0_std_error())
+  }
+}
+
+// Adds to the end of a file, creating it if needed.
+fn append(path: string, text: string) -> `std.Result`<bool, string> {
+  if a0_std_write_file(path, text, 1) == 1 {
+    `std.Result`::Ok(true)
+  } else {
+    `std.Result`::Err(a0_std_error())
+  }
+}
+
+fn exists(path: string) -> bool {
+  a0_std_path_kind(path) != 0
+}
+
+fn is_dir(path: string) -> bool {
+  a0_std_path_kind(path) == 2
+}
+
+// Removes a file (or an empty directory).
+fn remove(path: string) -> `std.Result`<bool, string> {
+  if a0_std_remove(path) == 1 {
+    `std.Result`::Ok(true)
+  } else {
+    `std.Result`::Err(a0_std_error())
+  }
+}
+
+// The names in a directory, sorted.
+fn list(path: string) -> `std.Result`<array<string>, string> {
+  if let names = a0_std_list_dir(path) {
+    `std.Result`::Ok(names)
+  } else {
+    `std.Result`::Err(a0_std_error())
+  }
+}

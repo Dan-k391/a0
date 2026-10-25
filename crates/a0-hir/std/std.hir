@@ -1,0 +1,5 @@
+// The standard library's core: what the other modules share.
+module "std";
+
+// What an operation that can fail returns: its value, or why it failed.
+enum Result<T, E> { Ok(T), Err(E) }

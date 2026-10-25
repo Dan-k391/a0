@@ -1,0 +1,20 @@
+$ minnow run std_misuse.mn
+--- stderr
+error[E2001]: mismatched types
+ --> std_misuse.mn:4:16
+  |
+4 |   print(s.find(1, "a"));
+  |                ^ expected `string`, found `int`
+
+error[E1001]: module `std.str` has no public `splitt`
+ --> std_misuse.mn:5:11
+  |
+5 |   print(s.splitt("a,b", ","));
+  |           ^^^^^^ help: a public item with a similar name exists: `split`
+
+error[E1011]: `a0_std_find` is private to module `std.str`
+ --> std_misuse.mn:6:11
+  |
+6 |   print(s.a0_std_find("a", "b", 0));
+  |           ^^^^^^^^^^^ private
+--- exit 1

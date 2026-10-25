@@ -38,6 +38,13 @@ The runtime is C, compiled once into a static library that the interpreter calls
 6. If the HIR lowering uses it, declare it in `Runtime::declare` in `crates/a0-hir/src/lower.rs`,
    classify it in `may_gc` there if it allocates, and update `docs/hir.md` if it changes the HIR's
    semantics.
+7. For the standard library (`docs/std.md`), put it in `c/std.c` and call it from the module's
+   `crates/a0-hir/std/<module>.hir` through `extern "a0" fn a0_std_<name>(...)`: it gets and returns
+   A0 values (`A0String *`, `A0Array *`, booleans as `int64_t`), and an `a0_` name keeps it private
+   to the module. Report failures by returning NULL or 0 after `fail(...)`, so the HIR side can
+   return `std.Result::Err(a0_std_error())`. A C library function needs no runtime code at all:
+   declare it with `extern fn` (strings and arrays are passed as pointers, D47). Test it from
+   `examples/minnow/tests/programs/std.mn`.
 
 ## Checks that must pass
 

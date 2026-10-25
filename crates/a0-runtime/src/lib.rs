@@ -15,6 +15,7 @@ pub struct A0Symbol {
 
 unsafe extern "C" {
     static a0_rt_symbols: A0Symbol;
+    fn a0_rt_find_symbol(name: *const c_char) -> *mut c_void;
 
     pub fn a0_rt_init(argc: i32, argv: *mut *mut c_char);
     pub fn a0_rt_exit(code: i32) -> !;
@@ -61,6 +62,7 @@ pub const REPORTS_LOCATION: &[&str] = &[
     "a0_array_set",
     "a0_array_pop",
     "a0_map_get",
+    "a0_string_from_c",
 ];
 
 /// Whether calls to the runtime function `name` pass a location and a frame pointer.
@@ -159,6 +161,14 @@ pub unsafe fn read_symbol_table(table: *const A0Symbol) -> Vec<(String, usize)> 
 /// The runtime's own symbol table: its functions plus common C library functions.
 pub fn runtime_symbols() -> Vec<(String, usize)> {
     unsafe { read_symbol_table(&raw const a0_rt_symbols) }
+}
+
+/// The address of a C function `name` exported by the executable or a library loaded into this
+/// process (the C library, for one).
+pub fn find_symbol(name: &str) -> Option<usize> {
+    let name = std::ffi::CString::new(name).ok()?;
+    let p = unsafe { a0_rt_find_symbol(name.as_ptr()) };
+    (!p.is_null()).then_some(p as usize)
 }
 
 /// Initializes the runtime for an in-process run (the interpreter calls this before `main`).

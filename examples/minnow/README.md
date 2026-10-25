@@ -30,7 +30,9 @@ fn main() {
 
 A program can have several files. `import text.util;` makes the public (`pub`) items of
 `text/util.mn`, found next to the program's main file, available as `util.twice(21)`,
-`util.Point` and `util.Shape::Dot`; `import text.util as u;` names the module `u`.
+`util.Point` and `util.Shape::Dot`; `import text.util as u;` names the module `u`. The standard
+library's modules (`docs/std.md`) are imported the same way: `import std.fs;`, then
+`match fs.read(path) { Ok(text) => ..., Err(e) => ... }`.
 
 ```
 minnow run prog.mn               # interpret

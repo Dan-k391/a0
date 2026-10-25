@@ -286,9 +286,16 @@ A0HirEnum a0_hir_declare_enum(A0HirBuilder *b, const char *name, size_t len,
 uint32_t a0_hir_add_variant(A0HirBuilder *b, A0HirEnum e, const char *name, size_t len,
                             const A0HirType *fields, size_t field_count);
 A0HirGlobal a0_hir_declare_global(A0HirBuilder *b, const char *name, size_t len, A0HirType type);
-/* A C function (the runtime's, or a language's own runtime library). */
+/* A C function: it takes int, float, bool, strings (as const char *) and arrays of int, float or
+ * bool (as pointers to their 64-bit elements), and returns one of the first three, unit or a
+ * string (copied). */
 A0HirExtern a0_hir_declare_extern(A0HirBuilder *b, const char *name, size_t len,
                                   const A0HirType *params, size_t param_count, A0HirType ret);
+/* A C function called through `abi`: "C" (as above) or "a0", a runtime function that takes and
+ * returns A0's own values (A0String *, A0Array *, ...; see a0rt.h). */
+A0HirExtern a0_hir_declare_extern_abi(A0HirBuilder *b, const char *name, size_t len,
+                                      const A0HirType *params, size_t param_count, A0HirType ret,
+                                      const char *abi, size_t abi_len);
 /* A function; give it its signature with a0_hir_set_signature (which may use its type
  * parameters) and its code through a0_hir_function_body. */
 A0HirFunc a0_hir_declare_function(A0HirBuilder *b, const char *name, size_t len,

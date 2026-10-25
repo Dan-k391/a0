@@ -131,6 +131,7 @@ struct Runtime {
     map_set: IrFunc,
     map_remove: IrFunc,
     map_keys: IrFunc,
+    string_from_c: IrFunc,
     exit: IrFunc,
     clock: IrFunc,
 }
@@ -179,6 +180,7 @@ impl Runtime {
             map_set: f("a0_map_set", &[Ptr, I64, I64], None),
             map_remove: f("a0_map_remove", &[Ptr, I64], Some(I64)),
             map_keys: f("a0_map_keys", &[Ptr], Some(Ptr)),
+            string_from_c: f("a0_string_from_c", &[Ptr, I64], Some(Ptr)),
             exit: f("a0_rt_exit", &[I32], None),
             clock: f("a0_clock", &[], Some(F64)),
         }
@@ -448,7 +450,21 @@ impl<'a> Lowerer<'a> {
             self.globals.push(ir);
         }
         for x in &m.externs {
-            let params: Vec<Type> = x.params.iter().filter_map(|&t| self.ir_type(t)).collect();
+            // Modules may declare the same C function (the builder checked their signatures
+            // agree), and a runtime function may be one lowering declares itself.
+            if let Some(f) = self.b.module().lookup_func(&x.name) {
+                self.externs.push(f);
+                continue;
+            }
+            // A C function gets a `bool` as a 64-bit 0 or 1 (`c_argument`).
+            let params: Vec<Type> = x
+                .params
+                .iter()
+                .filter_map(|&t| match (x.abi, t) {
+                    (Abi::C, TypeId::BOOL) => Some(Type::I64),
+                    _ => self.ir_type(t),
+                })
+                .collect();
             let ret = self.ir_type(x.ret);
             let f = self.b.declare_extern(&x.name, &params, ret);
             self.externs.push(f);
@@ -864,6 +880,44 @@ impl<'a> Lowerer<'a> {
         self.b.end_if();
     }
 
+    /// What a C function gets for a value of type `t`: a string's bytes, an array's elements, or
+    /// null for null (see `Abi::C`).
+    fn c_argument(&mut self, v: Value, t: TypeId) -> Value {
+        if t == TypeId::BOOL {
+            return self.b.cast(Opcode::Zext, v, Type::I64);
+        }
+        let inner = self.m.non_null(t);
+        let pointer = |me: &mut Self, v: Value| match me.m.kind(inner) {
+            // `A0String`: the length and the hash, then the bytes, NUL-terminated.
+            TypeKind::String => {
+                let off = me.b.iconst(Type::I64, 16);
+                me.b.ptradd(v, off)
+            }
+            // `A0Array`: the length, the capacity, then the pointer to the elements.
+            _ => {
+                let off = me.b.iconst(Type::I64, 16);
+                let a = me.b.ptradd(v, off);
+                me.b.load(Type::Ptr, a)
+            }
+        };
+        if !matches!(self.m.kind(inner), TypeKind::String | TypeKind::Array(_)) {
+            return v;
+        }
+        if inner == t {
+            return pointer(self, v);
+        }
+        let out = self.b.declare_var("", Type::Ptr);
+        let null = self.b.null();
+        let is_null = self.b.icmp(IntCC::Eq, v, null);
+        self.b.if_(is_null);
+        self.b.set(out, null);
+        self.b.else_();
+        let p = pointer(self, v);
+        self.b.set(out, p);
+        self.b.end_if();
+        self.b.get(out)
+    }
+
     fn load_word(&mut self, base: Value, index: u32) -> Value {
         let off = self.b.iconst(Type::I64, 8 * index as i64);
         let a = self.b.ptradd(base, off);
@@ -1251,15 +1305,31 @@ impl<'a> Lowerer<'a> {
                 self.call_result(r, ty)
             }
             ExprKind::CallExtern(x, args) => {
-                let Some(vs) = self.operands(&args, false) else {
+                // A runtime function may allocate, so its reference arguments stay rooted; a C
+                // function never collects, and gets pointers into the objects.
+                let abi = m.extern_abi(x);
+                let Some(vs) = self.operands(&args, abi == Abi::A0) else {
                     return V::Never;
                 };
-                let ir_args: Vec<Value> = vs
-                    .iter()
-                    .filter_map(|v| if let V::Val(v) = v { Some(*v) } else { None })
-                    .collect();
+                let mut ir_args = Vec::new();
+                for (v, &a) in vs.iter().zip(&args) {
+                    if let V::Val(v) = *v {
+                        ir_args.push(match abi {
+                            Abi::A0 => v,
+                            Abi::C => self.c_argument(v, m.expr_type(a)),
+                        });
+                    }
+                }
                 let r = self.b.call(self.externs[x.index()], &ir_args);
-                self.call_result(r, ty)
+                let string = m.non_null(ty) == TypeId::STRING;
+                match r {
+                    Some(p) if abi == Abi::C && string => {
+                        let required = self.b.iconst(Type::I64, (ty == TypeId::STRING) as i64);
+                        let s = self.b.call(self.rt.string_from_c, &[p, required]);
+                        self.call_result(s, ty)
+                    }
+                    _ => self.call_result(r, ty),
+                }
             }
             ExprKind::CallValue(callee, args) => {
                 let mut all = vec![callee];

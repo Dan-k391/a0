@@ -74,6 +74,9 @@ layer, decision D17). A new crate goes into the table above and into `[workspace
   through the grammar's `@import` rules and compiles every file into one HIR builder, a module
   each. Languages never read files themselves; the language server does the same with open
   documents.
+- The standard library is HIR text (`crates/a0-hir/std/*.hir`) over `extern "a0"` C functions in
+  `crates/a0-runtime/c/std.c` (D48, `docs/std.md`); prefer writing a library function in HIR, and
+  add a builtin to the HIR only for what the library cannot express.
 - Generalize only when two example languages need it (except the IR layers and the default runtime).
 - Rust edition 2024, rustfmt defaults, clippy clean. Comments explain why, not what; match the
   surrounding density. C code: C11, `a0_` prefix for runtime symbols, no global state without a reason.
@@ -113,6 +116,7 @@ layer, decision D17). A new crate goes into the table above and into `[workspace
 |---|---|
 | IR instructions, types, text format, builder, locations and traces | `docs/ir.md` |
 | HIR types, expressions, builtins, text format, lowering | `docs/hir.md` (and `hir.a0g` + `print.rs` together) |
+| The standard library | `docs/std.md` |
 | Grammar DSL (including `@def`/`@scope`) | `docs/grammar.md` |
 | The language server or the editor extension | `docs/editors.md` |
 | Diagnostics: rendering, codes (`a0_diag::codes`), the builder's reporting API | `docs/diagnostics.md` (its code table is tested) |

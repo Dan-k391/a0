@@ -27,20 +27,29 @@ pub fn parse(text: &str, source: SourceId) -> Result<HirModule, Diagnostics> {
     }
     let root = tree.root();
     let name_node = tree.field_named(root, "name").unwrap();
-    let mut p = TextParser {
-        tree: &tree,
-        b: HirBuilder::new(&unquote(tree.text(name_node))),
-        diags: Diagnostics::new(),
-        scopes: Scopes::new(),
-        body: None,
-        extra_scopes: Vec::new(),
-        tparams: Vec::new(),
-    };
-    p.module(root);
-    if p.diags.has_errors() {
-        return Err(p.diags);
+    let mut b = HirBuilder::new(&unquote(tree.text(name_node)));
+    let diags = TextParser::new(&tree, &mut b, true).module(root);
+    if diags.has_errors() {
+        return Err(diags);
     }
-    p.b.finish()
+    b.finish()
+}
+
+/// Adds the items of a module in the text format to the builder's current module, without spans
+/// (the standard library, `stdlib.rs`). Its own items and the prelude's are known by their names;
+/// other modules' by their full names (`` `std.Result` ``). In the text, a C function whose name
+/// starts with `a0_` is private to the module; everything else is public.
+pub(crate) fn include(b: &mut HirBuilder, text: &str) -> Result<(), Diagnostics> {
+    let g = grammar();
+    let (tree, diags) = g.parse(text, SourceId(u32::MAX));
+    if diags.has_errors() {
+        return Err(diags);
+    }
+    let diags = TextParser::new(&tree, b, false).module(tree.root());
+    if diags.has_errors() {
+        return Err(diags);
+    }
+    Ok(())
 }
 
 /// Decodes a string literal (with its quotes).
@@ -77,7 +86,9 @@ type R<T> = Result<T, Abort>;
 
 struct TextParser<'a> {
     tree: &'a SyntaxTree,
-    b: HirBuilder,
+    b: &'a mut HirBuilder,
+    /// Whether what is built gets the spans of the text.
+    spans: bool,
     diags: Diagnostics,
     scopes: Scopes,
     body: Option<BodyId>,
@@ -87,7 +98,33 @@ struct TextParser<'a> {
     tparams: Vec<(String, TypeId)>,
 }
 
-impl TextParser<'_> {
+impl<'a> TextParser<'a> {
+    fn new(tree: &'a SyntaxTree, b: &'a mut HirBuilder, spans: bool) -> TextParser<'a> {
+        TextParser {
+            tree,
+            b,
+            spans,
+            diags: Diagnostics::new(),
+            scopes: Scopes::new(),
+            body: None,
+            extra_scopes: Vec::new(),
+            tparams: Vec::new(),
+        }
+    }
+
+    /// The type a name means here: one of the current module's, or one known by its full name.
+    fn type_item(&self, name: &str) -> Option<Item> {
+        self.b
+            .lookup_type_name(name)
+            .or_else(|| self.b.module().lookup_type(name))
+    }
+
+    fn value_item(&self, name: &str) -> Option<Item> {
+        self.b
+            .lookup_value_name(name)
+            .or_else(|| self.b.module().lookup_value(name))
+    }
+
     fn error<T>(&mut self, node: NodeId, code: &str, message: &str) -> R<T> {
         self.diags
             .push(Diagnostic::error(code, message).with_span(self.tree.span(node)));
@@ -116,7 +153,8 @@ impl TextParser<'_> {
     }
 
     fn at(&mut self, n: NodeId) {
-        self.b.set_span(Some(self.tree.span(n)));
+        let span = self.spans.then(|| self.tree.span(n));
+        self.b.set_span(span);
     }
 
     /// Attributes a declaration to its name, which is what messages point at.
@@ -127,7 +165,8 @@ impl TextParser<'_> {
 
     // ---------------------------------------------------------------- items
 
-    fn module(&mut self, root: NodeId) {
+    /// Builds the items of the module; returns the problems with the text.
+    fn module(mut self, root: NodeId) -> Diagnostics {
         let items: Vec<NodeId> = self
             .tree
             .children(root)
@@ -154,15 +193,24 @@ impl TextParser<'_> {
         let mut funcs = Vec::new();
         for &item in &items {
             self.at(item);
+            if !self.spans {
+                let private = self.kind(item) == "extern_decl"
+                    && self
+                        .field(item, "name")
+                        .is_some_and(|n| self.text(n).starts_with("a0_"));
+                self.b.set_public(!private);
+            }
             let _ = self.declaration(item, &mut funcs);
             self.tparams.clear();
         }
+        self.b.set_public(true);
         // Pass 3: bodies, with their function's type parameters in scope.
         for (f, item) in funcs {
             self.bind_type_params(Item::Func(f));
             let _ = self.function_body(f, item);
             self.tparams.clear();
         }
+        self.diags
     }
 
     fn type_param_names(&self, item: NodeId) -> Vec<String> {
@@ -197,7 +245,7 @@ impl TextParser<'_> {
             .unwrap_or_default();
         match self.kind(item) {
             "struct_decl" => {
-                let Some(Item::Struct(s)) = self.b.module().lookup_type(&name) else {
+                let Some(Item::Struct(s)) = self.type_item(&name) else {
                     return Ok(());
                 };
                 self.bind_type_params(Item::Struct(s));
@@ -211,7 +259,7 @@ impl TextParser<'_> {
                 }
             }
             "enum_decl" => {
-                let Some(Item::Enum(e)) = self.b.module().lookup_type(&name) else {
+                let Some(Item::Enum(e)) = self.type_item(&name) else {
                     return Ok(());
                 };
                 self.bind_type_params(Item::Enum(e));
@@ -238,8 +286,21 @@ impl TextParser<'_> {
                     params.push(self.ty(t)?);
                 }
                 let ret = self.ret(item)?;
+                let abi = match self.field(item, "abi") {
+                    None => Abi::C,
+                    Some(n) => match Abi::from_name(&unquote(self.text(n))) {
+                        Some(abi) => abi,
+                        None => {
+                            return self.error(
+                                n,
+                                "hir.text",
+                                "unknown ABI: externs are \"C\" or \"a0\"",
+                            );
+                        }
+                    },
+                };
                 self.at_name(item);
-                self.b.declare_extern(&name, &params, ret);
+                self.b.declare_extern_abi(&name, &params, ret, abi);
             }
             "fn_decl" => {
                 let tparams = self.type_param_names(item);
@@ -260,8 +321,10 @@ impl TextParser<'_> {
                     .filter(|&c| self.kind(c) == "param")
                     .collect();
                 for (i, p) in params.into_iter().enumerate() {
-                    let span = self.tree.span(self.field(p, "name").unwrap_or(p));
-                    self.b.set_param_span(body, i as u32, span);
+                    if self.spans {
+                        let span = self.tree.span(self.field(p, "name").unwrap_or(p));
+                        self.b.set_param_span(body, i as u32, span);
+                    }
                 }
                 funcs.push((f, item));
             }
@@ -351,7 +414,7 @@ impl TextParser<'_> {
                 }
                 let args = self.type_args(node)?.unwrap_or_default();
                 self.at(node);
-                match self.b.module().lookup_type(&name) {
+                match self.type_item(&name) {
                     Some(Item::Struct(s)) => self.b.struct_type_args(s, &args),
                     Some(Item::Enum(e)) => self.b.enum_type_args(e, &args),
                     _ => {
@@ -588,7 +651,7 @@ impl TextParser<'_> {
                 if let Some(l) = self.lookup_local(&name) {
                     return Ok(self.b.set_local(l, value));
                 }
-                match self.b.module().lookup_value(&name) {
+                match self.value_item(&name) {
                     Some(Item::Global(g)) => Ok(self.b.set_global(g, value)),
                     _ => self.error(
                         target,
@@ -630,7 +693,7 @@ impl TextParser<'_> {
                     self.at(node);
                     return Ok(self.b.builtin(op, &args));
                 }
-                match self.b.module().lookup_value(&name) {
+                match self.value_item(&name) {
                     Some(Item::Func(f)) => {
                         let args = self.args(node)?;
                         self.at(node);
@@ -705,7 +768,7 @@ impl TextParser<'_> {
             "variant_expr" => {
                 let ename = self.text(self.field(node, "enum").unwrap()).to_string();
                 let vname = self.text(self.field(node, "name").unwrap()).to_string();
-                let Some(Item::Enum(e)) = self.b.module().lookup_type(&ename) else {
+                let Some(Item::Enum(e)) = self.type_item(&ename) else {
                     return self.error(
                         node,
                         code::UNKNOWN_TYPE,
@@ -804,7 +867,7 @@ impl TextParser<'_> {
                 }
                 let targs = self.type_args(node)?;
                 self.at(node);
-                match self.b.module().lookup_value(&name) {
+                match self.value_item(&name) {
                     Some(Item::Global(g)) => self.b.global(g),
                     Some(Item::Func(f)) => match targs {
                         Some(t) => self.b.func_generic(f, &t),
@@ -831,7 +894,7 @@ impl TextParser<'_> {
             .find(|&c| self.kind(c) == "new_struct")
         {
             let name = self.text(self.field(s, "name").unwrap()).to_string();
-            let Some(Item::Struct(sid)) = self.b.module().lookup_type(&name) else {
+            let Some(Item::Struct(sid)) = self.type_item(&name) else {
                 return self.error(s, code::UNKNOWN_TYPE, &format!("unknown struct '{name}'"));
             };
             let count = self.b.module().struct_field_count(sid) as usize;
