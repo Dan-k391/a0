@@ -23,7 +23,7 @@ kaleidoscope lsp                          # the language server
 `docs/tutorial.md` builds this crate step by step. It is built on the HIR like Minnow, so the HIR
 builder resolves its names and checks its calls, and the optimizer inlines its user-defined
 operators. Before (when it emitted the core IR itself, with its own scopes) it was 745 lines of Rust
-and grammar; now it is 556, plus the markers the tutorial's listings are cut from.
+and grammar; now it is 579, not counting the markers the tutorial's listings are cut from.
 
 Differences from the tutorial: `putchard` and `printd` write to stdout (the tutorial uses stderr);
 top-level expressions run in order when the program starts instead of being evaluated by a REPL;

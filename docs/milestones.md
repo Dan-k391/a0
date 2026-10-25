@@ -550,6 +550,56 @@ One entry per milestone: what was done, what changed along the way, and open que
 
 - None. The HIR builder and `SyntaxIndex` are not bound yet; D2 says how they would be.
 
+## M17. v0.1: the easy path, end to end
+
+**Done**
+
+- AGENTS.md checked against the decisions: it no longer forbids an optimizer of our own (D27), counts
+  six test modes, states D2's revision and the release workflow; D3's no-optimizer line is marked as
+  changed; the skills follow.
+- `if let x = e { ... } else { ... }` in the HIR (D34): a `T?` is narrowed by binding a new local of
+  type `T` for one branch, with one null test and no flow typing. It has a text form, a by-name helper
+  (`declare_if_let`) and a C binding. Minnow gained `if let` and `while let` (the latter is built
+  from `loop`, `if let` and `break` in Minnow alone) and its programs lost three `!`; Lox's call fast
+  paths use it instead of testing and unwrapping a field.
+- The C API covers the HIR builder: every function, by handle and by name. The C layer checks each
+  handle against the module and reports bad ones, so misuse stays a diagnostic; an `Item` is a kind
+  and a handle, operators and builtins are names, name lists are `A0Str` arrays. The C test program
+  compiles a small language with variables to HIR by name (its unknown names reported by the
+  builder) and builds a struct, `if let` and a closure by handle. A test keeps `a0.h` and the
+  library's exports identical.
+- Kaleidoscope is built on the HIR like Minnow (D35), with the builder's name resolution and the
+  optimizer, and runs in six test modes like the other languages. Lowering skips the frame of a
+  body without references, so its numeric code makes no runtime calls: `fib` runs as fast as from
+  the core IR, a loop that calls a user-defined operator 40% faster.
+
+  | Lines (grammar + Rust) | Before | After |
+  |---|---|---|
+  | Kaleidoscope | 745 | 579 (not counting the tutorial's marker lines) |
+  | Minnow | 705 | 762 (with `if let` and `while let`) |
+  | Lox (with the prelude) | 1675 | 1675 |
+
+- `docs/tutorial.md` builds Kaleidoscope on the HIR in LLVM's chapter order (D36). Every listing is
+  an `ANCHOR` region of the example's code; a test checks that each listing is that code, that the
+  listings together show every line of the compiler, grammar, runtime and command, and that every
+  command shown prints what is shown (`A0_BLESS=1` rewrites them after a change). Chapters add
+  regions instead of changing earlier code; the program as it stands after chapters 3, 4 and 5 was
+  built and run by hand.
+- A newcomer-facing README, a CHANGELOG and the v0.1.0 tag. `build -o name` now adds `.exe` on
+  Windows.
+
+**Changed**
+
+- The HIR's "may be null" errors suggest `if let` instead of a null test, which cannot narrow.
+- Kaleidoscope's unknown names and argument counts are now reported in the builder's words
+  (``unknown name `y` ``, `expected 2 arguments, found 1`); its own rules (operators, precedence,
+  `main`, redefinition) keep their messages. A function declared with `extern` can no longer be
+  defined later in the same program, since it is a C function.
+
+**Open questions**
+
+- None.
+
 ## Overall open questions
 
 None at the moment.

@@ -4,7 +4,7 @@ This tutorial builds Kaleidoscope, the language of [LLVM's tutorial](https://llv
 on A0, in the order of LLVM's chapters: the grammar, code generation, running programs, control
 flow, user-defined operators and mutable variables. The language ends up with an interpreter,
 native executables, an optimizer, error messages with source locations and an editor with
-highlighting, an outline and go-to-definition, in about 470 lines of Rust and 60 of grammar.
+highlighting, an outline and go-to-definition, in about 490 lines of Rust and 70 of grammar.
 
 The finished language is `examples/kaleidoscope`. Every listing below is cut from it, and a test
 (`examples/kaleidoscope/tests/tutorial.rs`) checks that the listings are the code, that together
@@ -1012,7 +1012,7 @@ up in VS Code (`editors/vscode`), Neovim or Helix.
 - **More of the HIR.** Kaleidoscope uses doubles and functions. The HIR also has `int`, `bool`,
   strings, arrays, maps, structs, enums with `match`, generics, closures, nullable references with
   `if let`, and `any` for dynamic typing, all garbage collected. `examples/minnow` is a typed
-  language that uses them (about 700 lines); `examples/lox` is a dynamically typed one.
+  language that uses them (about 760 lines); `examples/lox` is a dynamically typed one.
 - **Tests.** `examples/kaleidoscope/tests` runs every program interpreted, native and under GC stress,
   with the optimizer on and off, checks the compiler's errors, and checks this tutorial.
 - **Other hosts.** A program written in C can build HIR with the same builder (`docs/c-api.md`).
