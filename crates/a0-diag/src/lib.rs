@@ -2,9 +2,14 @@
 //!
 //! Every layer reports problems as [`Diagnostic`]s collected in a [`Diagnostics`] list instead of
 //! panicking or returning ad-hoc error strings. Source text is registered in a [`SourceMap`]; a
-//! [`Span`] is a byte range inside one registered source.
+//! [`Span`] is a byte range inside one registered source. Diagnostics render the way rustc's do
+//! (see [`RenderOptions`]).
+
+mod render;
 
 use std::fmt::Write as _;
+
+pub use render::RenderOptions;
 
 /// Identifies a source registered in a [`SourceMap`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -42,6 +47,7 @@ impl Span {
     }
 }
 
+#[derive(Clone)]
 struct SourceFile {
     name: String,
     text: String,
@@ -50,7 +56,7 @@ struct SourceFile {
 }
 
 /// Owns the text of every source that spans can point into.
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct SourceMap {
     files: Vec<SourceFile>,
 }
@@ -149,25 +155,45 @@ impl Severity {
     }
 }
 
-/// A secondary span with its own message.
+/// A secondary span with its own message: a related location, such as an earlier definition.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Label {
     pub span: Span,
     pub message: String,
 }
 
+/// A change to the source: replace `span` with `text` (insert when the span is empty).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Edit {
+    pub span: Span,
+    pub text: String,
+}
+
+/// A suggested fix: edits that together resolve a diagnostic, which editors offer as a quick fix.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Fix {
+    /// What the fix does, as in "a local with a similar name exists".
+    pub message: String,
+    pub edits: Vec<Edit>,
+}
+
 /// One problem report.
 ///
-/// `code` is a short, stable identifier (for example `syntax.expected` or `ir.type`) that tools can
-/// match on; `message` is the human-readable text.
+/// `code` is a short, stable identifier that tools can match on; `message` is the human-readable
+/// text, and `label` says what is wrong at `span` itself. `labels` point at related locations,
+/// `notes` and `helps` add explanations, and `fixes` suggest edits.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Diagnostic {
     pub severity: Severity,
     pub code: String,
     pub message: String,
     pub span: Option<Span>,
+    /// The text under the primary span.
+    pub label: String,
     pub labels: Vec<Label>,
     pub notes: Vec<String>,
+    pub helps: Vec<String>,
+    pub fixes: Vec<Fix>,
 }
 
 impl Diagnostic {
@@ -177,8 +203,11 @@ impl Diagnostic {
             code: code.to_string(),
             message: message.to_string(),
             span: None,
+            label: String::new(),
             labels: Vec::new(),
             notes: Vec::new(),
+            helps: Vec::new(),
+            fixes: Vec::new(),
         }
     }
 
@@ -200,6 +229,13 @@ impl Diagnostic {
         self
     }
 
+    /// Says what is wrong at the primary span.
+    pub fn with_primary_label(mut self, message: &str) -> Diagnostic {
+        self.label = message.to_string();
+        self
+    }
+
+    /// Points at a related location.
     pub fn with_label(mut self, span: Span, message: &str) -> Diagnostic {
         self.labels.push(Label {
             span,
@@ -213,61 +249,42 @@ impl Diagnostic {
         self
     }
 
+    pub fn with_help(mut self, help: &str) -> Diagnostic {
+        self.helps.push(help.to_string());
+        self
+    }
+
+    /// Suggests replacing `span` with `text`.
+    pub fn with_fix(self, message: &str, span: Span, text: &str) -> Diagnostic {
+        self.with_fix_edits(
+            message,
+            vec![Edit {
+                span,
+                text: text.to_string(),
+            }],
+        )
+    }
+
+    /// Suggests several edits made together.
+    pub fn with_fix_edits(mut self, message: &str, edits: Vec<Edit>) -> Diagnostic {
+        self.fixes.push(Fix {
+            message: message.to_string(),
+            edits,
+        });
+        self
+    }
+
     pub fn is_error(&self) -> bool {
         self.severity == Severity::Error
     }
 
-    /// Renders this diagnostic in the familiar `error[code]: message --> file:line:col` style.
+    /// Renders this diagnostic the way rustc does, without colors.
     pub fn render(&self, sources: &SourceMap) -> String {
-        let mut out = String::new();
-        let _ = write!(out, "{}", self.severity.as_str());
-        if !self.code.is_empty() {
-            let _ = write!(out, "[{}]", self.code);
-        }
-        let _ = writeln!(out, ": {}", self.message);
-        if let Some(span) = self.span {
-            render_snippet(&mut out, sources, span, "");
-        }
-        for label in &self.labels {
-            render_snippet(&mut out, sources, label.span, &label.message);
-        }
-        for note in &self.notes {
-            let _ = writeln!(out, "  = note: {note}");
-        }
-        out
+        self.render_with(sources, &RenderOptions::default())
     }
-}
 
-fn render_snippet(out: &mut String, sources: &SourceMap, span: Span, message: &str) {
-    if span.source.0 >= sources.len() {
-        return;
-    }
-    let (line, col) = sources.line_col(span.source, span.start);
-    let _ = writeln!(out, "  --> {}:{}:{}", sources.name(span.source), line, col);
-    let text = sources.line_text(span.source, line);
-    let gutter = line.to_string().len();
-    let _ = writeln!(out, "{:gutter$} |", "");
-    let _ = writeln!(out, "{line} | {text}");
-    // Underline the part of the span that lies on its first line (at least one caret).
-    let line_chars = text.chars().count() as u32;
-    let start_col = col - 1;
-    let end_line = sources.line(span.source, span.end);
-    let underline = if end_line == line && span.end > span.start {
-        sources.slice(span).chars().count() as u32
-    } else {
-        line_chars.saturating_sub(start_col)
-    }
-    .max(1);
-    let pad: String = text
-        .chars()
-        .take(start_col as usize)
-        .map(|c| if c == '\t' { '\t' } else { ' ' })
-        .collect();
-    let carets = "^".repeat(underline as usize);
-    if message.is_empty() {
-        let _ = writeln!(out, "{:gutter$} | {pad}{carets}", "");
-    } else {
-        let _ = writeln!(out, "{:gutter$} | {pad}{carets} {message}", "");
+    pub fn render_with(&self, sources: &SourceMap, options: &RenderOptions) -> String {
+        render::render(self, sources, options)
     }
 }
 
@@ -334,12 +351,16 @@ impl Diagnostics {
 
     /// Renders all diagnostics, separated by blank lines.
     pub fn render(&self, sources: &SourceMap) -> String {
+        self.render_with(sources, &RenderOptions::default())
+    }
+
+    pub fn render_with(&self, sources: &SourceMap, options: &RenderOptions) -> String {
         let mut out = String::new();
         for (i, d) in self.items.iter().enumerate() {
             if i > 0 {
                 out.push('\n');
             }
-            out.push_str(&d.render(sources));
+            out.push_str(&d.render_with(sources, options));
         }
         out
     }
@@ -388,7 +409,7 @@ mod tests {
         let text = d.render(&sm);
         assert_eq!(
             text,
-            "error[syntax.expected]: expected expression\n  --> main.lox:1:10\n  |\n1 | print 1 +;\n  |          ^\n  = note: an operand must follow '+'\n"
+            "error[syntax.expected]: expected expression\n --> main.lox:1:10\n  |\n1 | print 1 +;\n  |          ^\n  |\n  = note: an operand must follow '+'\n"
         );
     }
 

@@ -2,7 +2,7 @@
 
 use std::process::ExitCode;
 
-use a0_diag::{Diagnostics, SourceMap};
+use a0_diag::{Diagnostics, RenderOptions, SourceMap};
 use a0_ir::Module;
 use a0_native::Target;
 
@@ -100,7 +100,7 @@ fn load(path: &str, sources: &mut SourceMap) -> Result<Module, ExitCode> {
 }
 
 fn report(sources: &SourceMap, diags: &Diagnostics) -> ExitCode {
-    eprint!("{}", diags.render(sources));
+    eprint!("{}", diags.render_with(sources, &RenderOptions::stderr()));
     ExitCode::from(1)
 }
 

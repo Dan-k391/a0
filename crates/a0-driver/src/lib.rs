@@ -28,7 +28,7 @@ use std::io::{BufRead, Write};
 use std::path::Path;
 use std::process::ExitCode;
 
-use a0_diag::{Diagnostics, SourceId, SourceMap, Span};
+use a0_diag::{Diagnostics, RenderOptions, SourceId, SourceMap, Span};
 
 /// What a compiler produces.
 pub enum Program {
@@ -167,7 +167,7 @@ impl Language {
         let program = match (self.compile)(&text, id) {
             Ok(p) => p,
             Err(CompileError::Diagnostics(d)) => {
-                eprint!("{}", d.render(&sources));
+                eprint!("{}", d.render_with(&sources, &RenderOptions::stderr()));
                 return ExitCode::from(self.exit_codes.compile);
             }
             Err(CompileError::Messages(messages)) => {
@@ -239,7 +239,7 @@ impl Language {
     }
 
     fn internal_error(&self, d: &Diagnostics, sources: &SourceMap) -> ExitCode {
-        eprint!("{}", d.render(sources));
+        eprint!("{}", d.render_with(sources, &RenderOptions::stderr()));
         ExitCode::from(self.exit_codes.internal)
     }
 

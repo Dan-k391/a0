@@ -99,13 +99,15 @@ struct Token {
     span: Span,
 }
 
-fn lex(text: &str, source: SourceId) -> Result<Vec<Token>, Diagnostic> {
+fn lex(text: &str, source: SourceId) -> Result<Vec<Token>, Diagnostics> {
     let bytes = text.as_bytes();
     let mut toks = Vec::new();
     let mut i = 0;
     let span = |a: usize, b: usize| Span::new(source, a as u32, b as u32);
     let err = |a: usize, b: usize, msg: &str| {
-        Diagnostic::error("ir.syntax", msg).with_span(Span::new(source, a as u32, b as u32))
+        Diagnostics::from(
+            Diagnostic::error("ir.syntax", msg).with_span(Span::new(source, a as u32, b as u32)),
+        )
     };
     while i < bytes.len() {
         let c = bytes[i];

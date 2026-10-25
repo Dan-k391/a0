@@ -165,7 +165,7 @@ $ a0 parse kaleidoscope.a0g add.k
 $ a0 parse kaleidoscope.a0g broken.k
 (program (error 'def' 'add' '(' 'a' 'b' 'a' '+' 'b' ';'))
 error[syntax.error]: expected ')' in prototype
-  --> broken.k:1:15
+ --> broken.k:1:15
   |
 1 | def add(a b a + b;
   |               ^
@@ -635,7 +635,7 @@ def f(x) x + y;
 ```console
 $ kaleidoscope run undefined.k
 error[hir.type]: unknown name `y`
-  --> undefined.k:1:14
+ --> undefined.k:1:14
   |
 1 | def f(x) x + y;
   |              ^

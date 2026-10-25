@@ -412,3 +412,18 @@ that decreases, a budget of calls per function), so a program that does not comp
 differs is a bug. The generator is part of the test (about 700 lines, no dependency), with its own
 small PRNG. Its first run found a bug: the text format gave an `if let` binding no type until the
 whole `if let` was typed, so a `match` in its body could not find its enum.
+
+## D39. Diagnostics render as rustc's do, colored on terminals, with no dependency
+
+A diagnostic now has a label under its primary span, related labels, notes, helps and suggested
+fixes, and `a0-diag` renders it in rustc's layout: each file it points into is one snippet holding
+every label there (primary `^^^`, others `---`, labels that do not fit on the marker row hanging
+below on `|` connectors), spans over several lines drawn with a track in the margin (`/` when they
+start where the line's code starts), one missing line shown and longer gaps elided with `...`,
+other files under `:::`, long lines cut around what they point at. A fix that replaces the primary
+span with a short text becomes its label (`help: ...: `count``); others are shown as the corrected
+line. We wrote the renderer (about 600 lines) instead of using `annotate-snippets` or `codespan`:
+both would be new dependencies, and the C API and the language server need the same data model,
+which is ours either way. Colors are ANSI escapes when stderr is a terminal, off with `NO_COLOR`
+and forced with `CLICOLOR_FORCE` (the no-color.org conventions); on Windows the driver asks the
+console for escape processing with `SetConsoleMode`, declared directly instead of through a crate.
