@@ -684,6 +684,70 @@ One entry per milestone: what was done, what changed along the way, and open que
 - A frontend that knows the span of every name could pass it to every by-name call; the span
   heuristic (D42) has been enough for the three languages.
 
+## M19. v0.2: real programs
+
+**Done**
+
+- Modules (D46): a program is its main file and what it imports, found through the grammar's
+  `@import` rules; the driver loads and orders the files (no cycles), and each is a module of one
+  HIR builder with its own names (`text.util.twice` in the IR and in traces), `set_public` for
+  visibility, and `alias.item` through `member`, `call_member` and `member_type`. Missing modules,
+  private items and cycles are diagnostics with the files involved. The language server analyzes
+  the program around an open document, publishes diagnostics per file, and follows definitions
+  and hovers into other modules. Minnow has `import` and `pub`.
+- The standard library (D48, `docs/std.md`): `std.io`, `std.fs`, `std.env`, `std.time`,
+  `std.math` and `std.str` (411 lines of HIR over 656 of C), added to a program when imported,
+  with `std.Result` for what can fail. C functions take strings and arrays as pointers into A0's
+  objects and return copied strings, and the interpreter finds C library functions by itself
+  (D47): `extern fn getenv(string) -> string?;` is all a program needs. `extern "a0"` declares
+  runtime functions that take A0's own values.
+- Errors in both styles, both backends: `throw` and `try`/`catch` (D49), a pending flag and checks
+  after calls that may raise, which a program that never throws does not get, with the IR's new
+  `break N` to leave a `try` from inside loops; and `propagate` (`?`) for results, a `match` and a
+  `return` (E2020 when misused).
+- Abstractions (D52): methods on structs, enums and value types; interfaces, whose values are the
+  objects themselves, dispatched through a table on each type's descriptor; type parameters bounded
+  by interfaces, resolved to direct calls by monomorphization (value types satisfy bounds too).
+  Implementations and bounds are checked (E1013, E2021, E2022). Minnow has `impl`, `interface`
+  and `T: Bound`; the text format, the C API and the random program generator have them too.
+- Lox uses exceptions (D51): `throw` and `try`/`catch` as A0's extension, and natives over the
+  standard library (`readFile`, `readLine`, `writeFile`, `env`, `number`, `sqrt`, `floor`) whose
+  failures are exceptions; the book's 241 tests still pass in all six modes, with 4 tests of the
+  extensions.
+- Acceptance: `json` (`examples/minnow/json`), a JSON tool in five Minnow modules (479 lines):
+  reading with line and column in errors, pretty and compact writing, path queries, statistics.
+  Writing it found, and A0 now fixes: the optimizer never inlined a function ending in `return`
+  (all of Minnow's); `named_type` did not know `map`; lengths, `byte_at` and array elements were
+  runtime calls (inline now); float formatting took up to 17 tries per number (6x faster); the
+  collector's sweep followed a list of every object (D53: 10x faster). Functions that return early
+  are inlined only up to 32 nodes, which keeps small accessors inlined without growing Lox's code
+  with its larger checks (native Lox benchmarks: geometric mean ×1.01 against M18, within noise).
+  On a 5 MB file the native tool now reads it in 0.30 s and writes it in 0.29 s (0.60 s and 0.64 s
+  before), the collector marking the growing tree taking most of what remains.
+- Lowering compiles only what `main` reaches (D50), so libraries and preludes cost only what is
+  used. `A0_GC_STATS=1` reports the collector's work.
+
+  | Lines (grammar + Rust, HIR) | M18 | M19 |
+  |---|---|---|
+  | Minnow | 794 | 1020 (modules, `?`, methods and interfaces, maps) |
+  | Lox (with the prelude and natives) | 1676 | 1881 (exceptions, natives) |
+
+**Changed**
+
+- `extern fn` takes strings and arrays; a C function's `bool` is passed as a 64-bit integer.
+- HIR text: `extern "a0"`, `throw`, `try`/`catch`, `interface`, `impl`, bounds `<T: I>`, and
+  `(o.f)(x)` for calling a closure in a field (`o.f(x)` calls a method). New keywords: `throw`,
+  `try`, `catch`, `interface`, `impl`, `for`.
+- `lang ir` shows only the functions `main` reaches.
+
+**Open questions**
+
+- The collector: marking the whole live heap at every collection dominates allocation-heavy
+  programs; a generational collector would need the shadow stack to know every reference precisely.
+- The standard library's code has no spans (it is not in the driver's source map), so diagnostics
+  and go-to-definition cannot point into it.
+- No default methods, generic interfaces, or `finally`.
+
 ## Overall open questions
 
 None at the moment.

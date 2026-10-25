@@ -36,6 +36,6 @@ It uses modules, `pub`, the standard library (`std.fs`, `std.io`, `std.env`, `st
 - The collector spent most of its time sweeping a list of every object; it sweeps memory in order
   now. `A0_GC_STATS=1` shows what it does.
 
-On a 5 MB file (40 000 records), the native tool reads and counts in 0.6 s, of which the collector
-takes about half, nearly all of that marking the growing tree (a non-generational collector marks
-everything that is live, every time).
+On a 5 MB file (40 000 records), the native tool reads it in 0.30 s and writes it back in 0.29 s
+(before these fixes, 0.60 s and 0.64 s). Most of what remains is the collector marking the growing
+tree: a non-generational collector marks everything that is live at every collection.

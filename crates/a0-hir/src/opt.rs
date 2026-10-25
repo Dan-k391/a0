@@ -16,6 +16,10 @@ use crate::model::*;
 
 /// Functions with at most this many nodes, counted after inlining into them, are inlined (D37).
 const INLINE_SIZE: usize = 120;
+/// The size up to which a function that returns early is inlined. Such functions are mostly checks
+/// with several outcomes (`get_property` in Lox's prelude), which grow every caller more than the
+/// call costs; small ones (accessors, `if i < n { return a[i]; } return -1;`) are worth it.
+const INLINE_EARLY_RETURN_SIZE: usize = 32;
 /// Inlining grows a body to at most this many nodes, or to twice its size if that is more.
 const GROWN_SIZE: usize = 4000;
 /// Rounds of simplification.
@@ -124,7 +128,12 @@ impl Opt<'_> {
                     _ => {}
                 }
             });
-            if ok && size <= INLINE_SIZE && self.strippable(root) {
+            let limit = if self.returns_early(root) {
+                INLINE_EARLY_RETURN_SIZE
+            } else {
+                INLINE_SIZE
+            };
+            if ok && size <= limit && self.strippable(root) {
                 out.insert(f);
             }
         }
@@ -182,6 +191,30 @@ impl Opt<'_> {
         f(self.m, e);
         for c in self.children(e) {
             self.walk(c, f);
+        }
+    }
+
+    /// Whether `e`, a function body, has a `return` other than in tail position (the last statement
+    /// of the body, or of a branch in tail position).
+    fn returns_early(&self, e: ExprId) -> bool {
+        match self.kind(e) {
+            ExprKind::Return(v) => v.is_some_and(|v| self.contains_return(v)),
+            ExprKind::If(c, t, f) => {
+                self.contains_return(*c)
+                    || self.returns_early(*t)
+                    || f.is_some_and(|f| self.returns_early(f))
+            }
+            ExprKind::Block(items, tail) => {
+                let last = items.len().wrapping_sub(1);
+                items.iter().enumerate().any(|(i, &item)| {
+                    if i == last && tail.is_none() {
+                        self.returns_early(item)
+                    } else {
+                        self.contains_return(item)
+                    }
+                }) || tail.is_some_and(|t| self.returns_early(t))
+            }
+            _ => self.contains_return(e),
         }
     }
 
