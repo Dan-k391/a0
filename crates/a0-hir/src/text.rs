@@ -690,15 +690,35 @@ impl TextParser<'_> {
                 self.b.lambda(body)
             }
             "if_expr" => {
-                let c = self.expr(self.field(node, "cond").unwrap())?;
-                let t = self.block(self.field(node, "then").unwrap())?;
-                let e = match self.field(node, "else") {
-                    Some(n) if self.kind(n) == "if_expr" => Some(self.primary_form(n, "if_expr")?),
-                    Some(n) => Some(self.block(n)?),
-                    None => None,
+                let e = |p: &mut Self| -> R<Option<ExprId>> {
+                    Ok(match p.field(node, "else") {
+                        Some(n) if p.kind(n) == "if_expr" => Some(p.primary_form(n, "if_expr")?),
+                        Some(n) => Some(p.block(n)?),
+                        None => None,
+                    })
                 };
-                self.at(node);
-                self.b.if_(c, t, e)
+                if let Some(bind) = self.field(node, "bind") {
+                    let value = self.expr(self.field(node, "value").unwrap())?;
+                    let name = self.text(bind).to_string();
+                    // The binding's type is the value's without `?`, settled when the node is typed.
+                    let lt = self.b.fresh_type();
+                    self.at(bind);
+                    let l = self.b.new_local(self.body.unwrap(), &name, lt);
+                    self.scopes.push(ScopeKind::Block);
+                    let _ = self.scopes.declare_defined(&name, l.0 as u64);
+                    let t = self.block(self.field(node, "then").unwrap());
+                    self.scopes.pop();
+                    let t = t?;
+                    let els = e(self)?;
+                    self.at(node);
+                    self.b.if_let(l, value, t, els)
+                } else {
+                    let c = self.expr(self.field(node, "cond").unwrap())?;
+                    let t = self.block(self.field(node, "then").unwrap())?;
+                    let els = e(self)?;
+                    self.at(node);
+                    self.b.if_(c, t, els)
+                }
             }
             "while_expr" => {
                 let c = self.expr(self.field(node, "cond").unwrap())?;

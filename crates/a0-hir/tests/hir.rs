@@ -118,6 +118,14 @@ fn type_errors_are_reported_with_locations() {
             "`int` is not a function",
         ),
         (
+            "fn main() -> int { if let x = 5 { x } else { 0 } }",
+            "`if let` needs a nullable value, found `int`",
+        ),
+        (
+            "struct P { x: int }\nfn main() -> int { let p = new P { x: 1 }; if let q = p { q.x } else { 0 } }",
+            "`if let` needs a nullable value, found `P`",
+        ),
+        (
             "fn main() -> int { let a = [1, 2]; a[\"x\"] }",
             "mismatched types: expected `int`, found `string`",
         ),
@@ -139,7 +147,7 @@ fn type_errors_are_reported_with_locations() {
         ),
         (
             "struct P { x: int }\nfn main() -> int { let p = null<P>; p.x }",
-            "`P?` may be null; unwrap it (`!`) or check it for null before using its fields",
+            "`P?` may be null; narrow it (`if let`) or unwrap it (`!`) before using its fields",
         ),
         (
             "struct P { x: int }\nfn main() -> int { let p: P = null<P>; 0 }",

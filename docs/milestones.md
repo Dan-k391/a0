@@ -552,10 +552,9 @@ One entry per milestone: what was done, what changed along the way, and open que
 
 ## Overall open questions
 
-These need a decision from you:
+None at the moment.
 
-1. **Flow typing for nullable references** (M11): add it, or keep `x!`?
-
-Settled since earlier milestones: aarch64-windows is out of scope; the collector lives in `a0rt`
+Settled since earlier milestones: nullable references are narrowed with `if let` rather than flow
+typing (D34); aarch64-windows is out of scope; the collector lives in `a0rt`
 (D16); linking on Linux and macOS is tested in CI on every push (M8); a reusable language driver
 exists (M7); D2's line for C-bindable APIs held when the library was bound in C (M16).

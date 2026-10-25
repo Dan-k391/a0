@@ -40,9 +40,11 @@ Reference types are garbage collected. They are **never null** unless their type
 holds a `T` or `null`. Value types are copied.
 
 **Nullability.** `null<T>` has type `T?`. A `T` fits wherever a `T?` is expected. Fields, elements and
-calls need a non-null value: `e!` turns a `T?` into a `T` and panics with `null reference` if it is
-null, and `x == null<T>` tests for null. Because the types guarantee it, generated code checks for
-null only at `!`. A global of reference type starts as null, so its type must be nullable.
+calls need a non-null value. `if let x = e { a } else { b }` narrows: when `e` (a `T?`) is not null,
+`x` is a `T` holding it in `a`; otherwise `b` runs. `e!` turns a `T?` into a `T` directly and panics
+with `null reference` if it is null, and `x == null<T>` tests for null. Types do not change after a
+test (there is no flow typing, D34). Because the types guarantee it, generated code checks for null
+only at `if let` and `!`. A global of reference type starts as null, so its type must be nullable.
 
 **Generics.** Structs, enums and functions can take type parameters (`struct Pair<A, B>`,
 `fn first<T>(xs: array<T>) -> Option<T>`). Inside a generic item a type parameter is opaque: values
@@ -127,6 +129,7 @@ it has no trailing `;`, otherwise to `()`.
 | `new map<K, V>`, `m[k]` | maps (a missing key panics) |
 | `e as T`, `e is T` | conversions and dynamic type tests |
 | `if c { } else { }`, `while c { }`, `loop { }` | control flow; `if` with `else` is a value |
+| `if let x = e { } else { }` | narrowing: `x` is `e`'s value in the first block when `e: T?` is not null |
 | `break`, `continue`, `return e` | type `never` |
 
 **Operators.** `+ - * / %` on two `int`s (wrapping; `/` and `%` by zero panic) or two `float`s (no
@@ -179,7 +182,8 @@ A frontend walks its syntax tree once and calls `HirBuilder`. Two styles mix fre
 - **By name** (`frontend.rs`), for everything else (Minnow): `begin_body`/`end_body` put a body's
   parameters (and a generic function's type parameters) in scope; `push_scope`/`pop_scope` follow
   blocks; `let_named` and `declare_local` declare locals (shadowing allowed; `is_declared_in_scope`
-  for languages that forbid it); `name`, `call_named`, `assign_named` resolve locals, globals,
+  for languages that forbid it), and `declare_if_let` the binding of an `if let` (typed from the
+  value, for `if_let`); `name`, `call_named`, `assign_named` resolve locals, globals,
   functions and builtins; `named_type` resolves type names; `new_struct_named` takes fields in any
   order, keeps their evaluation order and reports unknown, repeated and missing fields;
   `variant_named` and `field_named` look up by name.

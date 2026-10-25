@@ -1,0 +1,80 @@
+// `if let` narrows a nullable reference: in its branch the binding is the value, not null.
+// expect-stdout: sum 6 0
+// expect-stdout: captured 1 2 3
+// expect-stdout: next 2
+// expect-stdout: shadow 2
+// expect-stdout: lookup b missing no map
+// expect-stdout: generic x d
+// expect-stdout: chain third
+module "narrowing";
+
+struct Node { value: int, next: Node? }
+
+fn sum(list: Node?) -> int {
+  let total = 0;
+  let cur = list;
+  loop {
+    if let n = cur {
+      total = total + n.value;
+      cur = n.next;
+    } else {
+      break;
+    }
+  }
+  total
+}
+
+fn lookup(names: map<string, string>?, key: string) -> string {
+  if let m = names {
+    if has(m, key) { m[key] } else { "missing" }
+  } else {
+    "no map"
+  }
+}
+
+fn or_default<T>(value: T?, default: T) -> T {
+  if let v = value { v } else { default }
+}
+
+fn pick(a: string?, b: string?, c: string?) -> string {
+  if let x = a {
+    x
+  } else if let y = b {
+    y
+  } else if let z = c {
+    z
+  } else {
+    "none"
+  }
+}
+
+fn main() -> int {
+  let list = new Node { value: 1, next: new Node { value: 2, next: new Node { value: 3, next: null<Node> } } };
+  print("sum " + str(sum(list)) + " " + str(sum(null<Node>)) + "\n");
+
+  // Each closure captures the binding of its own iteration.
+  let fs = new array<fn() -> int>;
+  let cur: Node? = list;
+  while len(fs) < 3 {
+    if let n = cur {
+      push(fs, fn() -> int { n.value });
+      cur = n.next;
+    }
+  }
+  print("captured " + str(fs[0]()) + " " + str(fs[1]()) + " " + str(fs[2]()) + "\n");
+
+  let label = if let n = list.next { "next " + str(n.value) } else { "end" };
+  print(label + "\n");
+
+  let x = list.next;
+  if let x = x {
+    print("shadow " + str(x.value) + "\n");
+  }
+
+  let m = new map<string, string>;
+  m["a"] = "b";
+  print("lookup " + lookup(m, "a") + " " + lookup(m, "z") + " " + lookup(null<map<string, string>>, "a") + "\n");
+  print("generic " + or_default::<string>("x", "d") + " " + or_default::<string>(null<string>, "d") + "\n");
+  print("chain " + pick(null<string>, null<string>, "third") + "\n");
+  0
+}

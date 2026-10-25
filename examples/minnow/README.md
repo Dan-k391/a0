@@ -55,11 +55,14 @@ do that, Minnow was 1513 lines without enums, generics or nullable types.
   functions (no `->` means no result), struct and enum names with type arguments (`Pair<int, string>`,
   inferred when left out), and `T?` for a reference that may be null. Values of struct, enum, array and
   function type are references; `==` compares them by identity and everything else by value.
-- **Null**: a reference is never null unless its type is `T?`. `null` is a `T?`, a `T` can be used
-  where a `T?` is expected, and `x!` gets the `T` back (stopping the program if `x` is null); use
-  `x == null` to check. Fields, elements and calls need a non-null value.
+- **Null**: a reference is never null unless its type is `T?`. `null` is a `T?`, and a `T` can be
+  used where a `T?` is expected. `if let x = e { ... }` runs its block with `x` holding `e`'s value
+  when that is not null (`else` covers null), `while let x = e { ... }` repeats while it is not
+  null, and `x!` gets the `T` back directly (stopping the program if `x` is null). Fields, elements
+  and calls need a non-null value.
 - **Statements**: `let x = e;` or `let x: T = e;`, assignment to variables, fields and elements,
-  `if`/`else if`/`else`, `while`, `for x in array`, `match`, `return`, `break`, `continue`, blocks.
+  `if`/`else if`/`else`, `if let`, `while`, `while let`, `for x in array`, `match`, `return`,
+  `break`, `continue`, blocks.
 - **Expressions**: arithmetic `+ - * / %` (`+` also joins strings), comparisons, `&&`, `||`, `!`,
   `e as T` between `int` and `float`, calls, `a[i]`, `s.f`, `x!`, `[a, b]`, `new S { f: e, ... }`,
   `E::V(a)`, `match e { V(x) => e, _ => e }` (arms may be blocks), and closures

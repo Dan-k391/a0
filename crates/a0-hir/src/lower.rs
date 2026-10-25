@@ -531,6 +531,7 @@ impl<'a> Lowerer<'a> {
                     }
                 }
                 ExprKind::SetLocal(l, _) => self.reassigned[l.index()] = true,
+                ExprKind::IfLet(l, ..) => self.scoped[l.index()] = true,
                 _ => {}
             }
             visit_children(m, e, &mut |c| stack.push(c));
@@ -975,7 +976,7 @@ impl<'a> Lowerer<'a> {
         }
         let m = self.m;
         let own = match &m.expr(e).kind {
-            ExprKind::Let(l, _) => self.captured[l.index()],
+            ExprKind::Let(l, _) | ExprKind::IfLet(l, ..) => self.captured[l.index()],
             ExprKind::Func(..)
             | ExprKind::Lambda(_)
             | ExprKind::Call(..)
@@ -1307,6 +1308,7 @@ impl<'a> Lowerer<'a> {
                 V::Val(self.is_type(w, t))
             }
             ExprKind::If(c, t, els) => self.if_(c, t, els, ty),
+            ExprKind::IfLet(l, v, t, els) => self.if_let(l, v, t, els, ty),
             ExprKind::While(c, body) => {
                 self.b.loop_();
                 let mark = self.mark();
@@ -1883,6 +1885,45 @@ impl<'a> Lowerer<'a> {
             let ev = self.expr(e);
             if let (Some(r), V::Val(v)) = (result, ev) {
                 self.b.set(r, v);
+            }
+        }
+        self.b.end_if();
+        if ty == TypeId::NEVER {
+            if !self.b.is_terminated() {
+                self.b.unreachable();
+            }
+            return V::Never;
+        }
+        match result {
+            Some(r) => V::Val(self.b.get(r)),
+            None => V::Unit,
+        }
+    }
+
+    fn if_let(&mut self, l: LocalId, v: ExprId, t: ExprId, els: Option<ExprId>, ty: TypeId) -> V {
+        let vv = self.expr(v);
+        let V::Val(p) = vv else { return vv };
+        let result = match (els, self.ir_type(ty)) {
+            (Some(_), Some(irt)) => Some(self.b.declare_var("if", irt)),
+            _ => None,
+        };
+        let null = self.b.null();
+        let present = self.b.icmp(IntCC::Ne, p, null);
+        self.b.if_(present);
+        // The binding has storage only while the branch runs, like a block's local.
+        let mark = self.mark();
+        self.declare_local(l);
+        self.bind_local(l, V::Val(p));
+        let tv = self.expr(t);
+        if let (Some(r), V::Val(x)) = (result, tv) {
+            self.b.set(r, x);
+        }
+        self.release(mark);
+        if let Some(e) = els {
+            self.b.else_();
+            let ev = self.expr(e);
+            if let (Some(r), V::Val(x)) = (result, ev) {
+                self.b.set(r, x);
             }
         }
         self.b.end_if();

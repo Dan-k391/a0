@@ -52,9 +52,13 @@ stmt @inline @recover(after ";" before "let" "if" "while" "for" "return" "break"
 let_stmt @def(variable)
     = "let" name:NAME ~ "expected a variable name" (":" type:type ~ "expected a type")?
       "=" ~ "expected '='" value:expr ";" ~ "expected ';'";
-if_stmt = "if" cond:expr ~ "expected a condition" then:block ~ "expected '{'"
-          ("else" (else:if_stmt | else:block) ~ "expected '{' or 'if'")?;
-while_stmt = "while" cond:expr ~ "expected a condition" body:block ~ "expected '{'";
+if_stmt @def(variable: name) @scope
+    = "if" (narrow | cond:expr) ~ "expected a condition" then:block ~ "expected '{'"
+      ("else" (else:if_stmt | else:block) ~ "expected '{' or 'if'")?;
+while_stmt @def(variable: name) @scope
+    = "while" (narrow | cond:expr) ~ "expected a condition" body:block ~ "expected '{'";
+// `if let x = e` and `while let x = e`: `x` is `e`'s value when that is not null.
+narrow @inline = "let" name:NAME ~ "expected a variable name" "=" ~ "expected '='" value:expr;
 for_stmt @def(variable: name) @scope
     = "for" name:NAME ~ "expected a variable name" "in" ~ "expected 'in'"
       iterable:expr ~ "expected an array" body:block ~ "expected '{'";

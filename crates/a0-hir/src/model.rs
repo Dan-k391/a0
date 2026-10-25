@@ -240,6 +240,9 @@ pub(crate) enum ExprKind {
     Unwrap(ExprId),
     Is(ExprId, TypeId),
     If(ExprId, ExprId, Option<ExprId>),
+    /// `if let x = value { then } else { els }`: when `value` (of type `T?`) is not null, `x` (of
+    /// type `T`) holds it in `then`.
+    IfLet(LocalId, ExprId, ExprId, Option<ExprId>),
     While(ExprId, ExprId),
     Loop(ExprId),
     Break,

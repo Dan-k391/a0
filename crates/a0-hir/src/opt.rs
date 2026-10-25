@@ -138,7 +138,9 @@ impl Opt<'_> {
                 items.iter().any(|&i| self.always_returns(i))
                     || tail.is_some_and(|t| self.always_returns(t))
             }
-            ExprKind::If(_, t, Some(f)) => self.always_returns(*t) && self.always_returns(*f),
+            ExprKind::If(_, t, Some(f)) | ExprKind::IfLet(_, _, t, Some(f)) => {
+                self.always_returns(*t) && self.always_returns(*f)
+            }
             _ => false,
         }
     }
@@ -293,6 +295,12 @@ impl Opt<'_> {
             ExprKind::Let(l, init) => {
                 let init = self.copy(init, body, locals);
                 ExprKind::Let(self.copy_local(l, body, locals), init)
+            }
+            ExprKind::IfLet(l, v, t, f) => {
+                let v = self.copy(v, body, locals);
+                let l = self.copy_local(l, body, locals);
+                let t = self.copy(t, body, locals);
+                ExprKind::IfLet(l, v, t, f.map(|f| self.copy(f, body, locals)))
             }
             ExprKind::Match(s, arms) => {
                 let s = self.copy(s, body, locals);
@@ -839,6 +847,11 @@ fn map_children(kind: &ExprKind, f: &mut dyn FnMut(ExprId) -> ExprId) -> ExprKin
             let c = f(*c);
             let t = f(*t);
             If(c, t, e.map(&mut *f))
+        }
+        IfLet(l, v, t, e) => {
+            let v = f(*v);
+            let t = f(*t);
+            IfLet(*l, v, t, e.map(&mut *f))
         }
         Return(v) => Return(v.map(&mut *f)),
         Block(items, tail) => {

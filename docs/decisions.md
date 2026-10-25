@@ -341,3 +341,14 @@ code) are recorded and reported by `a0_builder_finish` with the builder's and th
 findings, so the C side, like the Rust side, never crashes on misuse. A C program in the test suite
 (`tests/host.c`) exercises all of it and is compiled and run by the system C compiler in CI on every
 platform.
+
+## D34. Nullable references are narrowed with `if let`, not by flow typing
+
+D23 left a frontend two ways to use a `T?`: `x!`, which panics on null, or a test followed by `x!`.
+Flow typing (a test changes the type of `x` afterwards) would remove the `!` but ties the type of a
+name to the control flow around it: every language would get one particular set of narrowing rules,
+and the builder would need them for locals, fields, captured variables and loops. `if let x = e`
+instead binds a new local of type `T` for one branch. It is one node with a local typing rule, any
+language can spell it as it likes (Minnow has `if let` and builds `while let` from it with `loop`
+and `break`), and it costs one null test, the same as `!`. Lox's prelude uses it for its call fast
+paths, and Minnow's programs lost their `!`s where a test came first.

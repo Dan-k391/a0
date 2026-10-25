@@ -519,14 +519,25 @@ impl Printer<'_> {
                 self.expr(a, IS, indent);
                 let _ = write!(self.out, " is {}", self.ty(t));
             }
-            ExprKind::If(c, t, els) => {
-                self.out.push_str("if ");
-                self.expr(c, 0, indent);
+            ExprKind::If(..) | ExprKind::IfLet(..) => {
+                let (t, els) = match m.expr(e).kind {
+                    ExprKind::If(c, t, els) => {
+                        self.out.push_str("if ");
+                        self.expr(c, 0, indent);
+                        (t, els)
+                    }
+                    ExprKind::IfLet(l, v, t, els) => {
+                        let _ = write!(self.out, "if let {} = ", ident(m.local_name(l)));
+                        self.expr(v, 0, indent);
+                        (t, els)
+                    }
+                    _ => unreachable!(),
+                };
                 self.out.push(' ');
                 self.as_block(t, indent);
                 if let Some(els) = els {
                     self.out.push_str(" else ");
-                    if matches!(m.expr(els).kind, ExprKind::If(..)) {
+                    if matches!(m.expr(els).kind, ExprKind::If(..) | ExprKind::IfLet(..)) {
                         self.expr(els, 0, indent);
                     } else {
                         self.as_block(els, indent);
@@ -613,6 +624,7 @@ fn is_block_like(m: &HirModule, e: ExprId) -> bool {
     matches!(
         m.expr(e).kind,
         ExprKind::If(..)
+            | ExprKind::IfLet(..)
             | ExprKind::While(..)
             | ExprKind::Loop(_)
             | ExprKind::Match(..)

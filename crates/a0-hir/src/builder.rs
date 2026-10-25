@@ -964,6 +964,18 @@ impl HirBuilder {
         self.push(ExprKind::If(cond, then, els), TypeId::NEVER)
     }
 
+    /// `if let local = value { then } else { els }`: `value` is a `T?`, and `local` (a `T`, or a
+    /// type to infer) holds it in `then` when it is not null.
+    pub fn if_let(
+        &mut self,
+        local: LocalId,
+        value: ExprId,
+        then: ExprId,
+        els: Option<ExprId>,
+    ) -> ExprId {
+        self.push(ExprKind::IfLet(local, value, then, els), TypeId::NEVER)
+    }
+
     pub fn while_(&mut self, cond: ExprId, body: ExprId) -> ExprId {
         self.push(ExprKind::While(cond, body), TypeId::UNIT)
     }
@@ -1353,6 +1365,36 @@ pub(crate) fn infer(m: &mut HirModule, kind: &ExprKind, hint: TypeId) -> Typed {
                 Some(e) => m.join(ty(m, *then), ty(m, *e)).unwrap_or(TypeId::UNIT),
             }
         }
+        ExprKind::IfLet(local, value, then, els) => {
+            let vt = ty(m, *value);
+            match m.kind(vt).clone() {
+                TypeKind::Nullable(inner) => {
+                    let lt = m.local_type(*local);
+                    if !m.unify(lt, inner) {
+                        let msg = format!(
+                            "`{}` binds a `{}` as `{}`",
+                            m.local_name(*local),
+                            m.display_type(inner),
+                            m.display_type(lt)
+                        );
+                        return Err(TypeErr::At(Some(*value), msg));
+                    }
+                }
+                TypeKind::Never | TypeKind::Error => {}
+                _ => {
+                    return open_or(m, *value, || {
+                        format!(
+                            "`if let` needs a nullable value, found `{}`",
+                            m.display_type(vt)
+                        )
+                    });
+                }
+            }
+            match els {
+                None => TypeId::UNIT,
+                Some(e) => m.join(ty(m, *then), ty(m, *e)).unwrap_or(TypeId::UNIT),
+            }
+        }
         ExprKind::While(cond, _) => {
             expect(m, *cond, TypeId::BOOL)?;
             TypeId::UNIT
@@ -1391,7 +1433,7 @@ fn named_field(m: &HirModule, object: ExprId, name: &str) -> Result<u32, TypeErr
 fn no_fields(m: &HirModule, t: TypeId) -> String {
     match m.kind(t) {
         TypeKind::Nullable(_) => format!(
-            "`{}` may be null; unwrap it (`!`) or check it for null before using its fields",
+            "`{}` may be null; narrow it (`if let`) or unwrap it (`!`) before using its fields",
             m.display_type(t)
         ),
         _ => format!(
@@ -1427,7 +1469,7 @@ fn index_types(m: &mut HirModule, target: ExprId) -> Result<(TypeId, TypeId), Ty
         TypeKind::Error => Ok((TypeId::ERROR, TypeId::ERROR)),
         _ => open_or(m, target, || match m.kind(t) {
             TypeKind::Nullable(_) => format!(
-                "`{}` may be null; unwrap it (`!`) or check it for null before indexing",
+                "`{}` may be null; narrow it (`if let`) or unwrap it (`!`) before indexing",
                 m.display_type(t)
             ),
             _ => format!("cannot index a value of type `{}`", m.display_type(t)),
@@ -1761,7 +1803,7 @@ pub(crate) fn visit_children(m: &HirModule, e: ExprId, f: &mut dyn FnMut(ExprId)
                 f(m.arms[a.index()].body);
             }
         }
-        If(c, t, e) => {
+        If(c, t, e) | IfLet(_, c, t, e) => {
             f(*c);
             f(*t);
             if let Some(e) = e {

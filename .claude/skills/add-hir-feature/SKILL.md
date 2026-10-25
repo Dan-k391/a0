@@ -24,14 +24,18 @@ identically interpreted, natively and under `A0_GC_STRESS=1`.
    - `crates/a0-hir/src/hir.a0g` (grammar; a new operator goes into the `@prec` table);
    - `crates/a0-hir/src/print.rs` (printing; operator levels mirror the `@prec` lines);
    - `crates/a0-hir/src/text.rs` (tree to builder calls).
-5. `crates/a0-hir/src/mono.rs` - copy the node in `Mono::expr` (mapping any ids and types it holds);
-   lowering only ever sees monomorphized modules.
+5. `crates/a0-hir/src/mono.rs` - copy the node in `Mono::expr` (mapping any ids and types it holds,
+   locals with `self.local`); lowering only ever sees monomorphized modules.
+   `crates/a0-hir/src/opt.rs` - `map_children` rebuilds the node; a node that binds a local needs a
+   case in `copy` (inlining gives the copy fresh locals) and `pure` must stay false if it has effects.
+   `crates/a0-hir/src/frontend.rs` - a by-name helper if frontends need one (`declare_if_let`).
 6. `crates/a0-hir/src/lower.rs`
    - lower in `expr_inner` (or `builtin`/`cast`/`binary`);
    - classify it in `may_gc` if it can allocate, and evaluate operands with `operands(..)` so GC values
      are spilled when needed;
    - runtime calls are declared in `Runtime::declare`.
-7. Runtime support, if needed: follow the `add-runtime-function` skill.
+7. Runtime support, if needed: follow the `add-runtime-function` skill. A builder method also gets
+   a binding in `crates/a0-capi` (`src/hir.rs`, `include/a0.h`).
 8. `docs/hir.md` - the type/expression/builtin tables and lowering notes.
 9. Tests:
    - a program in `tests/hir/<name>.hir` with `// expect-stdout:` lines (runs in all six modes:

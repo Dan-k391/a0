@@ -280,7 +280,7 @@ fn compile_errors_are_reported_with_locations() {
         ("fn main() { let x = 1 }", "1:23: expected ';'"),
         (
             "struct N { next: N? } fn main() { let n = new N { next: null }; print(n.next.next); }",
-            "1:73: `N?` may be null; unwrap it (`!`) or check it for null before using its fields",
+            "1:73: `N?` may be null; narrow it (`if let`) or unwrap it (`!`) before using its fields",
         ),
         (
             "fn main() { let s: string = null; }",
@@ -289,6 +289,14 @@ fn compile_errors_are_reported_with_locations() {
         (
             "fn main() { let n = 1; print(n!); }",
             "1:30: `int` is not nullable, so there is nothing to unwrap",
+        ),
+        (
+            "fn main() { let n = 1; if let m = n { print(m); } }",
+            "1:35: `if let` needs a nullable value, found `int`",
+        ),
+        (
+            "struct N { v: int } fn main() { let n: N? = null; if let m = n { } print(m.v); }",
+            "1:74: unknown name `m`",
         ),
         (
             "enum E { A, B } fn main() { let e = E::A; match e { A => print(1), C => print(2) } }",

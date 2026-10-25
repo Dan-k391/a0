@@ -460,6 +460,12 @@ impl Mono<'_> {
                 let t = self.expr(c, t, body);
                 ExprKind::If(cond, t, e.map(|e| self.expr(c, e, body)))
             }
+            ExprKind::IfLet(l, v, t, e) => {
+                let v = self.expr(c, v, body);
+                let l = self.local(c, l, body);
+                let t = self.expr(c, t, body);
+                ExprKind::IfLet(l, v, t, e.map(|e| self.expr(c, e, body)))
+            }
             ExprKind::While(cond, b) => {
                 ExprKind::While(self.expr(c, cond, body), self.expr(c, b, body))
             }

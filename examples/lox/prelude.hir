@@ -194,9 +194,9 @@ fn call(callee: any, args: array<any>, line: int) -> any {
 fn call0(callee: any, line: int) -> any {
   if callee is LoxFunction {
     let f = callee as LoxFunction;
-    if f.code0 != null<fn(any) -> any> {
+    if let code = f.code0 {
       enter(line);
-      let r = f.code0!(() as any);
+      let r = code(() as any);
       depth = depth - 1;
       r
     } else {
@@ -204,9 +204,9 @@ fn call0(callee: any, line: int) -> any {
     }
   } else if callee is LoxBound {
     let m = callee as LoxBound;
-    if m.method.code0 != null<fn(any) -> any> {
+    if let code = m.method.code0 {
       enter(line);
-      let r = m.method.code0!(m.receiver);
+      let r = code(m.receiver);
       depth = depth - 1;
       r
     } else {
@@ -220,9 +220,9 @@ fn call0(callee: any, line: int) -> any {
 fn call1(callee: any, a: any, line: int) -> any {
   if callee is LoxFunction {
     let f = callee as LoxFunction;
-    if f.code1 != null<fn(any, any) -> any> {
+    if let code = f.code1 {
       enter(line);
-      let r = f.code1!(() as any, a);
+      let r = code(() as any, a);
       depth = depth - 1;
       r
     } else {
@@ -230,9 +230,9 @@ fn call1(callee: any, a: any, line: int) -> any {
     }
   } else if callee is LoxBound {
     let m = callee as LoxBound;
-    if m.method.code1 != null<fn(any, any) -> any> {
+    if let code = m.method.code1 {
       enter(line);
-      let r = m.method.code1!(m.receiver, a);
+      let r = code(m.receiver, a);
       depth = depth - 1;
       r
     } else {
@@ -246,9 +246,9 @@ fn call1(callee: any, a: any, line: int) -> any {
 fn call2(callee: any, a: any, b: any, line: int) -> any {
   if callee is LoxFunction {
     let f = callee as LoxFunction;
-    if f.code2 != null<fn(any, any, any) -> any> {
+    if let code = f.code2 {
       enter(line);
-      let r = f.code2!(() as any, a, b);
+      let r = code(() as any, a, b);
       depth = depth - 1;
       r
     } else {
@@ -256,9 +256,9 @@ fn call2(callee: any, a: any, b: any, line: int) -> any {
     }
   } else if callee is LoxBound {
     let m = callee as LoxBound;
-    if m.method.code2 != null<fn(any, any, any) -> any> {
+    if let code = m.method.code2 {
       enter(line);
-      let r = m.method.code2!(m.receiver, a, b);
+      let r = code(m.receiver, a, b);
       depth = depth - 1;
       r
     } else {
@@ -272,9 +272,9 @@ fn call2(callee: any, a: any, b: any, line: int) -> any {
 fn call3(callee: any, a: any, b: any, c: any, line: int) -> any {
   if callee is LoxFunction {
     let f = callee as LoxFunction;
-    if f.code3 != null<fn(any, any, any, any) -> any> {
+    if let code = f.code3 {
       enter(line);
-      let r = f.code3!(() as any, a, b, c);
+      let r = code(() as any, a, b, c);
       depth = depth - 1;
       r
     } else {
@@ -282,9 +282,9 @@ fn call3(callee: any, a: any, b: any, c: any, line: int) -> any {
     }
   } else if callee is LoxBound {
     let m = callee as LoxBound;
-    if m.method.code3 != null<fn(any, any, any, any) -> any> {
+    if let code = m.method.code3 {
       enter(line);
-      let r = m.method.code3!(m.receiver, a, b, c);
+      let r = code(m.receiver, a, b, c);
       depth = depth - 1;
       r
     } else {

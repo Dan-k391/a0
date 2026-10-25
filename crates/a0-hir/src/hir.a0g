@@ -94,7 +94,8 @@ array_lit = "[" args:args? "]" ~ "expected ']'";
 variant_expr = enum:NAME type_args? "::" name:NAME ~ "expected a variant name" ("(" args:args? ")" ~ "expected ')'")?;
 lambda = "fn" "(" ~ "expected '('" (param ("," param)*)? ")" ~ "expected ')'" ("->" ret:type)?
          body:block ~ "expected a closure body";
-if_expr = "if" cond:expr ~ "expected a condition" then:block ~ "expected '{'"
+if_expr = "if" ("let" bind:NAME ~ "expected a name" "=" ~ "expected '='" value:expr | cond:expr)
+          ~ "expected a condition" then:block ~ "expected '{'"
           ("else" (else:if_expr | else:block) ~ "expected '{' or if")?;
 while_expr = "while" cond:expr ~ "expected a condition" body:block ~ "expected '{'";
 loop_expr = "loop" body:block ~ "expected '{'";

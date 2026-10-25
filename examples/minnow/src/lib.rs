@@ -20,7 +20,9 @@
 //! its own.
 
 use a0_diag::{Diagnostics, SourceId};
-use a0_hir::{BinOp, BodyId, Builtin, ExprId, HirBuilder, HirModule, Item, TypeId, TypeTag, UnOp};
+use a0_hir::{
+    BinOp, BodyId, Builtin, ExprId, HirBuilder, HirModule, Item, LocalId, TypeId, TypeTag, UnOp,
+};
 use a0_syntax::{Grammar, NodeId, SyntaxTree};
 
 /// The Minnow grammar.
@@ -67,6 +69,19 @@ impl<'a> Compiler<'a> {
 
     fn opt(&self, n: NodeId, name: &str) -> Option<NodeId> {
         self.tree.field_named(n, name)
+    }
+
+    /// For `if let x = e` and `while let x = e`: the binding (in scope only in the block in field
+    /// `block`), the value and that block.
+    fn narrow(&mut self, node: NodeId, block: &str) -> Option<(LocalId, ExprId, ExprId)> {
+        let name = self.opt(node, "name")?;
+        let value = self.expr(self.field(node, "value"));
+        self.b.push_scope();
+        self.at(name);
+        let l = self.b.declare_if_let(self.text(name), value);
+        let body = self.block(self.field(node, block));
+        self.b.pop_scope();
+        Some((l, value, body))
     }
 
     fn text(&self, n: NodeId) -> &'a str {
@@ -249,16 +264,33 @@ impl<'a> Compiler<'a> {
                 self.b.let_named(self.text(name), ty, value)
             }
             "if_stmt" => {
-                let cond = self.expr(self.field(node, "cond"));
-                let then = self.block(self.field(node, "then"));
+                let narrow = self.narrow(node, "then");
+                let cond = narrow
+                    .is_none()
+                    .then(|| self.expr(self.field(node, "cond")));
+                let then = match narrow {
+                    Some((_, _, then)) => then,
+                    None => self.block(self.field(node, "then")),
+                };
                 let els = self.opt(node, "else").map(|e| match self.kind(e) {
                     "if_stmt" => self.stmt(e),
                     _ => self.block(e),
                 });
                 self.at(node);
-                self.b.if_(cond, then, els)
+                match (narrow, cond) {
+                    (Some((l, value, _)), _) => self.b.if_let(l, value, then, els),
+                    (None, Some(cond)) => self.b.if_(cond, then, els),
+                    (None, None) => unreachable!(),
+                }
             }
             "while_stmt" => {
+                if let Some((l, value, body)) = self.narrow(node, "body") {
+                    // `while let x = e { body }` is `loop { if let x = e { body } else { break } }`.
+                    let stop = self.b.break_();
+                    self.at(node);
+                    let step = self.b.if_let(l, value, body, Some(stop));
+                    return self.b.loop_(step);
+                }
                 let cond = self.expr(self.field(node, "cond"));
                 let body = self.block(self.field(node, "body"));
                 self.at(node);

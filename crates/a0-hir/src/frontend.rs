@@ -90,6 +90,17 @@ impl HirBuilder {
         l
     }
 
+    /// Declares the local that `if let name = value` binds, in the innermost scope (push one for the
+    /// `then` branch first). Its type is `value`'s without the `?`; pass it to
+    /// [`HirBuilder::if_let`].
+    pub fn declare_if_let(&mut self, name: &str, value: ExprId) -> LocalId {
+        let t = match self.m.kind(self.m.expr_type(value)) {
+            TypeKind::Nullable(inner) => *inner,
+            _ => self.fresh_type(),
+        };
+        self.declare_local(name, t)
+    }
+
     /// `let name: ty = value`, with `name` in scope afterwards (not inside `value`). `ty` may be
     /// [`HirBuilder::fresh_type`] to take the value's type.
     pub fn let_named(&mut self, name: &str, ty: TypeId, value: ExprId) -> ExprId {

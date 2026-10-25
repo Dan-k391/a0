@@ -55,16 +55,16 @@ fn main() {
   for s in shapes { total = total + area(s); }
   print(total);
   let big = largest(shapes, area);
-  if big != null { print(area(big!)); }
+  if let b = big { print(area(b)); }
   let none: [string] = [];
   print(largest(none, fn(s: string) -> float { return len(s) as float; }) == null);
 
   let list: Node<string>? = null;
   for w in ["c", "b", "a"] { list = push_front(list, w); }
   let text = "";
-  while list != null {
-    text = text + list!.value;
-    list = list!.next;
+  while let node = list {
+    text = text + node.value;
+    list = node.next;
   }
   print(text);
 
