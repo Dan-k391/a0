@@ -565,18 +565,33 @@ impl Builder {
 
     /// Exits the innermost loop.
     pub fn break_(&mut self) {
-        if !self.in_loop() {
-            self.error("break_ outside a loop");
-        }
-        self.inst(Opcode::Break, &[], 0, None);
+        self.break_out(0);
     }
 
     /// Jumps to the start of the innermost loop.
     pub fn continue_(&mut self) {
-        if !self.in_loop() {
-            self.error("continue_ outside a loop");
+        self.continue_out(0);
+    }
+
+    /// Exits the loop `depth` loops out from the innermost (0 is the innermost), and every loop
+    /// inside it.
+    pub fn break_out(&mut self, depth: u32) {
+        match self.loop_count() {
+            0 => self.error("break_ outside a loop"),
+            n if depth as usize >= n => self.error("break_out of more loops than are open"),
+            _ => {}
         }
-        self.inst(Opcode::Continue, &[], 0, None);
+        self.inst(Opcode::Break, &[], depth as u64, None);
+    }
+
+    /// Jumps to the start of the loop `depth` loops out from the innermost.
+    pub fn continue_out(&mut self, depth: u32) {
+        match self.loop_count() {
+            0 => self.error("continue_ outside a loop"),
+            n if depth as usize >= n => self.error("continue_out of more loops than are open"),
+            _ => {}
+        }
+        self.inst(Opcode::Continue, &[], depth as u64, None);
     }
 
     /// Returns from the current function.
@@ -598,8 +613,11 @@ impl Builder {
         self.region.is_some() && region_terminates(&self.module, self.region)
     }
 
-    fn in_loop(&self) -> bool {
-        self.open.iter().any(|o| o.kind == OpenKind::Loop)
+    fn loop_count(&self) -> usize {
+        self.open
+            .iter()
+            .filter(|o| o.kind == OpenKind::Loop)
+            .count()
     }
 
     // ---------------------------------------------------------------- finishing

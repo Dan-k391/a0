@@ -891,14 +891,16 @@ impl Lower<'_> {
             Opcode::If => return self.lower_if(inst, args[0]),
             Opcode::Loop => return self.lower_loop(inst),
             Opcode::Break => {
-                let lp = self.loops.last_mut().unwrap();
+                let at = self.loops.len() - 1 - m.inst_loop_depth(inst) as usize;
+                let lp = &mut self.loops[at];
                 lp.exit_used = true;
                 let exit = lp.exit;
                 self.b.ins().jump(exit, &[]);
                 return false;
             }
             Opcode::Continue => {
-                let header = self.loops.last().unwrap().header;
+                let at = self.loops.len() - 1 - m.inst_loop_depth(inst) as usize;
+                let header = self.loops[at].header;
                 self.b.ins().jump(header, &[]);
                 return false;
             }

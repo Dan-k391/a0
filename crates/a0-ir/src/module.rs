@@ -427,6 +427,11 @@ impl Module {
         SigId(self.insts[i.index()].imm as u32)
     }
 
+    /// How many loops out from the innermost a `break` or `continue` goes (0: the innermost).
+    pub fn inst_loop_depth(&self, i: Inst) -> u32 {
+        self.insts[i.index()].imm as u32
+    }
+
     /// The variable of a `get` or `set`.
     pub fn inst_var(&self, i: Inst) -> Var {
         Var(self.insts[i.index()].imm as u32)
@@ -606,18 +611,24 @@ fn inst_terminates(m: &Module, i: Inst) -> bool {
         },
         Opcode::Loop => m
             .inst_region(i, 0)
-            .is_some_and(|body| !region_breaks(m, body)),
+            .is_some_and(|body| !region_breaks(m, body, 0)),
         _ => false,
     }
 }
 
-/// Whether `region` contains a `break` that targets the loop owning it (not a nested loop).
-fn region_breaks(m: &Module, region: Region) -> bool {
+/// Whether `region`, `depth` loops inside a loop, contains a `break` that exits that loop.
+fn region_breaks(m: &Module, region: Region, depth: u32) -> bool {
     m.region_insts(region)
         .iter()
         .any(|&i| match m.inst_opcode(i) {
-            Opcode::Break => true,
-            Opcode::If => (0..2).any(|n| m.inst_region(i, n).is_some_and(|r| region_breaks(m, r))),
+            Opcode::Break => m.inst_loop_depth(i) == depth,
+            Opcode::If => (0..2).any(|n| {
+                m.inst_region(i, n)
+                    .is_some_and(|r| region_breaks(m, r, depth))
+            }),
+            Opcode::Loop => m
+                .inst_region(i, 0)
+                .is_some_and(|r| region_breaks(m, r, depth + 1)),
             _ => false,
         })
 }

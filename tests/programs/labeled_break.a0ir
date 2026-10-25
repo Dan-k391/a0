@@ -1,0 +1,53 @@
+; `break N` and `continue N` leave or restart the loop N loops out from the innermost.
+; For i in 0..4 and j in 0..4: j == 2 restarts the outer loop, and i == 3 leaves both loops.
+; expect-stdout: 00 01 10 11 20 21 30 done
+module "labeled break"
+
+extern func @a0_print_i64(i64)
+extern func @a0_print_cstr(ptr)
+data @space = " \00"
+data @done = "done\0a\00"
+
+func @main() -> i32 {
+  var $i: i64
+  var $j: i64
+  %zero: i64 = iconst 0
+  %one: i64 = iconst 1
+  %two: i64 = iconst 2
+  %three: i64 = iconst 3
+  %ten: i64 = iconst 10
+  %sp: ptr = addr @space
+  set $i, %zero
+  loop {
+    set $j, %zero
+    loop {
+      %i: i64 = get $i
+      %j: i64 = get $j
+      %tens: i64 = imul %i, %ten
+      %both: i64 = iadd %tens, %j
+      %is_zero: i1 = icmp eq %i, %zero
+      if %is_zero {
+        call @a0_print_i64(%zero)
+      }
+      call @a0_print_i64(%both)
+      call @a0_print_cstr(%sp)
+      %stop: i1 = icmp eq %i, %three
+      if %stop {
+        break 1
+      }
+      %j1: i64 = iadd %j, %one
+      set $j, %j1
+      %next: i1 = icmp eq %j1, %two
+      if %next {
+        %i1: i64 = iadd %i, %one
+        set $i, %i1
+        continue 1
+      }
+    }
+    unreachable
+  }
+  %d: ptr = addr @done
+  call @a0_print_cstr(%d)
+  %r: i32 = iconst 0
+  return %r
+}

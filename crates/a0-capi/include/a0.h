@@ -125,6 +125,9 @@ void a0_builder_loop(A0Builder *b);
 void a0_builder_end_loop(A0Builder *b);
 void a0_builder_break(A0Builder *b);
 void a0_builder_continue(A0Builder *b);
+/* break and continue for the loop `depth` loops out from the innermost (0 is the innermost). */
+void a0_builder_break_out(A0Builder *b, uint32_t depth);
+void a0_builder_continue_out(A0Builder *b, uint32_t depth);
 /* `value` is A0_NONE in a function that returns nothing. */
 void a0_builder_return(A0Builder *b, A0Value value);
 void a0_builder_unreachable(A0Builder *b);

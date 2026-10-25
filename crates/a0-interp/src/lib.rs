@@ -255,8 +255,9 @@ enum Op {
     Loop {
         body: Box<[Op]>,
     },
-    Break,
-    Continue,
+    /// Leaves (or restarts) the loop this many loops out from the innermost.
+    Break(u32),
+    Continue(u32),
     Return(Option<Slot>),
     Unreachable(u32),
 }
@@ -319,8 +320,8 @@ struct FuncInfo {
 
 enum Flow {
     Next,
-    Break,
-    Continue,
+    Break(u32),
+    Continue(u32),
     Return(u64),
 }
 
@@ -765,13 +766,15 @@ impl Interpreter {
                 }
                 Op::Loop { body } => loop {
                     match self.exec(body, base)? {
-                        Flow::Next | Flow::Continue => {}
-                        Flow::Break => break,
+                        Flow::Next | Flow::Continue(0) => {}
+                        Flow::Break(0) => break,
+                        Flow::Break(n) => return Ok(Flow::Break(n - 1)),
+                        Flow::Continue(n) => return Ok(Flow::Continue(n - 1)),
                         ret @ Flow::Return(_) => return Ok(ret),
                     }
                 },
-                Op::Break => return Ok(Flow::Break),
-                Op::Continue => return Ok(Flow::Continue),
+                &Op::Break(depth) => return Ok(Flow::Break(depth)),
+                &Op::Continue(depth) => return Ok(Flow::Continue(depth)),
                 &Op::Return(v) => {
                     return Ok(Flow::Return(v.map(|s| self.get(base, s)).unwrap_or(0)));
                 }
@@ -969,8 +972,8 @@ impl FuncCompiler<'_> {
             Opcode::Loop => Op::Loop {
                 body: self.region(m.inst_region(i, 0).unwrap()),
             },
-            Opcode::Break => Op::Break,
-            Opcode::Continue => Op::Continue,
+            Opcode::Break => Op::Break(m.inst_loop_depth(i)),
+            Opcode::Continue => Op::Continue(m.inst_loop_depth(i)),
             Opcode::Return => Op::Return(args.first().map(|&v| self.s(v))),
             Opcode::Unreachable => Op::Unreachable(self.locations.of(i)),
             _ => unreachable!("verified IR has no other opcodes"),

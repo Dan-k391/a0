@@ -130,9 +130,11 @@ pub(crate) fn inst_text(m: &Module, names: &Names, inst: Inst) -> String {
                 .unwrap_or(Type::F64);
             format_scalar(ty, m.inst_fconst_bits(inst))
         }
-        Opcode::Null | Opcode::Break | Opcode::Continue | Opcode::Unreachable | Opcode::Loop => {
-            String::new()
-        }
+        Opcode::Null | Opcode::Unreachable | Opcode::Loop => String::new(),
+        Opcode::Break | Opcode::Continue => match m.inst_loop_depth(inst) {
+            0 => String::new(),
+            depth => depth.to_string(),
+        },
         Opcode::Addr => sym_name(m.symbol_name(m.inst_symbol(inst))),
         Opcode::Icmp => format!("{} {}, {}", m.inst_int_cc(inst).name(), a(0), a(1)),
         Opcode::Fcmp => format!("{} {}, {}", m.inst_float_cc(inst).name(), a(0), a(1)),

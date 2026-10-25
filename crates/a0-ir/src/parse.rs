@@ -907,7 +907,16 @@ impl Parser {
                 }
                 imm = self.float(ty)?;
             }
-            Opcode::Null | Opcode::Break | Opcode::Continue | Opcode::Unreachable => {}
+            Opcode::Null | Opcode::Unreachable => {}
+            Opcode::Break | Opcode::Continue => {
+                if let Tok::Int(depth) = *self.peek() {
+                    if !(0..=u32::MAX as i128).contains(&depth) {
+                        return self.error_at(self.span(), "expected a loop depth");
+                    }
+                    self.bump();
+                    imm = depth as u64;
+                }
+            }
             Opcode::Addr => {
                 let (name, span) = self.sym()?;
                 match self.module.lookup(&name) {

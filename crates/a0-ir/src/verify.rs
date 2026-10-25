@@ -486,6 +486,15 @@ impl<'a> FuncVerifier<'a> {
             Opcode::Break | Opcode::Continue => {
                 if self.loop_depth == 0 {
                     self.inst_error(inst, "ir.control", &format!("{op} outside a loop"));
+                } else if m.inst_loop_depth(inst) >= self.loop_depth {
+                    self.inst_error(
+                        inst,
+                        "ir.control",
+                        &format!(
+                            "{op} {} leaves more loops than are open",
+                            m.inst_loop_depth(inst)
+                        ),
+                    );
                 }
             }
             Opcode::Return => {

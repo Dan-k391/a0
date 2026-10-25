@@ -161,10 +161,15 @@ fn builder_reports_misuse_instead_of_panicking() {
     b.begin_function(f);
     b.break_();
     b.loop_();
+    b.break_out(1);
     b.end_if();
     b.end_function();
     let err = b.finish().unwrap_err();
     let text = err.summary();
+    assert!(
+        text.contains("break_out of more loops than are open"),
+        "{text}"
+    );
     assert!(text.contains("else_ without a matching if_"), "{text}");
     assert!(text.contains("break built outside a function"), "{text}");
     assert!(text.contains("break_ outside a loop"), "{text}");

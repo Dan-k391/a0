@@ -587,6 +587,16 @@ pub unsafe extern "C" fn a0_builder_continue(b: *mut A0Builder) {
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn a0_builder_break_out(b: *mut A0Builder, depth: u32) {
+    builder!(b).b.break_out(depth)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn a0_builder_continue_out(b: *mut A0Builder, depth: u32) {
+    builder!(b).b.continue_out(depth)
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn a0_builder_return(b: *mut A0Builder, value: u32) {
     let value = (value != NONE).then_some(Value(value));
     builder!(b).b.ret(value)

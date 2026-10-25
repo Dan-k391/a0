@@ -57,7 +57,7 @@ for most opcodes it is implied by the operands and the verifier checks that it m
 | memory | `load p`, `store v, p`, `ptradd p, off` | `off: i64`, byte offset. Unaligned access is allowed. |
 | calls | `call @f(args)`, `call_indirect p(args) : (T..) -> R` | `call_indirect` spells out the signature. |
 | variables | `get $v`, `set $v, x` | |
-| control | `if c { } else { }`, `loop { }`, `break`, `continue`, `return [v]`, `unreachable` | `break`/`continue` refer to the innermost `loop`. |
+| control | `if c { } else { }`, `loop { }`, `break [n]`, `continue [n]`, `return [v]`, `unreachable` | `break`/`continue` refer to the innermost `loop`, or with `n` to the loop `n` loops out from it (`break 1` leaves two loops). |
 
 Defined behaviour (identical in the interpreter and native code):
 
@@ -134,7 +134,7 @@ let x = b.param(0);
 let acc = b.declare_var("acc", Type::F64);
 let c = b.fcmp(FloatCC::Lt, x, zero);
 b.if_(c);  /* then */  b.else_();  /* else */  b.end_if();
-b.loop_(); /* body */  b.break_(); b.end_loop();
+b.loop_(); /* body */  b.break_(); b.end_loop();   // break_out(n), continue_out(n): outer loops
 b.ret(Some(v));
 b.end_function();
 let module = b.finish()?;  // structural errors + verifier diagnostics
@@ -180,5 +180,5 @@ span of the offending instruction.
 
 ## Not yet
 
-Aggregate types, stack slots, switch, labeled break, DWARF debug information and calling-convention
+Aggregate types, stack slots, switch, DWARF debug information and calling-convention
 attributes are left out until an example language needs them (see `docs/decisions.md`).
