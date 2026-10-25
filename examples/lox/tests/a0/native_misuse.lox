@@ -1,0 +1,2 @@
+// A wrong argument to a native is a runtime error, as for Lox's own operations.
+sqrt("four"); // expect runtime error: Argument must be a number.

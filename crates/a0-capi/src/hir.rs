@@ -230,6 +230,31 @@ pub unsafe extern "C" fn a0_hir_clear_span(b: *mut A0HirBuilder) {
     }
 }
 
+/// Returns 0 if the text was added, -1 with `*diags` set if it has errors.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn a0_hir_add_text(
+    b: *mut A0HirBuilder,
+    text: *const c_char,
+    len: usize,
+    diags: *mut *mut A0Diagnostics,
+) -> i32 {
+    let text = unsafe { self::text(text, len) };
+    let Some(h) = (unsafe { b.as_mut() }) else {
+        unsafe { report(diags, Some(error("a0_hir_add_text: no builder"))) };
+        return -1;
+    };
+    match h.b.add_text(&text, SOURCE) {
+        Ok(()) => {
+            unsafe { report(diags, None) };
+            0
+        }
+        Err(d) => {
+            unsafe { report(diags, Some(d)) };
+            -1
+        }
+    }
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn a0_hir_finish(
     b: *mut A0HirBuilder,

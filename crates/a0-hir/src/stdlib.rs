@@ -54,7 +54,7 @@ impl HirBuilder {
         let saved = (self.module, self.public, self.span);
         let type_scope = std::mem::take(&mut self.type_scope);
         let id = self.begin_module(name, false);
-        if let Err(d) = text::include(self, source) {
+        if let Err(d) = text::include(self, source, None, true) {
             panic!("the standard library's {name} is invalid:\n{}", d.summary());
         }
         (self.module, self.public, self.span) = saved;

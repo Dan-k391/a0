@@ -14,7 +14,10 @@ struct LoxFunction {
   code2: (fn(any, any, any) -> any)?,
   code3: (fn(any, any, any, any) -> any)?
 }
-struct LoxNative { arity: int, code: fn(array<any>) -> any }
+// A native function's code takes the arguments and the line of the call, for its errors.
+struct LoxNative { arity: int, code: fn(array<any>, int) -> any }
+// What a Lox `throw` raises: the value, and the line of the `throw` for when nothing catches it.
+struct LoxThrown { value: any, line: int }
 struct LoxClass { name: string, methods: map<string, LoxFunction> }
 struct LoxInstance { class: LoxClass, fields: map<string, any> }
 struct LoxBound { receiver: any, method: LoxFunction }
@@ -32,7 +35,22 @@ fn undefined_variable(name: string, line: int) -> never {
 }
 
 fn native_clock() -> any {
-  new LoxNative { arity: 0, code: fn(args: array<any>) -> any { clock() as any } } as any
+  new LoxNative { arity: 0, code: fn(args: array<any>, line: int) -> any { clock() as any } } as any
+}
+
+fn throw_value(value: any, line: int) -> never {
+  throw new LoxThrown { value: value, line: line }
+}
+
+// The value a `catch` gets.
+fn caught(e: any) -> any {
+  (e as LoxThrown).value
+}
+
+// An exception that nothing caught ends the program like a runtime error.
+fn uncaught(e: any) -> never {
+  let t = e as LoxThrown;
+  runtime_error("Uncaught exception: " + stringify(t.value) + ".", t.line)
 }
 
 fn truthy(v: any) -> bool {
@@ -180,7 +198,7 @@ fn call(callee: any, args: array<any>, line: int) -> any {
   } else if callee is LoxNative {
     let n = callee as LoxNative;
     arity(n.arity, len(args), line);
-    n.code(args)
+    n.code(args, line)
   } else {
     runtime_error("Can only call functions and classes.", line)
   };

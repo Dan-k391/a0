@@ -16,6 +16,21 @@ use crate::analyze::{Analysis, DeclId, Names, Place, is_variable, statements};
 
 /// Lox's runtime, in HIR.
 pub const PRELUDE: &str = include_str!("../prelude.hir");
+/// Native functions over the standard library, added when a program uses one.
+pub const NATIVES: &str = include_str!("../natives.hir");
+
+/// Lox's native functions: the name, the prelude function that makes it, and whether it is one of
+/// `NATIVES` (A0's extensions, which also need the standard library's modules).
+const NATIVE_FUNCTIONS: &[(&str, &str, bool)] = &[
+    ("clock", "native_clock", false),
+    ("readLine", "native_read_line", true),
+    ("readFile", "native_read_file", true),
+    ("writeFile", "native_write_file", true),
+    ("env", "native_env", true),
+    ("number", "native_number", true),
+    ("sqrt", "native_sqrt", true),
+    ("floor", "native_floor", true),
+];
 
 struct Emit<'a> {
     tree: &'a SyntaxTree,
@@ -56,13 +71,41 @@ pub fn generate(tree: &SyntaxTree, n: &Names, a: &Analysis, lines: &Lines) -> Hi
         body,
         init_this: None,
     };
-    let (clock, defined) = e.global("clock");
-    let native = e.rt("native_clock", &[]);
-    let t = e.b.bool_lit(true);
-    let mut items = vec![e.b.set_global(clock, native), e.b.set_global(defined, t)];
-    for s in statements(tree, tree.root()) {
-        e.stmt(s, &mut items);
+    // Natives other than `clock` exist only in programs that name them, so that the others pay
+    // for neither the standard library nor the exceptions natives can throw.
+    let named = identifiers(tree);
+    let used: Vec<(&str, &str, bool)> = NATIVE_FUNCTIONS
+        .iter()
+        .copied()
+        .filter(|&(name, _, extension)| !extension || named.contains(name))
+        .collect();
+    if used.iter().any(|n| n.2) {
+        for module in ["std.io", "std.fs", "std.env", "std.math", "std.str"] {
+            e.b.import_module(module, module);
+        }
+        if let Err(d) = e.b.add_text(NATIVES, SourceId(u32::MAX)) {
+            panic!("natives.hir is invalid:\n{}", d.summary());
+        }
     }
+    let mut items = Vec::new();
+    for (name, make, _) in used {
+        let (value, defined) = e.global(name);
+        let native = e.rt(make, &[]);
+        let t = e.b.bool_lit(true);
+        items.push(e.b.set_global(value, native));
+        items.push(e.b.set_global(defined, t));
+    }
+    let mut script = Vec::new();
+    for s in statements(tree, tree.root()) {
+        e.stmt(s, &mut script);
+    }
+    // An exception nothing catches ends the program like a runtime error.
+    let script = e.b.block(&script, None);
+    let error = e.b.new_local(body, "error", TypeId::ANY);
+    let report = e.b.local(error);
+    let report = e.rt("uncaught", &[report]);
+    let handler = e.b.block(&[report], None);
+    items.push(e.b.try_catch(script, error, handler));
     let zero = e.b.int(0);
     let root = e.b.block(&items, Some(zero));
     e.b.set_root(body, root);
@@ -70,6 +113,20 @@ pub fn generate(tree: &SyntaxTree, n: &Names, a: &Analysis, lines: &Lines) -> Hi
         Ok(m) => m,
         Err(d) => panic!("generated HIR is invalid:\n{}", d.summary()),
     }
+}
+
+/// The text of every identifier in the program.
+fn identifiers(tree: &SyntaxTree) -> std::collections::HashSet<&str> {
+    let mut out = std::collections::HashSet::new();
+    let mut stack = vec![tree.root()];
+    while let Some(node) = stack.pop() {
+        if tree.is_token(node) {
+            out.insert(tree.text(node));
+        } else {
+            stack.extend(tree.children(node));
+        }
+    }
+    out
 }
 
 impl Emit<'_> {
@@ -236,6 +293,12 @@ impl Emit<'_> {
             let body = self.b.block(&body, None);
             items.push(self.b.while_(c, body));
             out.push(self.b.block(&items, None));
+        } else if kind == n.throw_stmt {
+            let v = self.expr(tree.field(node, n.value).unwrap());
+            let line = self.line(tree.child(node, 0));
+            out.push(self.rt("throw_value", &[v, line]));
+        } else if kind == n.try_stmt {
+            self.try_stmt(node, out);
         } else if kind == n.return_stmt {
             let v = match (self.init_this, tree.field(node, n.value)) {
                 (Some(this), _) => self.b.local(this),
@@ -244,6 +307,33 @@ impl Emit<'_> {
             };
             out.push(self.b.return_(Some(v)));
         }
+    }
+
+    /// `try { body } catch (name) { handler }`. The call depth is restored for the handler: the
+    /// calls the exception left never counted themselves out.
+    fn try_stmt(&mut self, node: NodeId, out: &mut Vec<ExprId>) {
+        let n = self.n;
+        let tree = self.tree;
+        let Some(Item::Global(depth)) = self.b.module().lookup_value("depth") else {
+            panic!("prelude.hir has no global depth");
+        };
+        let saved = self.b.new_local(self.body, "depth", TypeId::INT);
+        let now = self.b.global(depth);
+        let save = self.b.let_(saved, now);
+        let body = self.block(tree.field(node, n.body).unwrap());
+        let error = self.b.new_local(self.body, "error", TypeId::ANY);
+        let then = self.b.local(saved);
+        let mut handler = vec![self.b.set_global(depth, then)];
+        let name = tree.field(node, n.name).unwrap();
+        let e = self.b.local(error);
+        let value = self.rt("caught", &[e]);
+        self.bind(self.a.defs[&name], name, value, &mut handler);
+        for s in statements(tree, tree.field(node, n.handler).unwrap()) {
+            self.stmt(s, &mut handler);
+        }
+        let handler = self.b.block(&handler, None);
+        let t = self.b.try_catch(body, error, handler);
+        out.push(self.b.block(&[save, t], None));
     }
 
     /// Assigns a variable and yields the value.

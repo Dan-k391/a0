@@ -1,0 +1,65 @@
+// Native functions over A0's standard library (A0's extension, not in the book), added to a
+// program that uses one. A failure the program can do something about (a file that cannot be
+// read, text that is not a number) throws its message; a wrong argument is a runtime error.
+module "lox";
+
+fn text_argument(v: any, line: int) -> string {
+  if v is string { v as string } else { runtime_error("Argument must be a string.", line) }
+}
+
+fn number_argument(v: any, line: int) -> float {
+  if v is float { v as float } else { runtime_error("Argument must be a number.", line) }
+}
+
+fn native_read_line() -> any {
+  new LoxNative { arity: 0, code: fn(args: array<any>, line: int) -> any {
+    if let text = `std.io.read_line`() { text as any } else { () as any }
+  } } as any
+}
+
+fn native_read_file() -> any {
+  new LoxNative { arity: 1, code: fn(args: array<any>, line: int) -> any {
+    match `std.fs.read`(text_argument(args[0], line)) {
+      Ok(text) => text as any,
+      Err(message) => throw_value(message as any, line),
+    }
+  } } as any
+}
+
+fn native_write_file() -> any {
+  new LoxNative { arity: 2, code: fn(args: array<any>, line: int) -> any {
+    let path = text_argument(args[0], line);
+    match `std.fs.write`(path, text_argument(args[1], line)) {
+      Ok(done) => () as any,
+      Err(message) => throw_value(message as any, line),
+    }
+  } } as any
+}
+
+fn native_env() -> any {
+  new LoxNative { arity: 1, code: fn(args: array<any>, line: int) -> any {
+    if let value = `std.env.get`(text_argument(args[0], line)) { value as any } else { () as any }
+  } } as any
+}
+
+fn native_number() -> any {
+  new LoxNative { arity: 1, code: fn(args: array<any>, line: int) -> any {
+    let text = text_argument(args[0], line);
+    match `std.str.parse_float`(text) {
+      Ok(x) => x as any,
+      Err(message) => throw_value(("Not a number: " + text) as any, line),
+    }
+  } } as any
+}
+
+fn native_sqrt() -> any {
+  new LoxNative { arity: 1, code: fn(args: array<any>, line: int) -> any {
+    `std.math.sqrt`(number_argument(args[0], line)) as any
+  } } as any
+}
+
+fn native_floor() -> any {
+  new LoxNative { arity: 1, code: fn(args: array<any>, line: int) -> any {
+    `std.math.floor`(number_argument(args[0], line)) as any
+  } } as any
+}

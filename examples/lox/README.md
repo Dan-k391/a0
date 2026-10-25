@@ -13,8 +13,10 @@ behavior.
 | `src/analyze.rs` | jlox's parse-time checks and resolver |
 | `src/emit.rs` | HIR generation: one closure per Lox function, a `main` for the script |
 | `prelude.hir` | Lox's runtime semantics, written in HIR: calls, classes, operators, errors |
+| `natives.hir` | A0's native functions over the standard library, added to programs that use them |
 | `src/main.rs` | the `lox` command, an `a0-driver` language with jlox's exit codes |
 | `tests/craftinginterpreters` | the official test suite (MIT), run by `tests/suite.rs` |
+| `tests/a0` | tests of A0's extensions, in the suite's form, run with it |
 
 ```
 lox script.lox                 # interpret (like jlox)
@@ -38,6 +40,20 @@ collector run on every allocation; the suite also runs that way.
 - **Classes** copy their superclass's methods on creation; `this` and `super` are ordinary locals that
   closures capture.
 - **Stack overflow.** `call` counts nesting and reports `Stack overflow.` past 3000 Lox calls.
+
+## A0's extensions
+
+Two things the book's Lox does not have, which programs that do not use them never notice:
+
+- **Exceptions.** `throw value;` raises any value; `try { ... } catch (e) { ... }` runs the handler
+  with the value in `e`, a variable of the handler's own. An exception nothing catches ends the
+  program like a runtime error: `Uncaught exception: <value>.` and the line of the `throw`, exit 70.
+  Runtime errors stay fatal, as in the book. They are the HIR's exceptions (`docs/hir.md`).
+- **Native functions** over A0's standard library (`docs/std.md`): `readLine()` (a line of standard
+  input, or `nil` at its end), `readFile(path)`, `writeFile(path, text)`, `env(name)` (or `nil`),
+  `number(text)`, `sqrt(x)` and `floor(x)`. A failure the program can handle (a file that cannot be
+  read, text that is not a number) throws its message; a wrong argument is a runtime error.
+  `clock()` is the book's.
 
 Number formatting uses the shortest round-trip representation, which matches jlox for every number
 the suite prints (jlox would print `1.0E21` where this prints `1e+21`).

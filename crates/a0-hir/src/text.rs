@@ -28,28 +28,43 @@ pub fn parse(text: &str, source: SourceId) -> Result<HirModule, Diagnostics> {
     let root = tree.root();
     let name_node = tree.field_named(root, "name").unwrap();
     let mut b = HirBuilder::new(&unquote(tree.text(name_node)));
-    let diags = TextParser::new(&tree, &mut b, true).module(root);
+    let diags = TextParser::new(&tree, &mut b, Some(source), false).module(root);
     if diags.has_errors() {
         return Err(diags);
     }
     b.finish()
 }
 
-/// Adds the items of a module in the text format to the builder's current module, without spans
-/// (the standard library, `stdlib.rs`). Its own items and the prelude's are known by their names;
-/// other modules' by their full names (`` `std.Result` ``). In the text, a C function whose name
-/// starts with `a0_` is private to the module; everything else is public.
-pub(crate) fn include(b: &mut HirBuilder, text: &str) -> Result<(), Diagnostics> {
+/// Adds the items of a module in the text format to the builder's current module, with spans in
+/// `source` if given. Its own items and the prelude's are known by their names, other modules' by
+/// their full names (`` `std.Result` ``). In a `library` (the standard library, `stdlib.rs`), a C
+/// function whose name starts with `a0_` is private to the module and everything else is public.
+pub(crate) fn include(
+    b: &mut HirBuilder,
+    text: &str,
+    source: Option<SourceId>,
+    library: bool,
+) -> Result<(), Diagnostics> {
     let g = grammar();
-    let (tree, diags) = g.parse(text, SourceId(u32::MAX));
+    let (tree, diags) = g.parse(text, source.unwrap_or(SourceId(u32::MAX)));
     if diags.has_errors() {
         return Err(diags);
     }
-    let diags = TextParser::new(&tree, b, false).module(tree.root());
+    let diags = TextParser::new(&tree, b, source, library).module(tree.root());
     if diags.has_errors() {
         return Err(diags);
     }
     Ok(())
+}
+
+impl HirBuilder {
+    /// Adds the items of a module in the text format (its `module` line is ignored) to the current
+    /// module, for code a language keeps as text, such as a runtime written in HIR that uses the
+    /// standard library (import its modules first; the text names their items in full,
+    /// `` `std.fs.read` ``). `source` is the text's id in the caller's `SourceMap`, for spans.
+    pub fn add_text(&mut self, text: &str, source: SourceId) -> Result<(), Diagnostics> {
+        include(self, text, Some(source), false)
+    }
 }
 
 /// Decodes a string literal (with its quotes).
@@ -89,6 +104,8 @@ struct TextParser<'a> {
     b: &'a mut HirBuilder,
     /// Whether what is built gets the spans of the text.
     spans: bool,
+    /// Whether the text is a module of the standard library (see `include`).
+    library: bool,
     diags: Diagnostics,
     scopes: Scopes,
     body: Option<BodyId>,
@@ -99,11 +116,17 @@ struct TextParser<'a> {
 }
 
 impl<'a> TextParser<'a> {
-    fn new(tree: &'a SyntaxTree, b: &'a mut HirBuilder, spans: bool) -> TextParser<'a> {
+    fn new(
+        tree: &'a SyntaxTree,
+        b: &'a mut HirBuilder,
+        source: Option<SourceId>,
+        library: bool,
+    ) -> TextParser<'a> {
         TextParser {
             tree,
             b,
-            spans,
+            spans: source.is_some(),
+            library,
             diags: Diagnostics::new(),
             scopes: Scopes::new(),
             body: None,
@@ -193,7 +216,7 @@ impl<'a> TextParser<'a> {
         let mut funcs = Vec::new();
         for &item in &items {
             self.at(item);
-            if !self.spans {
+            if self.library {
                 let private = self.kind(item) == "extern_decl"
                     && self
                         .field(item, "name")
@@ -203,7 +226,9 @@ impl<'a> TextParser<'a> {
             let _ = self.declaration(item, &mut funcs);
             self.tparams.clear();
         }
-        self.b.set_public(true);
+        if self.library {
+            self.b.set_public(true);
+        }
         // Pass 3: bodies, with their function's type parameters in scope.
         for (f, item) in funcs {
             self.bind_type_params(Item::Func(f));

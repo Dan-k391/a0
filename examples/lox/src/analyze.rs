@@ -36,6 +36,7 @@ pub struct Names {
     pub arg: FieldId,
     pub inner: FieldId,
     pub method: FieldId,
+    pub handler: FieldId,
     pub class_decl: KindId,
     pub fun_decl: KindId,
     pub method_kind: KindId,
@@ -46,6 +47,8 @@ pub struct Names {
     pub print_stmt: KindId,
     pub return_stmt: KindId,
     pub while_stmt: KindId,
+    pub try_stmt: KindId,
+    pub throw_stmt: KindId,
     pub block: KindId,
     pub assign: KindId,
     pub logical: KindId,
@@ -102,6 +105,7 @@ impl Names {
             arg: f("arg"),
             inner: f("inner"),
             method: f("method"),
+            handler: f("handler"),
             class_decl: k("class_decl"),
             fun_decl: k("fun_decl"),
             method_kind: k("method"),
@@ -112,6 +116,8 @@ impl Names {
             print_stmt: k("print_stmt"),
             return_stmt: k("return_stmt"),
             while_stmt: k("while_stmt"),
+            try_stmt: k("try_stmt"),
+            throw_stmt: k("throw_stmt"),
             block: k("block"),
             assign: k("assign"),
             logical: k("logical"),
@@ -216,7 +222,8 @@ pub struct Analysis {
     /// Variable uses (`primary` nodes for names, `this` and `super`, `assign` nodes, and superclass
     /// name tokens) to places.
     pub uses: HashMap<NodeId, Place>,
-    /// Declarations (`var_decl`, `fun_decl` and `class_decl` nodes, parameter tokens) to places.
+    /// Declarations (`var_decl`, `fun_decl` and `class_decl` nodes, parameter tokens, the names
+    /// of `catch` variables) to places.
     pub defs: HashMap<NodeId, Place>,
     /// Methods to their `this`.
     pub this_decls: HashMap<NodeId, DeclId>,
@@ -357,6 +364,19 @@ impl Resolver<'_> {
                     Some(e) => self.expr(e),
                     None => {}
                 }
+            }
+            self.scopes.pop();
+        } else if kind == n.throw_stmt {
+            self.expr(tree.field(node, n.value).unwrap());
+        } else if kind == n.try_stmt {
+            self.stmt(tree.field(node, n.body).unwrap());
+            // The variable lives in the handler's own scope, as parameters live in a function's.
+            self.scopes.push(ScopeKind::Block);
+            let name = tree.field(node, n.name).unwrap();
+            let d = self.declare_name(tree.text(name), true).unwrap();
+            self.a.defs.insert(name, Place::Local(d));
+            for s in statements(tree, tree.field(node, n.handler).unwrap()) {
+                self.stmt(s);
             }
             self.scopes.pop();
         } else if kind == n.return_stmt {

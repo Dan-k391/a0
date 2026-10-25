@@ -19,6 +19,10 @@ APIs. `docs/milestones.md` has the details of each step, with measurements.
 - **Exceptions and results**, interpreted and native alike: `throw` and `try`/`catch` in the HIR
   (an uncaught exception reports its value and where it was thrown), and `propagate`, a language's
   `?`, for result values; Minnow has `?`. Programs that never throw pay nothing.
+- **Lox exceptions and natives** (A0's extensions to the book's Lox): `throw` and
+  `try`/`catch`, and `readLine`, `readFile`, `writeFile`, `env`, `number`, `sqrt`, `floor` over
+  the standard library, whose failures are exceptions; the official suite still passes.
+- `add_text` adds HIR text to a builder.
 - **Labeled `break` and `continue`** in the core IR (`break 1` leaves two loops).
 - Lowering compiles only the functions `main` can reach.
 - **Modules**: programs of several files, with imports found through the grammar (`@import`),

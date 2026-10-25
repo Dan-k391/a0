@@ -224,7 +224,9 @@ fixes, in the language's words (`docs/diagnostics.md`); `report_code` adds a lan
 and `error_expr` stands in for an expression that could not be built (its type fits everything, so
 it causes no further errors). `set_type_syntax(TypeTag::Array, "[{}]")` makes diagnostics write
 types in the language's syntax and `set_term` names its concepts; `set_name_span` and
-`set_param_span` say where names and parameters are, for fixes and related locations. Item names are free: one that is a HIR keyword
+`set_param_span` say where names and parameters are, for fixes and related locations.
+`add_text` adds items written in the text format to a builder, for runtime code a language keeps as
+text (Lox's `natives.hir`, which uses the standard library). Item names are free: one that is a HIR keyword
 (`map`) or not an identifier is written in backquotes in the text format.
 
 ## Modules

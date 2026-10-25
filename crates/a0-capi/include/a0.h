@@ -289,6 +289,9 @@ A0HirEnum a0_hir_declare_enum(A0HirBuilder *b, const char *name, size_t len,
 uint32_t a0_hir_add_variant(A0HirBuilder *b, A0HirEnum e, const char *name, size_t len,
                             const A0HirType *fields, size_t field_count);
 A0HirGlobal a0_hir_declare_global(A0HirBuilder *b, const char *name, size_t len, A0HirType type);
+/* Adds the items of HIR text (docs/hir.md, "Text format"; its `module` line is ignored) to the
+ * current module. Returns 0, or -1 with the errors in *diags. */
+int32_t a0_hir_add_text(A0HirBuilder *b, const char *text, size_t len, A0Diagnostics **diags);
 /* A C function: it takes int, float, bool, strings (as const char *) and arrays of int, float or
  * bool (as pointers to their 64-bit elements), and returns one of the first three, unit or a
  * string (copied). */

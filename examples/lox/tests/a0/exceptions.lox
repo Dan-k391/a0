@@ -1,0 +1,63 @@
+// A0's extension: throw any value, catch it by name.
+fun check(n) {
+  if (n > 2) throw "too big";
+  return n;
+}
+
+try {
+  print check(1); // expect: 1
+  print check(5);
+  print "not reached";
+} catch (e) {
+  print e; // expect: too big
+}
+
+// Through calls, methods and loops; the handler sees variables as the throw left them.
+class Counter {
+  init() { this.n = 0; }
+  bump() {
+    this.n = this.n + 1;
+    if (this.n == 3) throw this;
+  }
+}
+var c = Counter();
+try {
+  while (true) c.bump();
+} catch (e) {
+  print e.n; // expect: 3
+  print e == c; // expect: true
+}
+
+// Nested handlers, rethrowing, and closures.
+fun risky(f) { f(); }
+fun boom() { throw 42; }
+try {
+  try {
+    risky(boom);
+  } catch (inner) {
+    print inner; // expect: 42
+    throw inner + 1;
+  }
+} catch (outer) {
+  print outer; // expect: 43
+}
+
+// Deep recursion unwinds, and calls count again from where the handler is.
+fun down(n) {
+  if (n == 0) throw "bottom";
+  down(n - 1);
+}
+for (var i = 0; i < 3; i = i + 1) {
+  try { down(2500); } catch (e) { print e; }
+}
+// expect: bottom
+// expect: bottom
+// expect: bottom
+fun deep(n) { if (n > 0) deep(n - 1); }
+deep(2900);
+print "deep calls still work"; // expect: deep calls still work
+
+// The catch variable is the handler's own.
+var e = "outer";
+try { throw "inner"; } catch (e) { print e; } // expect: inner
+print e; // expect: outer

@@ -95,7 +95,8 @@ layer, decision D17). A new crate goes into the table above and into `[workspace
   lowering learns something new, teach the generator to produce it.
 - HIR text must round-trip: `print(parse(print(m))) == print(m)` is tested for every corpus file.
 - Example languages test interpreted and native output (`examples/*/tests`), all three under GC
-  stress too, optimized and not. The Lox suite must stay at all 241 passing in all six modes.
+  stress too, optimized and not. The Lox suite must stay at all 241 passing in all six modes, and the tests of A0's extensions to
+  Lox (`examples/lox/tests/a0`) with it.
 - Each example language has `tests/lsp.rs`: its server's outline, definitions, hovers,
   diagnostics and quick fixes on a small program, through `a0_driver::lsp::session`.
 - Each example language has `tests/diagnostics/`: programs whose full output (rendered

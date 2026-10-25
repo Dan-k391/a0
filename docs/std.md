@@ -31,8 +31,9 @@ fn main() {
 ```
 
 A language without modules imports what it needs itself (once, outside function bodies) and
-calls the functions by member, wrapping them in its own conventions: an exception-style language
-turns an `Err` into an exception, for one.
+calls the functions by member, or by their full names from HIR text added with `add_text`
+(`` `std.fs.read`(path) ``), wrapping them in its own conventions. Lox's `natives.hir` does that: an
+`Err` becomes a Lox exception.
 
 ## Errors
 

@@ -6,6 +6,9 @@
 //! errors (exit 70). Tests run interpreted, as native executables, and interpreted with the garbage
 //! collector running on every allocation.
 //!
+//! `tests/a0` holds tests of A0's extensions to Lox (exceptions, natives over the standard library)
+//! in the same form; they run with the suite and are counted apart from it.
+//!
 //! Skipped, as in the jlox suite: the early-chapter tests (`scanning`, `expressions`), the benchmarks,
 //! and clox's bytecode limits (`limit/` except `stack_overflow.lox`). Two tests that the jlox suite skips
 //! because of JVM behavior run here and pass: `number/nan_equality.lox` and `limit/stack_overflow.lox`.
@@ -97,6 +100,8 @@ fn tests() -> Vec<(String, PathBuf)> {
     let root = suite_dir();
     let mut out = Vec::new();
     walk(&root.join("test"), &root, &mut out);
+    let tests = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests");
+    walk(&tests.join("a0"), &tests, &mut out);
     out.sort();
     out.retain(|(rel, _)| {
         !SKIPPED
@@ -282,6 +287,7 @@ fn run_suite(mode: &str, run: &(dyn Fn(&str, &Path) -> Output + Sync)) {
     );
     let failures = Mutex::new(Vec::new());
     let passed = Mutex::new(0usize);
+    let extensions = Mutex::new(0usize);
     let next = Mutex::new(0usize);
     let workers = std::thread::available_parallelism()
         .map(|n| n.get())
@@ -304,7 +310,9 @@ fn run_suite(mode: &str, run: &(dyn Fn(&str, &Path) -> Output + Sync)) {
                     };
                     let out = run(rel, path);
                     let f = validate(&e, &out);
-                    if f.is_empty() {
+                    if f.is_empty() && rel.starts_with("a0/") {
+                        *extensions.lock().unwrap() += 1;
+                    } else if f.is_empty() {
                         *passed.lock().unwrap() += 1;
                     } else {
                         failures
@@ -324,7 +332,8 @@ fn run_suite(mode: &str, run: &(dyn Fn(&str, &Path) -> Output + Sync)) {
         failures.len(),
         failures.join("\n")
     );
-    eprintln!("{mode}: all {passed} tests passed");
+    let extensions = extensions.into_inner().unwrap();
+    eprintln!("{mode}: all {passed} tests passed, and {extensions} of A0's extensions");
 }
 
 // Every mode runs with the HIR optimizer on (the default) and off (`A0_OPT=0`).

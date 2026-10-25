@@ -581,3 +581,13 @@ are never called. Lowering now follows calls and the closures a program makes fr
 only those functions, which saves compile time in both backends (Cranelift compiles each function
 it is given) and keeps `lang ir` output to the program's own code. The HIR, its text and its
 diagnostics still cover every function, so errors in unused code are still reported.
+
+## D51. Lox is the language with exceptions, as an extension
+
+v0.2 asks for an example language that uses exceptions. Minnow returns results; a new language
+would show nothing Lox cannot. So Lox gets `throw` and `try`/`catch` (with jlox-style syntax
+errors), plus natives over the standard library whose failures are exceptions, kept apart from the
+book: runtime errors stay fatal, so the official suite's behavior is untouched and Lox's operators
+need no checks; natives other than `clock` exist only in programs that name them, so other programs
+pay neither for the library nor for exceptions; and the extensions' tests (`tests/a0`) run with the
+suite in all six modes but are counted apart from its 241.

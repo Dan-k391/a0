@@ -1,0 +1,7 @@
+// An exception nothing catches ends the program like a runtime error, at the line of its throw.
+print "before"; // expect: before
+fun fail() {
+  throw "oops"; // expect runtime error: Uncaught exception: oops.
+}
+fail();
+print "after";

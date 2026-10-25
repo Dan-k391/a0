@@ -1,0 +1,16 @@
+// A0's natives over the standard library: failures the program can handle are exceptions.
+print sqrt(16); // expect: 4
+print floor(2.7); // expect: 2
+print number("2.5") * 2; // expect: 5
+try {
+  number("two");
+} catch (e) {
+  print e; // expect: Not a number: two
+}
+try {
+  readFile("no/such/file.txt");
+} catch (e) {
+  print "could not read"; // expect: could not read
+}
+print env("A0_LOX_TEST_UNSET_VARIABLE"); // expect: nil
+print readLine(); // expect: nil
