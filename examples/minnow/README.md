@@ -36,6 +36,13 @@ library's modules (`docs/std.md`) are imported the same way: `import std.fs;`, t
 `std.Result` (or another enum whose first variant holds the value), `fs.read(path)?` is the text or
 returns the failure; on a nullable value, `x?` is the value or returns `null`.
 
+Methods are declared in `impl` blocks, `impl Circle { fn grow(self, k: float) -> Circle { ... } }`,
+and called as `c.grow(2.0)`. An interface lists methods, `interface Shape { fn area(self) -> float; }`;
+`impl Shape for Circle { fn area(self) -> float { ... } }` implements it, after which a `Circle` is a
+`Shape` (`let shapes: [Shape] = []; push(shapes, c);`) and `s.area()` finds the method at run time.
+Type parameters can be bounded, `fn largest<T: Ord>(xs: [T]) -> T`, and value types can implement
+interfaces too (`impl Ord for int { ... }`).
+
 ```
 minnow run prog.mn               # interpret
 minnow build prog.mn -o prog     # native executable

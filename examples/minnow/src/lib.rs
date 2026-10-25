@@ -22,8 +22,8 @@
 use a0_diag::codes as code;
 use a0_diag::{Diagnostics, SourceId};
 use a0_hir::{
-    BinOp, BodyId, Builtin, ExprId, HirBuilder, HirModule, Item, LocalId, TypeId, TypeTag, UnOp,
-    Warning,
+    BinOp, BodyId, Builtin, ExprId, FuncId, HirBuilder, HirModule, InterfaceId, Item, LocalId,
+    TypeId, TypeTag, UnOp, Warning,
 };
 use a0_syntax::{Grammar, NodeId, SyntaxTree};
 
@@ -140,18 +140,25 @@ impl<'a> Compiler<'a> {
             .collect();
         // Types first, so that declarations can use them in any order.
         for &item in &items {
-            let name = self.text(self.field(item, "name"));
+            let Some(name) = self.opt(item, "name").map(|n| self.text(n)) else {
+                continue;
+            };
             let params = self.type_params(item);
             self.at_name(item);
             self.b.set_public(self.opt(item, "pub").is_some());
             match self.kind(item) {
                 "struct_decl" => drop(self.b.declare_generic_struct(name, &params)),
                 "enum_decl" => drop(self.b.declare_generic_enum(name, &params)),
+                "interface_decl" => drop(self.b.declare_interface(name)),
                 _ => {}
             }
         }
         let mut funcs = Vec::new();
         for &item in &items {
+            if self.kind(item) == "impl_decl" {
+                self.impl_decl(item, &mut funcs);
+                continue;
+            }
             let name = self.text(self.field(item, "name"));
             self.b.set_public(self.opt(item, "pub").is_some());
             match (self.kind(item), self.b.lookup_type_name(name)) {
@@ -177,11 +184,25 @@ impl<'a> Compiler<'a> {
                             .add_variant(e, self.text(self.field(v, "name")), &types);
                     }
                 }
+                ("interface_decl", Some(Item::Interface(i))) => {
+                    self.b.bind_type_params(Item::Interface(i));
+                    for sig in self.tree.fields_named(item, "method") {
+                        let (_, types, ret) = self.signature(sig);
+                        self.at_name(sig);
+                        self.b.add_interface_method(
+                            i,
+                            self.text(self.field(sig, "name")),
+                            &types,
+                            ret,
+                        );
+                    }
+                }
                 ("fn_decl", _) => {
                     self.at_name(item);
                     let f = self
                         .b
                         .declare_generic_function(name, &self.type_params(item));
+                    self.bounds(item, Item::Func(f), 0);
                     self.b.bind_type_params(Item::Func(f));
                     let (names, types, ret) = self.signature(item);
                     self.at_name(item);
@@ -201,13 +222,97 @@ impl<'a> Compiler<'a> {
     }
 
     fn type_params(&self, item: NodeId) -> Vec<&'a str> {
-        let tp = self.tree.nodes_of_kind(item, "type_params");
-        let names = tp.first().map(|&t| self.tree.fields_named(t, "tparam"));
-        names
-            .unwrap_or_default()
+        self.type_param_nodes(item)
             .into_iter()
-            .map(|n| self.text(n))
+            .map(|p| self.text(self.field(p, "name")))
             .collect()
+    }
+
+    fn type_param_nodes(&self, item: NodeId) -> Vec<NodeId> {
+        let tp = self.tree.nodes_of_kind(item, "type_params");
+        tp.first()
+            .map(|&t| self.tree.nodes_of_kind(t, "type_param"))
+            .unwrap_or_default()
+    }
+
+    /// The interfaces written on `item`'s type parameters (`T: Shape + Named`), which are the
+    /// parameters of `owner` from `skip` on.
+    fn bounds(&mut self, item: NodeId, owner: Item, skip: u32) {
+        for (k, p) in self.type_param_nodes(item).into_iter().enumerate() {
+            for bound in self.tree.fields_named(p, "bound") {
+                if let Some(i) = self.interface(bound) {
+                    self.b.add_bound(owner, skip + k as u32, i);
+                }
+            }
+        }
+    }
+
+    /// The interface a `named_type` names, or an error.
+    fn interface(&mut self, node: NodeId) -> Option<InterfaceId> {
+        let name = self.text(self.field(node, "name"));
+        self.at(node);
+        let item = match self.opt(node, "module") {
+            Some(m) => self.b.member_item(self.text(m), name, true),
+            None => self.b.lookup_type_name(name),
+        };
+        match item {
+            Some(Item::Interface(i)) => Some(i),
+            _ => {
+                let msg = format!("`{name}` is not an interface");
+                self.b.report_code(code::UNKNOWN_TYPE, &msg);
+                self.b.report_primary_label("expected an interface");
+                None
+            }
+        }
+    }
+
+    /// `impl Type { methods }` and `impl Interface for Type { methods }`: declares the methods
+    /// (their bodies are compiled with the functions').
+    fn impl_decl(&mut self, item: NodeId, funcs: &mut Vec<(FuncId, NodeId)>) {
+        let owner_node = self.field(item, "owner");
+        let name = self.text(self.field(owner_node, "name"));
+        self.at(owner_node);
+        let owner = match self.opt(owner_node, "module") {
+            Some(m) => self.b.member_type(self.text(m), name, &[]),
+            None => self.b.named_type(name, &[]),
+        };
+        self.b.set_public(true);
+        if let Some(iface) = self.opt(item, "iface")
+            && let Some(i) = self.interface(iface)
+        {
+            self.at(owner_node);
+            self.b.implement(owner, i);
+        }
+        // A method's own type parameters come after its owner's.
+        let skip = self.b.module().type_args(owner).len() as u32;
+        for method in self.tree.fields_named(item, "method") {
+            self.at_name(method);
+            let f = self.b.declare_method(
+                owner,
+                self.text(self.field(method, "name")),
+                &self.type_params(method),
+            );
+            self.bounds(method, Item::Func(f), skip);
+            self.b.bind_type_params(Item::Func(f));
+            let receiver = self.field(method, "receiver");
+            let (mut names, mut types, ret) = self.signature(method);
+            names.insert(0, self.text(receiver));
+            types.insert(0, self.b.method_self_type(f));
+            self.at_name(method);
+            self.b.set_signature(f, &names, &types, ret);
+            let body = self.b.function_body(f);
+            self.b.set_param_span(body, 0, self.tree.span(receiver));
+            for (i, p) in self
+                .tree
+                .nodes_of_kind(method, "param")
+                .into_iter()
+                .enumerate()
+            {
+                let span = self.tree.span(self.field(p, "name"));
+                self.b.set_param_span(body, i as u32 + 1, span);
+            }
+            funcs.push((f, method));
+        }
     }
 
     /// The parameter names and types and the result type of a function or closure.
@@ -670,6 +775,14 @@ impl<'a> Compiler<'a> {
             self.at(node);
             self.b.set_name_span(Some(self.tree.span(name)));
             return self.b.call_member(alias, self.text(name), &args);
+        }
+        // `shape.area()`: a method, or a closure in a field.
+        if self.kind(callee) == "get" {
+            let receiver = self.expr(self.field(callee, "operand"));
+            let name = self.field(callee, "name");
+            self.at(node);
+            self.b.set_name_span(Some(self.tree.span(name)));
+            return self.b.method_call(receiver, self.text(name), &args);
         }
         if self.kind(callee) != "name_expr" {
             let c = self.expr(callee);

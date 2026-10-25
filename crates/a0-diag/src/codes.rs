@@ -60,6 +60,8 @@ codes! {
         "The item belongs to another module and is not public there, so only that module can use it. Make it public in its module, or use something that is.";
     IMPORT_CYCLE = "E1012", "import cycle",
         "Modules import each other in a circle, so none of them can be compiled before the others. Move what they share into a module that both import.";
+    UNKNOWN_METHOD = "E1013", "unknown method",
+        "The value's type has no method of this name: its type declares none, no interface it is used as requires one, and no field of that name holds a function.";
 
     MISMATCHED_TYPES = "E2001", "mismatched types",
         "A value has a different type than the place it is used requires. The message says which type was expected and which was found, and points at where the expectation comes from: a declared type, a parameter, a field or a function's result.";
@@ -101,6 +103,10 @@ codes! {
         "Inside a generic function or type, a type parameter stands for any type, so its values can only be stored, passed, compared and converted, not used as numbers or strings.";
     CANNOT_PROPAGATE = "E2020", "cannot pass the failure on",
         "Passing a failure on (`?` in many languages) takes a value that is either nullable or of an enumeration whose first variant holds the result, such as `Result<T, E>`, and returns the null or the failure from the function. So the function must return a nullable value, or the same enumeration.";
+    NOT_IMPLEMENTED = "E2021", "interface not implemented",
+        "A type is used as an interface it does not implement, or declares that it implements one without having all of its methods with the signatures the interface gives them (`Self` standing for the type).";
+    NOT_DYNAMIC = "E2022", "not callable through an interface value",
+        "The method takes or returns `Self`, the type that implements the interface, which a value of the interface type does not know. Call it on a value whose type is known, or on a value of a type parameter bounded by the interface.";
 
     OUTSIDE_LOOP = "E3001", "outside a loop",
         "Leaving or continuing a loop is only possible inside a loop.";

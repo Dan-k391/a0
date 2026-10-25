@@ -116,6 +116,36 @@ fn type_errors_are_reported_with_locations() {
             "`break` outside of a loop",
         ),
         (
+            "struct P { x: int }\nimpl P {\n  fn get(self: P) -> int { self.x }\n}\nfn main() -> int { let p = new P { x: 1 }; p.gte() }",
+            "E1013",
+            "no method `gte` on `P`",
+        ),
+        (
+            "struct P { x: int }\ninterface I { fn f(self) -> int; }\nimpl I for P;\nfn main() -> int { 0 }",
+            "E2021",
+            "`P` does not have the method `f` that `I` requires",
+        ),
+        (
+            "struct P { x: int }\ninterface I { fn f(self) -> int; }\nimpl I for P;\nimpl P {\n  fn f(self: P) -> string { \"\" }\n}\nfn main() -> int { 0 }",
+            "E2021",
+            "expected `fn() -> int`, found `fn() -> string`",
+        ),
+        (
+            "interface I { fn f(self) -> int; }\nfn g<T: I>(x: T) -> int { x.f() }\nfn main() -> int { g(1) }",
+            "E2021",
+            "`int` does not implement `I`",
+        ),
+        (
+            "struct P { x: int }\ninterface I { fn same(self, Self) -> bool; }\nimpl I for P;\nimpl P {\n  fn same(self: P, o: P) -> bool { true }\n}\nfn h(i: I) -> bool { i.same(i) }\nfn main() -> int { 0 }",
+            "E2022",
+            "cannot be called on a value of the interface",
+        ),
+        (
+            "struct P { x: int }\ninterface I { fn f(self) -> int; }\nfn h(i: I) -> int { i.f() }\nfn main() -> int { h(new P { x: 1 }) }",
+            "E2001",
+            "expected `I`, found `P`",
+        ),
+        (
             "fn f() -> int { return \"s\"; }\nfn main() -> int { 0 }",
             "E2001",
             "`f` returns `int`",

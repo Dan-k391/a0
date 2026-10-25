@@ -27,6 +27,7 @@ mod builder;
 mod check;
 mod frontend;
 mod lower;
+mod methods;
 mod model;
 mod modules;
 mod mono;
@@ -41,7 +42,7 @@ pub use check::{check, check_entry};
 pub use lower::{LowerOptions, lower, lower_with};
 pub use model::{
     Abi, ArmId, BinOp, BodyId, Builtin, EnumId, ExprId, ExternId, FuncId, GlobalId, HirModule,
-    Item, LocalId, ModuleId, StructId, Term, TypeId, TypeTag, UnOp, Warning,
+    InterfaceId, Item, LocalId, ModuleId, StructId, Term, TypeId, TypeTag, UnOp, Warning,
 };
 pub use print::print_module;
 pub use stdlib::{is_std_module, std_module_text, std_modules};

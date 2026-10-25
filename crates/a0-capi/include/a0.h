@@ -219,7 +219,14 @@ typedef struct A0Str {
 } A0Str;
 
 /* What an item handle refers to (a0_hir_type_param, a0_hir_lookup_*). */
-enum { A0_HIR_STRUCT = 1, A0_HIR_ENUM = 2, A0_HIR_FUNC = 3, A0_HIR_GLOBAL = 4, A0_HIR_EXTERN = 5 };
+enum {
+    A0_HIR_STRUCT = 1,
+    A0_HIR_ENUM = 2,
+    A0_HIR_FUNC = 3,
+    A0_HIR_GLOBAL = 4,
+    A0_HIR_EXTERN = 5,
+    A0_HIR_INTERFACE = 6
+};
 
 A0HirBuilder *a0_hir_builder_new(const char *module_name, size_t len);
 /* Continues building a parsed module (a prelude written in HIR text). Consumes `h`. */
@@ -289,6 +296,27 @@ A0HirEnum a0_hir_declare_enum(A0HirBuilder *b, const char *name, size_t len,
 uint32_t a0_hir_add_variant(A0HirBuilder *b, A0HirEnum e, const char *name, size_t len,
                             const A0HirType *fields, size_t field_count);
 A0HirGlobal a0_hir_declare_global(A0HirBuilder *b, const char *name, size_t len, A0HirType type);
+/* Methods and interfaces (docs/hir.md, "Methods and interfaces"). An interface lists methods by
+ * their parameters after `self`; `Self` (a0_hir_interface_self) is the implementing type. */
+uint32_t a0_hir_declare_interface(A0HirBuilder *b, const char *name, size_t len);
+A0HirType a0_hir_interface_self(A0HirBuilder *b, uint32_t interface);
+A0HirType a0_hir_interface_type(A0HirBuilder *b, uint32_t interface);
+void a0_hir_add_interface_method(A0HirBuilder *b, uint32_t interface, const char *name, size_t len,
+                                 const A0HirType *params, size_t param_count, A0HirType ret);
+/* A method of `owner` (a struct or enum type, or int, float, bool, string): its type parameters are
+ * the owner's then `type_params`; its signature (a0_hir_set_signature) starts with `self`, of type
+ * a0_hir_method_self_type. */
+A0HirFunc a0_hir_declare_method(A0HirBuilder *b, A0HirType owner, const char *name, size_t len,
+                                const A0Str *type_params, size_t count);
+A0HirType a0_hir_method_self_type(A0HirBuilder *b, A0HirFunc f);
+void a0_hir_implement(A0HirBuilder *b, A0HirType owner, uint32_t interface);
+/* Requires type parameter `index` of a generic item to implement `interface`. */
+void a0_hir_add_bound(A0HirBuilder *b, uint32_t item_kind, uint32_t item, uint32_t index,
+                      uint32_t interface);
+/* `receiver.name(args)`: a method, a method of an interface value or of a bounded type parameter,
+ * or a closure in a field. */
+A0HirExpr a0_hir_method_call(A0HirBuilder *b, A0HirExpr receiver, const char *name, size_t len,
+                             const A0HirExpr *args, size_t arg_count);
 /* Adds the items of HIR text (docs/hir.md, "Text format"; its `module` line is ignored) to the
  * current module. Returns 0, or -1 with the errors in *diags. */
 int32_t a0_hir_add_text(A0HirBuilder *b, const char *text, size_t len, A0Diagnostics **diags);

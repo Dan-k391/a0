@@ -33,6 +33,7 @@ IR plus calls into the default runtime (`a0rt`), so it runs in the interpreter a
 | `S`, `S<T, ...>` | reference | a declared struct: named, mutable fields; possibly generic |
 | `E`, `E<T, ...>` | reference | a declared enum: variants with positional payloads; possibly generic |
 | `fn(T, ...) -> R` | reference | a closure |
+| `I` | reference | a declared interface: any struct or enum that implements it; see "Methods and interfaces" |
 | `T?` | reference | a reference type `T`, or null |
 | `never` | (internal) | the type of `return`, `break`, `exit`, ...; fits any type |
 
@@ -55,6 +56,36 @@ numbers or strings. Type arguments are inferred at calls and constructions (`fir
 (`first::<int>(xs)`, `new Pair<int, string> { ... }`, `Option<int>::None`). A0 monomorphizes: each
 generic item is copied for every combination of type arguments the program uses, before lowering,
 so frontends never substitute types themselves.
+
+**Methods and interfaces** (D52). A method belongs to a struct, an enum (for every instance of a
+generic one) or a value type (`int`, `float`, `bool`, `string`); its first parameter is the value it
+is called on, `self`. `x.m(args)` finds the method by `x`'s type. An interface lists methods by their
+parameters after `self`, where `Self` stands for the implementing type; a struct or enum implements
+it by declaring so and having those methods, with those signatures. A value of an interface type is
+a reference to an object of a type that implements it (a struct or enum converts to it where one is
+expected, or with `as`), and `x.m(args)` on it finds the method at run time; methods that use `Self`
+cannot be called that way (E2022). A type parameter can be bounded by interfaces
+(`fn largest<T: Ord>(xs: array<T>) -> T`): its values have their methods, `Self` being the
+parameter, and every type argument must implement them (value types too, statically). `x is I` and
+`x as I` test and convert an `any`.
+
+```
+interface Shape { fn area(self) -> float; fn bigger(self, Self) -> bool; }
+impl Shape for Circle;
+impl Circle {
+  fn area(self: Circle) -> float { 3.14 * self.r * self.r }
+  fn bigger(self: Circle, other: Circle) -> bool { self.r > other.r }
+}
+impl<T> Cell<T> {
+  fn get(self: Cell<T>) -> T { self.value }
+}
+fn total(shapes: array<Shape>) -> float { ... shapes[i].area() ... }
+```
+
+Builder: `declare_interface`, `add_interface_method` (with `interface_self` for `Self`),
+`interface_type`, `declare_method` (the owner's type parameters come first; `method_self_type` is
+`self`'s type), `implement`, `add_bound`, and `method_call`, which also calls a closure held in a
+field of that name. A method is the function `Owner.name` in the text (`` `Circle.area`(c) ``).
 
 **Inference.** Types a frontend does not know yet are inference variables: `HirBuilder::fresh_type`
 for an unannotated variable, the element type of `[]`, the type arguments of generic calls, the
@@ -291,6 +322,11 @@ replaced generic items with one copy per combination of type arguments:
   it was inlined at, if the optimizer inlined it, and every function gets its HIR name for stack
   traces (closures `f::{closure}`; entry points and wrappers none), so runtime errors name source
   locations and source functions (`docs/diagnostics.md`).
+- **Interfaces.** A type descriptor has an interface table (offset 32, `a0rt.h`): for each interface
+  of the program, the type's methods for it, or null. Lowering fills the tables at startup, and a
+  call on an interface value loads the object's type from its header, the table, and the method,
+  and calls it. Converting an object to an interface costs nothing; methods of type parameters are
+  plain calls once monomorphization knows the type.
 - **Only what `main` reaches** is lowered: functions it calls, directly or through others, and the
   closures it can make. A prelude or a library costs only what the program uses.
 - **Exceptions** (D49) are values in two globals (a flag and the value, a root) and explicit checks:
@@ -330,5 +366,5 @@ D38), stack traces included.
 
 ## Not yet
 
-Bounds on type parameters, methods, interfaces, `finally`, iteration protocols, float map keys, and
-memory modes other than `gc`.
+Default methods in interfaces, generic interfaces, `finally`, iteration protocols, float map keys,
+and memory modes other than `gc`.

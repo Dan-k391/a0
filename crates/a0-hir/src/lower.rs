@@ -33,6 +33,9 @@ const CANONICAL_NAN: i64 = 0x7ff8_0000_0000_0000;
 /// the type's family within its descriptor (see `a0rt.h`).
 const OBJECT_TYPE_OFFSET: i64 = -24;
 const TYPE_FAMILY_OFFSET: i64 = 24;
+/// Where a type descriptor keeps its interface table: per interface of the module, the table of
+/// the type's methods for it, or null (see `A0Type` in `a0rt.h`).
+const TYPE_ITABLE_OFFSET: i64 = 32;
 
 const WORD_RAW: u8 = 0;
 const WORD_REF: u8 = 1;
@@ -132,6 +135,7 @@ struct Runtime {
     map_remove: IrFunc,
     map_keys: IrFunc,
     string_from_c: IrFunc,
+    alloc: IrFunc,
     throw: IrFunc,
     uncaught: IrFunc,
     exit: IrFunc,
@@ -183,6 +187,7 @@ impl Runtime {
             map_remove: f("a0_map_remove", &[Ptr, I64], Some(I64)),
             map_keys: f("a0_map_keys", &[Ptr], Some(Ptr)),
             string_from_c: f("a0_string_from_c", &[Ptr, I64], Some(Ptr)),
+            alloc: f("a0_alloc", &[I64], Some(Ptr)),
             throw: f("a0_rt_throw", &[], None),
             uncaught: f("a0_rt_uncaught", &[I64], None),
             exit: f("a0_rt_exit", &[I32], None),
@@ -726,6 +731,7 @@ impl<'a> Lowerer<'a> {
             let a = self.b.global_addr(global);
             self.b.store(d, a);
         }
+        self.interface_tables();
         for (i, g) in self.globals.clone().into_iter().enumerate() {
             let Some(g) = g else { continue };
             let t = self.m.globals[i].ty;
@@ -774,6 +780,64 @@ impl<'a> Lowerer<'a> {
         };
         self.b.ret(Some(code));
         self.b.end_function();
+    }
+
+    /// Gives every type that implements interfaces its interface table: per interface of the
+    /// module, the table of the type's methods for it (null for the others). An enum's tables go
+    /// on each variant's descriptor, which is what its objects carry.
+    fn interface_tables(&mut self) {
+        let m = self.m;
+        if m.vtables.is_empty() {
+            return;
+        }
+        let mut itables: HashMap<IrGlobal, Value> = HashMap::new();
+        for (owner, i, methods) in m.vtables.clone() {
+            let descs = match owner {
+                Owner::Struct(s) => vec![self.struct_desc[s.index()]],
+                Owner::Enum(e) => self.enum_desc[e.index()].1.clone(),
+                Owner::Value(_) => continue,
+            };
+            let size = self.b.iconst(Type::I64, 8 * methods.len() as i64);
+            let vtable = self.b.call(self.rt.alloc, &[size]).unwrap();
+            for (k, f) in methods.iter().enumerate() {
+                let code = self.b.func_addr(self.funcs[f.index()]);
+                let off = self.b.iconst(Type::I64, 8 * k as i64);
+                let at = self.b.ptradd(vtable, off);
+                self.b.store(code, at);
+            }
+            for desc in descs {
+                let itable = match itables.get(&desc) {
+                    Some(&t) => t,
+                    None => {
+                        let size = self.b.iconst(Type::I64, 8 * m.interfaces.len() as i64);
+                        let t = self.b.call(self.rt.alloc, &[size]).unwrap();
+                        let a = self.b.global_addr(desc);
+                        let d = self.b.load(Type::Ptr, a);
+                        let off = self.b.iconst(Type::I64, TYPE_ITABLE_OFFSET);
+                        let at = self.b.ptradd(d, off);
+                        self.b.store(t, at);
+                        itables.insert(desc, t);
+                        t
+                    }
+                };
+                let off = self.b.iconst(Type::I64, 8 * i.index() as i64);
+                let at = self.b.ptradd(itable, off);
+                self.b.store(vtable, at);
+            }
+        }
+    }
+
+    /// The table of methods for interface `i` of `object`'s type.
+    fn vtable(&mut self, object: Value, i: InterfaceId) -> Value {
+        let off = self.b.iconst(Type::I64, OBJECT_TYPE_OFFSET);
+        let at = self.b.ptradd(object, off);
+        let ty = self.b.load(Type::Ptr, at);
+        let off = self.b.iconst(Type::I64, TYPE_ITABLE_OFFSET);
+        let at = self.b.ptradd(ty, off);
+        let itable = self.b.load(Type::Ptr, at);
+        let off = self.b.iconst(Type::I64, 8 * i.index() as i64);
+        let at = self.b.ptradd(itable, off);
+        self.b.load(Type::Ptr, at)
     }
 
     /// `f` called through the closure convention (the environment is ignored).
@@ -1598,6 +1662,35 @@ impl<'a> Lowerer<'a> {
                 V::Never
             }
             ExprKind::Try(body, l, handler) => self.try_(body, l, handler, ty),
+            ExprKind::MethodCall(..) => {
+                unreachable!("calls of methods are resolved before lowering")
+            }
+            ExprKind::InterfaceCall(receiver, i, k, args) => {
+                let mut all = vec![receiver];
+                all.extend(args.iter().copied());
+                let Some(vs) = self.operands(&all, false) else {
+                    return V::Never;
+                };
+                let object = vs[0].val();
+                let vtable = self.vtable(object, i);
+                let off = self.b.iconst(Type::I64, 8 * k as i64);
+                let at = self.b.ptradd(vtable, off);
+                let code = self.b.load(Type::Ptr, at);
+                let mut params = vec![Type::Ptr];
+                let mut ir_args = vec![object];
+                for (v, &a) in vs[1..].iter().zip(&args) {
+                    if let V::Val(v) = *v {
+                        params.push(self.ir_type(m.expr_type(a)).unwrap());
+                        ir_args.push(v);
+                    }
+                }
+                let ret = self.ir_type(ty);
+                let r = self.b.call_indirect(code, &params, ret, &ir_args);
+                if self.closures_raise {
+                    self.check_raised();
+                }
+                self.call_result(r, ty)
+            }
             ExprKind::Return(v) => {
                 let r = match v {
                     Some(v) => self.expr(v),
@@ -1676,7 +1769,9 @@ impl<'a> Lowerer<'a> {
             while let Some(e) = stack.pop() {
                 match &m.expr(e).kind {
                     ExprKind::Throw(_) => throws[b] = true,
-                    ExprKind::CallValue(..) => calls_closures[b] = true,
+                    ExprKind::CallValue(..) | ExprKind::InterfaceCall(..) => {
+                        calls_closures[b] = true
+                    }
                     ExprKind::Call(f, ..) => calls[b].push(m.func_body(*f).index()),
                     ExprKind::Func(f, _) => makes[b].push(m.func_body(*f).index()),
                     ExprKind::Lambda(body) => makes[b].push(body.index()),
@@ -1688,6 +1783,14 @@ impl<'a> Lowerer<'a> {
         let mut reached = vec![false; n];
         let mut closure = vec![false; n];
         let mut stack = vec![m.func_body(main).index()];
+        // Methods in tables are called through interfaces, like closures.
+        for (_, _, methods) in &m.vtables {
+            for &f in methods {
+                let b = m.func_body(f).index();
+                closure[b] = true;
+                stack.push(b);
+            }
+        }
         while let Some(b) = stack.pop() {
             if std::mem::replace(&mut reached[b], true) {
                 continue;
@@ -2097,8 +2200,10 @@ impl<'a> Lowerer<'a> {
         if to == TypeId::ANY {
             return V::Val(self.box_any(v, from));
         }
-        // `T` to `T?` changes nothing at run time.
-        if m.non_null(to) == from {
+        // `T` to `T?`, and an object to an interface it implements, change nothing at run time.
+        if m.non_null(to) == from
+            || (matches!(m.kind(to), TypeKind::Interface(_)) && from != TypeId::ANY)
+        {
             return v;
         }
         let V::Val(v) = v else { return V::Unit };
@@ -2227,6 +2332,35 @@ impl<'a> Lowerer<'a> {
                 self.is_desc(w, desc)
             }
             TypeKind::Any => self.b.iconst(Type::I1, 1),
+            TypeKind::Interface(i) => {
+                // An object whose type has a table for the interface.
+                let i = *i;
+                let result = self.b.declare_var("is", Type::I1);
+                let no = self.b.iconst(Type::I1, 0);
+                self.b.set(result, no);
+                let tag = self.b.iconst(Type::I64, REF_TAG);
+                let bits = self.b.and(w, tag);
+                let is_ref = self.b.icmp(IntCC::Eq, bits, tag);
+                self.b.if_(is_ref);
+                let object = self.decode(w, TypeId::STRING);
+                let off = self.b.iconst(Type::I64, OBJECT_TYPE_OFFSET);
+                let at = self.b.ptradd(object, off);
+                let ty = self.b.load(Type::Ptr, at);
+                let off = self.b.iconst(Type::I64, TYPE_ITABLE_OFFSET);
+                let at = self.b.ptradd(ty, off);
+                let itable = self.b.load(Type::Ptr, at);
+                let null = self.b.null();
+                let has = self.b.icmp(IntCC::Ne, itable, null);
+                self.b.if_(has);
+                let off = self.b.iconst(Type::I64, 8 * i.index() as i64);
+                let at = self.b.ptradd(itable, off);
+                let vtable = self.b.load(Type::Ptr, at);
+                let implements = self.b.icmp(IntCC::Ne, vtable, null);
+                self.b.set(result, implements);
+                self.b.end_if();
+                self.b.end_if();
+                self.b.get(result)
+            }
             TypeKind::Nullable(inner) => {
                 let u = self.b.iconst(Type::I64, ANY_UNIT);
                 let is_unit = self.b.icmp(IntCC::Eq, w, u);

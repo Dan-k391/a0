@@ -20,6 +20,7 @@ pub(crate) fn monomorphize(m: &HirModule) -> Result<Option<HirModule>, Diagnosti
     let mut mono = Mono {
         m,
         out: HirModule::new(&m.name),
+        origin: HashMap::new(),
         structs: HashMap::new(),
         enums: HashMap::new(),
         funcs: HashMap::new(),
@@ -29,6 +30,26 @@ pub(crate) fn monomorphize(m: &HirModule) -> Result<Option<HirModule>, Diagnosti
         current: None,
         diags: Diagnostics::new(),
     };
+    // Interfaces keep their ids. Their signatures are not needed any more: interface calls carry
+    // their types, and `Self` has no instance.
+    for (k, i) in m.interfaces.iter().enumerate() {
+        mono.out.interfaces.push(InterfaceDef {
+            name: i.name.clone(),
+            type_params: i.type_params.clone(),
+            methods: i
+                .methods
+                .iter()
+                .map(|s| MethodSig {
+                    name: s.name.clone(),
+                    params: Vec::new(),
+                    ret: TypeId::UNIT,
+                    span: s.span,
+                })
+                .collect(),
+            span: i.span,
+        });
+        mono.register_type(&i.name, Item::Interface(InterfaceId(k as u32)));
+    }
     for item in &m.items {
         match *item {
             Item::Struct(s) if m.structs[s.index()].type_params.is_empty() => {
@@ -71,9 +92,16 @@ pub(crate) fn monomorphize(m: &HirModule) -> Result<Option<HirModule>, Diagnosti
             _ => {}
         }
     }
-    while let Some((f, args, out_f)) = mono.queue.pop() {
-        mono.current = Some(out_f);
-        mono.copy_function(f, &args, out_f);
+    // Copy the functions used, then the methods of every instance that implements an interface
+    // (which may use more), until nothing is left.
+    loop {
+        while let Some((f, args, out_f)) = mono.queue.pop() {
+            mono.current = Some(out_f);
+            mono.copy_function(f, &args, out_f);
+        }
+        if !mono.instantiate_vtables() {
+            break;
+        }
     }
     if mono.diags.has_errors() {
         return Err(mono.diags);
@@ -92,6 +120,8 @@ struct Subst {
 struct Mono<'a> {
     m: &'a HirModule,
     out: HirModule,
+    /// What each struct and enum of the output is an instance of.
+    origin: HashMap<Owner, (Owner, Vec<TypeId>)>,
     structs: HashMap<(StructId, Vec<TypeId>), StructId>,
     enums: HashMap<(EnumId, Vec<TypeId>), EnumId>,
     funcs: HashMap<(FuncId, Vec<TypeId>), FuncId>,
@@ -173,6 +203,7 @@ impl Mono<'_> {
                 let args: Vec<TypeId> = args.into_iter().map(|a| self.ty(a, subst)).collect();
                 TypeKind::Enum(self.enum_instance(e, &args), Vec::new())
             }
+            TypeKind::Interface(i) => TypeKind::Interface(i),
         };
         self.out.intern(k)
     }
@@ -196,6 +227,72 @@ impl Mono<'_> {
         }
     }
 
+    /// Makes the method tables of the instances that implement interfaces and have none yet;
+    /// returns whether it made any.
+    fn instantiate_vtables(&mut self) -> bool {
+        let mut made = false;
+        let instances: Vec<(Owner, (Owner, Vec<TypeId>))> =
+            self.origin.iter().map(|(&o, x)| (o, x.clone())).collect();
+        for (out_owner, (owner, args)) in instances {
+            for &(o, i, _) in &self.m.impls {
+                if o != owner
+                    || self
+                        .out
+                        .vtables
+                        .iter()
+                        .any(|v| v.0 == out_owner && v.1 == i)
+                {
+                    continue;
+                }
+                let names: Vec<String> = self.m.interfaces[i.index()]
+                    .methods
+                    .iter()
+                    .map(|s| s.name.clone())
+                    .collect();
+                let mut methods = Vec::new();
+                for name in names {
+                    // The builder checked that the implementation is complete.
+                    let Some(&f) = self.m.methods.get(&(owner, name)) else {
+                        continue;
+                    };
+                    methods.push(self.func_instance(f, &args));
+                }
+                self.out.vtables.push((out_owner, i, methods));
+                made = true;
+            }
+        }
+        made
+    }
+
+    /// `receiver.name(args)` where the receiver's type was a type parameter, now `t`: a call of
+    /// the method of `t`'s type, or of an interface.
+    fn method_call(
+        &mut self,
+        t: TypeId,
+        name: &str,
+        receiver: ExprId,
+        args: Vec<ExprId>,
+    ) -> ExprKind {
+        if let TypeKind::Interface(i) = *self.out.kind(t)
+            && let Some(k) = crate::methods::interface_method(self.m, i, name)
+        {
+            return ExprKind::InterfaceCall(receiver, i, k, args);
+        }
+        let (owner, targs) = match self.out.kind(t) {
+            TypeKind::Struct(s, _) => self.origin[&Owner::Struct(*s)].clone(),
+            TypeKind::Enum(e, _) => self.origin[&Owner::Enum(*e)].clone(),
+            _ => match crate::methods::owner_of(&self.out, t) {
+                Some(o) => (o, Vec::new()),
+                None => unreachable!("bounds are checked before monomorphization"),
+            },
+        };
+        let f = self.m.methods[&(owner, name.to_string())];
+        let f = self.func_instance(f, &targs);
+        let mut all = vec![receiver];
+        all.extend(args);
+        ExprKind::Call(f, Vec::new(), all)
+    }
+
     fn struct_instance(&mut self, s: StructId, args: &[TypeId]) -> StructId {
         if let Some(&id) = self.structs.get(&(s, args.to_vec())) {
             return id;
@@ -213,6 +310,8 @@ impl Mono<'_> {
         self.register_type(&name, Item::Struct(id));
         // Registered before its fields, so a struct can contain itself.
         self.structs.insert((s, args.to_vec()), id);
+        self.origin
+            .insert(Owner::Struct(id), (Owner::Struct(s), args.to_vec()));
         let subst = Subst {
             owner: Some(Item::Struct(s)),
             args: args.to_vec(),
@@ -241,6 +340,8 @@ impl Mono<'_> {
         });
         self.register_type(&name, Item::Enum(id));
         self.enums.insert((e, args.to_vec()), id);
+        self.origin
+            .insert(Owner::Enum(id), (Owner::Enum(e), args.to_vec()));
         let subst = Subst {
             owner: Some(Item::Enum(e)),
             args: args.to_vec(),
@@ -487,6 +588,16 @@ impl Mono<'_> {
             ExprKind::Continue => ExprKind::Continue,
             ExprKind::Return(v) => ExprKind::Return(v.map(|v| self.expr(c, v, body))),
             ExprKind::Throw(v) => ExprKind::Throw(self.expr(c, v, body)),
+            ExprKind::MethodCall(r, name, args) => {
+                let receiver_type = self.ty(self.m.expr_type(r), &c.subst);
+                let r = self.expr(c, r, body);
+                let args = self.exprs(c, &args, body);
+                self.method_call(receiver_type, &name, r, args)
+            }
+            ExprKind::InterfaceCall(r, i, k, args) => {
+                let r = self.expr(c, r, body);
+                ExprKind::InterfaceCall(r, i, k, self.exprs(c, &args, body))
+            }
             ExprKind::Try(b, l, h) => {
                 let b = self.expr(c, b, body);
                 let l = self.local(c, l, body);

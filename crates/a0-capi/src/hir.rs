@@ -10,8 +10,8 @@ use std::ptr;
 
 use a0_diag::{Diagnostic, Diagnostics, Span};
 use a0_hir::{
-    ArmId, BinOp, BodyId, Builtin, EnumId, ExprId, ExternId, FuncId, GlobalId, HirBuilder, Item,
-    LocalId, StructId, Term, TypeId, TypeTag, UnOp, Warning,
+    ArmId, BinOp, BodyId, Builtin, EnumId, ExprId, ExternId, FuncId, GlobalId, HirBuilder,
+    InterfaceId, Item, LocalId, StructId, Term, TypeId, TypeTag, UnOp, Warning,
 };
 
 use crate::{A0Diagnostics, A0Hir, NONE, SOURCE, error, free, give, items, report, text};
@@ -35,6 +35,7 @@ const ITEM_ENUM: u32 = 2;
 const ITEM_FUNC: u32 = 3;
 const ITEM_GLOBAL: u32 = 4;
 const ITEM_EXTERN: u32 = 5;
+const ITEM_INTERFACE: u32 = 6;
 
 /// An item as C sees it: a kind (`A0_HIR_STRUCT`, ...) and a handle.
 fn split_item(item: Item) -> (u32, u32) {
@@ -44,6 +45,7 @@ fn split_item(item: Item) -> (u32, u32) {
         Item::Func(f) => (ITEM_FUNC, f.0),
         Item::Global(g) => (ITEM_GLOBAL, g.0),
         Item::Extern(x) => (ITEM_EXTERN, x.0),
+        Item::Interface(i) => (ITEM_INTERFACE, i.0),
     }
 }
 
@@ -114,6 +116,11 @@ impl A0HirBuilder {
         self.check("enum", e, n).map(EnumId)
     }
 
+    fn i(&mut self, i: u32) -> Option<InterfaceId> {
+        let n = self.b.module().interface_count();
+        self.check("interface", i, n).map(InterfaceId)
+    }
+
     fn f(&mut self, f: u32) -> Option<FuncId> {
         let n = self.b.module().func_count();
         self.check("function", f, n).map(FuncId)
@@ -156,6 +163,7 @@ impl A0HirBuilder {
             ITEM_FUNC => self.f(id).map(Item::Func),
             ITEM_GLOBAL => self.g(id).map(Item::Global),
             ITEM_EXTERN => self.x(id).map(Item::Extern),
+            ITEM_INTERFACE => self.i(id).map(Item::Interface),
             _ => {
                 self.fail(format!("{kind} is not an item kind"));
                 None
@@ -439,6 +447,7 @@ pub unsafe extern "C" fn a0_hir_set_type_syntax(
                 "enum" => TypeTag::Enum,
                 "fn" => TypeTag::Fn,
                 "nullable" => TypeTag::Nullable,
+                "interface" => TypeTag::Interface,
                 other => {
                     h.fail(format!("'{other}' is not a type tag"));
                     return None;
@@ -1810,6 +1819,136 @@ pub unsafe extern "C" fn a0_hir_member_type(
         with(b, |h| {
             let args = h.ts(items(args, count))?;
             Some(h.b.member_type(&alias, &name, &args).0)
+        })
+    }
+}
+
+// ----------------------------------------------------------------------- methods and interfaces
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn a0_hir_declare_interface(
+    b: *mut A0HirBuilder,
+    name: *const c_char,
+    len: usize,
+) -> u32 {
+    let name = unsafe { text(name, len) };
+    unsafe { with(b, |h| Some(h.b.declare_interface(&name).0)) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn a0_hir_interface_self(b: *mut A0HirBuilder, i: u32) -> u32 {
+    unsafe {
+        with(b, |h| {
+            let i = h.i(i)?;
+            Some(h.b.interface_self(i).0)
+        })
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn a0_hir_interface_type(b: *mut A0HirBuilder, i: u32) -> u32 {
+    unsafe {
+        with(b, |h| {
+            let i = h.i(i)?;
+            Some(h.b.interface_type(i).0)
+        })
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn a0_hir_add_interface_method(
+    b: *mut A0HirBuilder,
+    i: u32,
+    name: *const c_char,
+    len: usize,
+    params: *const u32,
+    count: usize,
+    ret: u32,
+) {
+    let name = unsafe { text(name, len) };
+    unsafe {
+        with_unit(b, |h| {
+            let i = h.i(i)?;
+            let params = h.ts(items(params, count))?;
+            let ret = h.t(ret)?;
+            h.b.add_interface_method(i, &name, &params, ret);
+            Some(())
+        })
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn a0_hir_declare_method(
+    b: *mut A0HirBuilder,
+    owner: u32,
+    name: *const c_char,
+    len: usize,
+    type_params: *const A0Str,
+    count: usize,
+) -> u32 {
+    let name = unsafe { text(name, len) };
+    let type_params = unsafe { names(type_params, count) };
+    unsafe {
+        with(b, |h| {
+            let owner = h.t(owner)?;
+            Some(h.b.declare_method(owner, &name, &refs(&type_params)).0)
+        })
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn a0_hir_method_self_type(b: *mut A0HirBuilder, f: u32) -> u32 {
+    unsafe {
+        with(b, |h| {
+            let f = h.f(f)?;
+            Some(h.b.method_self_type(f).0)
+        })
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn a0_hir_implement(b: *mut A0HirBuilder, owner: u32, i: u32) {
+    unsafe {
+        with_unit(b, |h| {
+            let (owner, i) = (h.t(owner)?, h.i(i)?);
+            h.b.implement(owner, i);
+            Some(())
+        })
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn a0_hir_add_bound(
+    b: *mut A0HirBuilder,
+    item_kind: u32,
+    item: u32,
+    index: u32,
+    i: u32,
+) {
+    unsafe {
+        with_unit(b, |h| {
+            let (item, i) = (h.item(item_kind, item)?, h.i(i)?);
+            h.b.add_bound(item, index, i);
+            Some(())
+        })
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn a0_hir_method_call(
+    b: *mut A0HirBuilder,
+    receiver: u32,
+    name: *const c_char,
+    len: usize,
+    args: *const u32,
+    count: usize,
+) -> u32 {
+    let name = unsafe { text(name, len) };
+    unsafe {
+        with(b, |h| {
+            let receiver = h.e(receiver)?;
+            let args = h.es(items(args, count))?;
+            Some(h.b.method_call(receiver, &name, &args).0)
         })
     }
 }

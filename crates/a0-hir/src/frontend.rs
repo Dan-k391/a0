@@ -499,17 +499,21 @@ impl HirBuilder {
 
     /// The type of a struct or enum with type arguments (inferred ones if `args` is empty).
     pub(crate) fn instantiate_named(&mut self, item: Item, args: &[TypeId]) -> TypeId {
+        // An interface's one type parameter, `Self`, is not given.
+        let item_params = match item {
+            Item::Interface(_) => 0,
+            _ => self.m.type_params(item).len(),
+        };
         let args = if args.is_empty() {
-            (0..self.m.type_params(item).len())
-                .map(|_| self.fresh_type())
-                .collect()
+            (0..item_params).map(|_| self.fresh_type()).collect()
         } else {
             args.to_vec()
         };
         match item {
             Item::Struct(s) => self.struct_type_args(s, &args),
             Item::Enum(e) => self.enum_type_args(e, &args),
-            _ => unreachable!("only structs and enums are types"),
+            Item::Interface(i) => self.interface_type(i),
+            _ => unreachable!("only structs, enums and interfaces are types"),
         }
     }
 

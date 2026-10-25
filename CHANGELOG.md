@@ -16,6 +16,10 @@ APIs. `docs/milestones.md` has the details of each step, with measurements.
 - **C functions that take strings and arrays**: `extern fn getenv(string) -> string?;` just works,
   interpreted and native; the interpreter finds C library functions without registering them.
   `extern "a0" fn` declares runtime functions that take and return A0's own values.
+- **Methods, interfaces and bounded generics**: methods on structs, enums and value types;
+  interfaces whose values dispatch at run time through tables on the type descriptors; type
+  parameters bounded by interfaces, resolved statically. Minnow has `impl`, `interface` and
+  `T: Bound`.
 - **Exceptions and results**, interpreted and native alike: `throw` and `try`/`catch` in the HIR
   (an uncaught exception reports its value and where it was thrown), and `propagate`, a language's
   `?`, for result values; Minnow has `?`. Programs that never throw pay nothing.

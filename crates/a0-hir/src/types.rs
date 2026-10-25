@@ -144,7 +144,17 @@ impl HirModule {
                 TypeKind::Nullable(_) | TypeKind::Var(_)
             )
         {
-            return self.unify(f, inner);
+            return self.coerce(f, inner);
+        }
+        // An object of a type that implements an interface is a value of the interface (the
+        // same reference); value types are not objects.
+        if let TypeKind::Interface(i) = self.types[e.index()]
+            && matches!(
+                self.types[f.index()],
+                TypeKind::Struct(..) | TypeKind::Enum(..) | TypeKind::Param(..)
+            )
+        {
+            return crate::methods::implements(self, f, i);
         }
         self.unify(f, e)
     }

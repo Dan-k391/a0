@@ -90,6 +90,36 @@ const PRELUDE: &str = r#"module "random";
 
 struct R { n: int, s: string }
 enum Shape { Dot, Num(int), Txt(string) }
+interface Sized { fn size(self) -> int; fn twice(self) -> int; }
+
+impl Sized for R;
+impl Sized for Shape;
+
+impl R {
+  fn size(self: R) -> int {
+    self.n + len(self.s)
+  }
+  fn twice(self: R) -> int {
+    2 * self.size()
+  }
+}
+
+impl Shape {
+  fn size(self: Shape) -> int {
+    match self { Dot => 0, Num(n) => n, Txt(t) => len(t), }
+  }
+  fn twice(self: Shape) -> int {
+    2 * self.size()
+  }
+}
+
+fn size_of(x: Sized) -> int {
+  x.size()
+}
+
+fn twice_of<T: Sized>(x: T) -> int {
+  x.twice()
+}
 
 fn note(n: int) -> int {
   print("<" + str(n) + ">");
@@ -371,7 +401,7 @@ impl Gen {
             _ => {}
         }
         match ty {
-            Int => match self.rng.below(13) {
+            Int => match self.rng.below(15) {
                 0..=2 => {
                     let op = self.rng.pick(&["+", "-", "*"]);
                     format!(
@@ -423,6 +453,20 @@ impl Gen {
                             format!("{f}({})", self.expr(Int, ctx, d))
                         }
                     }
+                }
+                // Methods: called directly, through an interface value, and through a bound.
+                12 => {
+                    let of = self.rng.pick(&[Rec, Shape]);
+                    let x = self.expr(of, ctx, d);
+                    match self.rng.below(3) {
+                        0 => format!("({x}).size()"),
+                        1 => format!("size_of({x})"),
+                        _ => format!("twice_of({x})"),
+                    }
+                }
+                13 => {
+                    let x = self.expr(Any, ctx, d);
+                    format!("(if {x} is Sized {{ ({x} as Sized).twice() }} else {{ 1 }})")
                 }
                 _ => format!("byte_at(\"hello\", {})", self.rng.below(5)),
             },

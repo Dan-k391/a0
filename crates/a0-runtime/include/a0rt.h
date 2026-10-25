@@ -180,9 +180,9 @@ enum { A0_WORD_RAW = 0, A0_WORD_REF = 1, A0_WORD_ANY = 2 };
  * words described by the type's layout; the others have built-in descriptors. */
 enum { A0_KIND_FIXED = 0, A0_KIND_STRING = 1, A0_KIND_ARRAY = 2, A0_KIND_MAP = 3, A0_KIND_INT = 4 };
 
-/* Generated code reads two things directly (crates/a0-hir/src/lower.rs): an object's type is the
- * pointer 24 bytes before the object (in the collector's header), and a type's family is the field
- * 24 bytes into its descriptor. Keep both in sync. */
+/* Generated code reads three things directly (crates/a0-hir/src/lower.rs): an object's type is the
+ * pointer 24 bytes before the object (in the collector's header), a type's family is the field 24
+ * bytes into its descriptor, and its interface table the field 32 bytes in. Keep them in sync. */
 typedef struct A0Type {
     char *name;
     int32_t kind;
@@ -190,6 +190,10 @@ typedef struct A0Type {
     uint8_t *layout;
     /* The enum a variant belongs to; a type's own descriptor otherwise. */
     const struct A0Type *family;
+    /* For each interface of the program, the table of this type's methods for it (pointers to
+     * functions that take the object first), or NULL; NULL if it implements none. Set by
+     * generated code at startup. */
+    void ***itable;
 } A0Type;
 
 /* Registers a FIXED type: `word_count` payload words traced as `layout[i]` says. `family` is the

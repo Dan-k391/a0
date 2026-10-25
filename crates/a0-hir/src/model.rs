@@ -25,6 +25,7 @@ handle!(
 );
 handle!(StructId);
 handle!(EnumId);
+handle!(InterfaceId);
 handle!(GlobalId);
 handle!(ExternId);
 handle!(FuncId);
@@ -88,6 +89,9 @@ pub(crate) enum TypeKind {
     Fn(Vec<TypeId>, TypeId),
     /// `T?`: a reference type that may also be null.
     Nullable(TypeId),
+    /// A value of any struct or enum that implements the interface: a reference to the object,
+    /// whose methods are found at run time.
+    Interface(InterfaceId),
     /// The `index`th type parameter of a generic item.
     Param(Item, u32),
     /// An inference variable; `HirModule::vars` says what it is bound to.
@@ -112,6 +116,7 @@ pub enum TypeTag {
     Enum,
     Fn,
     Nullable,
+    Interface,
     /// A type parameter of a generic item.
     Param,
     /// A type not inferred yet (only while building).
@@ -273,6 +278,12 @@ pub(crate) enum ExprKind {
     /// `try { body } catch local { handler }`: runs `handler`, with the exception's value in `local`
     /// (an `any`), if `body` raises one.
     Try(ExprId, LocalId, ExprId),
+    /// `receiver.name(args)` before the receiver's type is known; `finish` makes it a `Call` of the
+    /// method, an `InterfaceCall` or a call of a closure field. Calls on a value of a type
+    /// parameter stay until monomorphization knows the type.
+    MethodCall(ExprId, String, Vec<ExprId>),
+    /// A call of the `n`th method of an interface on an interface value, dispatched at run time.
+    InterfaceCall(ExprId, InterfaceId, u32, Vec<ExprId>),
 }
 
 #[derive(Clone)]
@@ -323,6 +334,35 @@ pub(crate) struct EnumDef {
     pub type_params: Vec<String>,
     pub variants: Vec<VariantDef>,
     pub span: Option<Span>,
+}
+
+/// An interface: methods that the structs and enums implementing it have. `Self`, the implementing
+/// type, is type parameter 0 of the interface.
+#[derive(Clone)]
+pub(crate) struct InterfaceDef {
+    pub name: String,
+    /// `["Self"]`.
+    pub type_params: Vec<String>,
+    pub methods: Vec<MethodSig>,
+    pub span: Option<Span>,
+}
+
+/// A method an interface requires: its name, its parameters after `self`, and its result.
+#[derive(Clone)]
+pub(crate) struct MethodSig {
+    pub name: String,
+    pub params: Vec<TypeId>,
+    pub ret: TypeId,
+    pub span: Option<Span>,
+}
+
+/// What a method belongs to: a struct, an enum (for every instance of a generic one), or a value
+/// type (`int`, `float`, `bool`, `string`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) enum Owner {
+    Struct(StructId),
+    Enum(EnumId),
+    Value(TypeId),
 }
 
 #[derive(Clone)]
@@ -479,6 +519,7 @@ pub enum Item {
     Global(GlobalId),
     Extern(ExternId),
     Func(FuncId),
+    Interface(InterfaceId),
 }
 
 /// A HIR module. Build it with [`crate::HirBuilder`] or [`crate::parse`].
@@ -514,6 +555,17 @@ pub struct HirModule {
     /// Casts out of `any` that the optimizer proved cannot fail (an `is` test of the same value
     /// guards them); lowering skips their check.
     pub(crate) unchecked_casts: HashSet<ExprId>,
+    pub(crate) interfaces: Vec<InterfaceDef>,
+    /// Methods, by owner and name, and the owner of each method.
+    pub(crate) methods: HashMap<(Owner, String), FuncId>,
+    pub(crate) method_owner: HashMap<FuncId, Owner>,
+    /// Which owners implement which interfaces, in declaration order, with where each was declared.
+    pub(crate) impls: Vec<(Owner, InterfaceId, Option<Span>)>,
+    /// The interfaces a type parameter (of an item, by index) must implement.
+    pub(crate) bounds: HashMap<(Item, u32), Vec<InterfaceId>>,
+    /// For lowering: the methods each struct or enum (without type parameters) has for each
+    /// interface it implements, in the interface's order.
+    pub(crate) vtables: Vec<(Owner, InterfaceId, Vec<FuncId>)>,
     /// Declarations in order, for printing.
     pub(crate) items: Vec<Item>,
     pub(crate) type_names: HashMap<String, Item>,
@@ -549,6 +601,12 @@ impl HirModule {
             }],
             item_home: HashMap::new(),
             unchecked_casts: HashSet::new(),
+            interfaces: Vec::new(),
+            methods: HashMap::new(),
+            method_owner: HashMap::new(),
+            impls: Vec::new(),
+            bounds: HashMap::new(),
+            vtables: Vec::new(),
             items: Vec::new(),
             type_names: HashMap::new(),
             value_names: HashMap::new(),
@@ -682,6 +740,10 @@ impl HirModule {
         self.enums.len() as u32
     }
 
+    pub fn interface_count(&self) -> u32 {
+        self.interfaces.len() as u32
+    }
+
     pub fn global_count(&self) -> u32 {
         self.globals.len() as u32
     }
@@ -746,6 +808,7 @@ impl HirModule {
             ),
             Item::Struct(s) => format!("struct {}", self.struct_name(s)),
             Item::Enum(e) => format!("enum {}", self.enum_name(e)),
+            Item::Interface(i) => format!("interface {}", self.interfaces[i.index()].name),
         }
     }
 
@@ -859,6 +922,7 @@ impl HirModule {
             Item::Global(g) => self.globals[g.index()].span,
             Item::Extern(x) => self.externs[x.index()].span,
             Item::Func(f) => self.funcs[f.index()].span,
+            Item::Interface(i) => self.interfaces[i.index()].span,
         }
     }
 
@@ -878,6 +942,7 @@ impl HirModule {
             TypeKind::Enum(..) => TypeTag::Enum,
             TypeKind::Fn(..) => TypeTag::Fn,
             TypeKind::Nullable(_) => TypeTag::Nullable,
+            TypeKind::Interface(_) => TypeTag::Interface,
             TypeKind::Param(..) => TypeTag::Param,
             TypeKind::Var(_) => TypeTag::Var,
         }
@@ -921,6 +986,7 @@ impl HirModule {
             Item::Struct(s) => &self.structs[s.index()].type_params,
             Item::Enum(e) => &self.enums[e.index()].type_params,
             Item::Func(f) => &self.funcs[f.index()].type_params,
+            Item::Interface(i) => &self.interfaces[i.index()].type_params,
             Item::Global(_) | Item::Extern(_) => &[],
         }
     }
@@ -936,6 +1002,7 @@ impl HirModule {
                 | TypeKind::Enum(..)
                 | TypeKind::Fn(..)
                 | TypeKind::Nullable(_)
+                | TypeKind::Interface(_)
         )
     }
 
@@ -1015,6 +1082,7 @@ impl HirModule {
             TypeKind::Map(k, v) => format!("map<{}, {}>", name(*k), name(*v)),
             TypeKind::Struct(s, args) => self.applied(&self.structs[s.index()].name, args, custom),
             TypeKind::Enum(e, args) => self.applied(&self.enums[e.index()].name, args, custom),
+            TypeKind::Interface(i) => self.applied(&self.interfaces[i.index()].name, &[], custom),
             TypeKind::Nullable(inner) => match self.kind(*inner) {
                 TypeKind::Fn(..) => format!("({})?", name(*inner)),
                 _ => format!("{}?", name(*inner)),

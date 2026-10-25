@@ -11,6 +11,7 @@
 // expect-stdout: returned from try: 5
 // expect-stdout: kept 1000 objects
 // expect-stdout: nested: inner handled, outer untouched
+// expect-stdout: thrown before its type was known
 module "exceptions";
 
 struct Point { x: int, y: int }
@@ -141,5 +142,10 @@ fn main() -> int {
   } catch e {
     print("wrong\n");
   }
+
+  // The thrown value's type is only known from a later use (a regression: the throw waited for it).
+  let later = [];
+  try { throw later; } catch e { print("thrown before its type was known\n"); }
+  push(later, 1);
   0
 }

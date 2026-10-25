@@ -113,7 +113,7 @@ to Rust code.
 - `@scope`: nodes of the rule open a scope (blocks, functions, loops that declare a variable).
 
 Kinds are `function`, `method`, `class`, `struct`, `enum`, `variant`, `field`, `variable`,
-`constant`, `parameter`, `type_parameter`, `type` and `module`.
+`constant`, `parameter`, `type_parameter`, `type`, `interface` and `module`.
 
 A name refers to the closest declaration before it in the innermost scope that declares the name.
 Functions, types and members are visible in their whole scope, as is everything declared at file

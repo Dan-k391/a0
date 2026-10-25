@@ -990,6 +990,14 @@ fn map_children(kind: &ExprKind, f: &mut dyn FnMut(ExprId) -> ExprId) -> ExprKin
             Block(items, tail.map(&mut *f))
         }
         Throw(v) => Throw(f(*v)),
+        MethodCall(r, n, args) => {
+            let r = f(*r);
+            MethodCall(r, n.clone(), all(args, f))
+        }
+        InterfaceCall(r, i, k, args) => {
+            let r = f(*r);
+            InterfaceCall(r, *i, *k, all(args, f))
+        }
         Try(b, l, h) => {
             let b = f(*b);
             Try(b, *l, f(*h))
@@ -1018,6 +1026,13 @@ fn known_test(m: &HirModule, yt: TypeId, t: TypeId) -> Option<bool> {
     Some(match (m.kind(yt), m.kind(t)) {
         (TypeKind::Struct(a, _), TypeKind::Struct(b, _)) => a == b,
         (TypeKind::Enum(a, _), TypeKind::Enum(b, _)) => a == b,
+        // Only objects are values of interfaces: structs and enums with a table for it.
+        (TypeKind::Struct(..) | TypeKind::Enum(..), TypeKind::Interface(i)) => {
+            let owner = crate::methods::owner_of(m, yt);
+            crate::methods::implements(m, yt, *i)
+                || m.vtables.iter().any(|v| Some(v.0) == owner && v.1 == *i)
+        }
+        (_, TypeKind::Interface(_)) => false,
         (_, TypeKind::Nullable(_)) => return None,
         _ => yt == t,
     })

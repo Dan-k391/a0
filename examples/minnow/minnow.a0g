@@ -13,8 +13,8 @@ unknown "unexpected character";
 
 program = (!EOF item)* EOF;
 
-item @inline @recover(before "import" "pub" "struct" "enum" "fn")
-    = import_decl | struct_decl | enum_decl | fn_decl;
+item @inline @recover(before "import" "pub" "struct" "enum" "interface" "impl" "fn")
+    = import_decl | struct_decl | enum_decl | interface_decl | impl_decl | fn_decl;
 
 // `import text.json;` (the file `text/json.mn` next to the program's main file) makes the module's
 // public items `json.item`; `import text.json as j;` makes them `j.item`.
@@ -41,8 +41,29 @@ fn_decl @def(function) @scope
       body:block ~ "expected '{'";
 param @def(parameter)
     = name:NAME ~ "expected a parameter name" ":" ~ "expected ':'" type:type ~ "expected a type";
-type_params @def(type_parameter: tparam)
-    = "<" tparam:NAME ~ "expected a type parameter" ("," tparam:NAME)* ">" ~ "expected '>'";
+// An interface: methods that the types implementing it have. `Self` is the implementing type.
+interface_decl @def(interface)
+    = pub:"pub"? "interface" name:NAME ~ "expected an interface name" "{" ~ "expected '{'"
+      (!"}" !EOF method:method_sig)* "}" ~ "expected '}'";
+method_sig @def(method) @scope
+    = "fn" name:NAME ~ "expected a method name" "(" ~ "expected '('" receiver:NAME ~ "expected 'self'"
+      ("," param)* ")" ~ "expected ')'" ("->" ret:type ~ "expected a type")? ";" ~ "expected ';'";
+
+// Methods of a type, `impl Point { ... }`, or the methods of an interface it implements,
+// `impl Shape for Circle { ... }`. A method's first parameter, `self`, is the value it is called on.
+impl_decl @scope
+    = "impl" type_params? (iface:named_type "for")? owner:named_type ~ "expected a type"
+      "{" ~ "expected '{'" (!"}" !EOF method:method_decl)* "}" ~ "expected '}'";
+method_decl @def(method) @scope
+    = "fn" name:NAME ~ "expected a method name" type_params? "(" ~ "expected '('"
+      receiver:NAME ~ "expected 'self'" ("," param)* ")" ~ "expected ')'"
+      ("->" ret:type ~ "expected a type")? body:block ~ "expected '{'";
+
+type_params = "<" type_param ~ "expected a type parameter" ("," type_param ~ "expected a type parameter")*
+              ">" ~ "expected '>'";
+// `T: Shape + Named`: values of `T` have the interfaces' methods.
+type_param @def(type_parameter)
+    = name:NAME (":" bound:named_type ~ "expected an interface" ("+" bound:named_type ~ "expected an interface")*)?;
 
 type = base:base_type nullable:"?"?;
 base_type @inline = array_type | fn_type | named_type;

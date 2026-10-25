@@ -1,0 +1,138 @@
+// Methods on structs, enums and value types; interfaces whose values dispatch at run time; and
+// generic functions whose type parameters are bounded by interfaces.
+// expect-stdout: area 3, grown 12
+// expect-stdout: total 9: circle square line cell
+// expect-stdout: largest 9 and r=2
+// expect-stdout: square 9
+// expect-stdout: mapped 42, kept 21
+// expect-stdout: is a shape: true false false
+// expect-stdout: closure field 7
+module "interfaces";
+
+struct Circle { r: float }
+struct Square { side: float }
+struct Cell<T> { value: T }
+struct Op { apply: fn(int) -> int }
+enum Mark { Dot, Line(float) }
+interface Shape { fn area(self) -> float; fn name(self) -> string; }
+interface Ord { fn compare(self, Self) -> int; }
+
+impl Shape for Circle;
+impl Shape for Square;
+impl Shape for Mark;
+impl Shape for Cell;
+impl Ord for Circle;
+impl Ord for int;
+
+impl Circle {
+  fn area(self: Circle) -> float {
+    3.0 * self.r * self.r
+  }
+  fn name(self: Circle) -> string {
+    "circle"
+  }
+  fn compare(self: Circle, other: Circle) -> int {
+    if self.r < other.r { -1 } else { if self.r > other.r { 1 } else { 0 } }
+  }
+  fn grow(self: Circle, k: float) -> Circle {
+    new Circle { r: self.r * k }
+  }
+}
+
+impl Square {
+  fn area(self: Square) -> float {
+    self.side * self.side
+  }
+  fn name(self: Square) -> string {
+    "square"
+  }
+}
+
+impl Mark {
+  fn area(self: Mark) -> float {
+    match self { Dot => 0.0, Line(l) => l }
+  }
+  fn name(self: Mark) -> string {
+    "line"
+  }
+}
+
+impl int {
+  fn compare(self: int, other: int) -> int {
+    if self < other { -1 } else { if self > other { 1 } else { 0 } }
+  }
+}
+
+impl<T> Cell<T> {
+  fn get(self: Cell<T>) -> T {
+    self.value
+  }
+  fn area(self: Cell<T>) -> float {
+    0.5
+  }
+  fn name(self: Cell<T>) -> string {
+    "cell"
+  }
+  fn convert<U>(self: Cell<T>, f: fn(T) -> U) -> Cell<U> {
+    new Cell<U> { value: f(self.value) }
+  }
+}
+
+fn total(shapes: array<Shape>) -> float {
+  let sum = 0.0;
+  let i = 0;
+  while i < len(shapes) {
+    sum = sum + shapes[i].area();
+    i = i + 1;
+  }
+  sum
+}
+
+fn largest<T: Ord>(xs: array<T>) -> T {
+  let best = xs[0];
+  let i = 1;
+  while i < len(xs) {
+    if xs[i].compare(best) > 0 { best = xs[i]; }
+    i = i + 1;
+  }
+  best
+}
+
+fn describe<T: Shape>(x: T) -> string {
+  x.name() + " " + str(x.area())
+}
+
+fn main() -> int {
+  let c = new Circle { r: 1.0 };
+  print("area " + str(c.area()) + ", grown " + str(c.grow(2.0).area()) + "\n");
+
+  let shapes = new array<Shape>;
+  push(shapes, c);
+  push(shapes, new Square { side: 2.0 });
+  push(shapes, Mark::Line(1.5));
+  push(shapes, new Cell<int> { value: 3 });
+  let names = "";
+  let i = 0;
+  while i < len(shapes) {
+    names = names + " " + shapes[i].name();
+    i = i + 1;
+  }
+  print("total " + str(total(shapes)) + ":" + names + "\n");
+
+  let big = largest([c, new Circle { r: 2.0 }, new Circle { r: 0.5 }]);
+  print("largest " + str(largest([3, 9, 4])) + " and r=" + str(big.r) + "\n");
+  print(describe(new Square { side: 3.0 }) + "\n");
+
+  let cell = new Cell { value: 21 };
+  let doubled = cell.convert(fn(x: int) -> int { x * 2 });
+  print("mapped " + str(doubled.get()) + ", kept " + str(cell.get()) + "\n");
+
+  let v = c as any;
+  let w = 5 as any;
+  let o = new Op { apply: fn(x: int) -> int { x + 1 } } as any;
+  print("is a shape: " + str(v is Shape) + " " + str(w is Shape) + " " + str(o is Shape) + "\n");
+
+  let op = new Op { apply: fn(x: int) -> int { x + 1 } };
+  print("closure field " + str(op.apply(6)) + "\n");
+  0
+}

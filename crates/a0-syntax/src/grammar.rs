@@ -38,6 +38,7 @@ pub enum SymbolKind {
     Class,
     Struct,
     Enum,
+    Interface,
     Variant,
     Field,
     Variable,
@@ -49,12 +50,13 @@ pub enum SymbolKind {
 }
 
 impl SymbolKind {
-    pub const ALL: [SymbolKind; 13] = [
+    pub const ALL: [SymbolKind; 14] = [
         SymbolKind::Function,
         SymbolKind::Method,
         SymbolKind::Class,
         SymbolKind::Struct,
         SymbolKind::Enum,
+        SymbolKind::Interface,
         SymbolKind::Variant,
         SymbolKind::Field,
         SymbolKind::Variable,
@@ -73,6 +75,7 @@ impl SymbolKind {
             SymbolKind::Class => "class",
             SymbolKind::Struct => "struct",
             SymbolKind::Enum => "enum",
+            SymbolKind::Interface => "interface",
             SymbolKind::Variant => "variant",
             SymbolKind::Field => "field",
             SymbolKind::Variable => "variable",

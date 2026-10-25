@@ -20,7 +20,7 @@ use crate::json::Json;
 use crate::{CompileError, Language, Program, program};
 
 /// Semantic token types, in the order of the legend sent to the client.
-const TOKEN_TYPES: [&str; 17] = [
+const TOKEN_TYPES: [&str; 18] = [
     "keyword",
     "operator",
     "number",
@@ -38,6 +38,7 @@ const TOKEN_TYPES: [&str; 17] = [
     "typeParameter",
     "type",
     "namespace",
+    "interface",
 ];
 
 fn token_type(name: &str) -> u32 {
@@ -51,6 +52,7 @@ fn symbol_token_type(kind: SymbolKind) -> &'static str {
         SymbolKind::Class => "class",
         SymbolKind::Struct => "struct",
         SymbolKind::Enum => "enum",
+        SymbolKind::Interface => "interface",
         SymbolKind::Variant => "enumMember",
         SymbolKind::Field => "property",
         SymbolKind::Variable | SymbolKind::Constant => "variable",
@@ -69,6 +71,7 @@ fn lsp_symbol_kind(kind: SymbolKind) -> u32 {
         SymbolKind::Method => 6,
         SymbolKind::Field => 8,
         SymbolKind::Enum => 10,
+        SymbolKind::Interface => 11,
         SymbolKind::Function => 12,
         SymbolKind::Variable | SymbolKind::Parameter => 13,
         SymbolKind::Constant => 14,

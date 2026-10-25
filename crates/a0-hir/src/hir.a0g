@@ -16,8 +16,8 @@ unknown "unexpected character";
 module = "module" name:STRING ~ "expected the module name as a string" ";" ~ "expected ';'"
          (!EOF item)* EOF;
 
-item @inline @recover(before "struct" "enum" "global" "extern" "fn")
-    = struct_decl | enum_decl | global_decl | extern_decl | fn_decl;
+item @inline @recover(before "struct" "enum" "interface" "impl" "global" "extern" "fn")
+    = struct_decl | enum_decl | interface_decl | impl_decl | global_decl | extern_decl | fn_decl;
 
 struct_decl = "struct" name:NAME ~ "expected a struct name" type_params? "{" ~ "expected '{'"
               (field ("," field)* ","?)? "}" ~ "expected '}'";
@@ -26,6 +26,19 @@ field = name:NAME ":" ~ "expected ':'" type:type ~ "expected a type";
 enum_decl = "enum" name:NAME ~ "expected an enum name" type_params? "{" ~ "expected '{'"
             (variant ("," variant)* ","?)? "}" ~ "expected '}'";
 variant = name:NAME ("(" type:type ("," type:type)* ")" ~ "expected ')'")?;
+
+interface_decl = "interface" name:NAME ~ "expected an interface name" "{" ~ "expected '{'"
+                 method:method_sig* "}" ~ "expected '}'";
+method_sig = "fn" name:NAME ~ "expected a method name" "(" ~ "expected '('" receiver:NAME ~ "expected 'self'"
+             ("," param_type:type ~ "expected a type")* ")" ~ "expected ')'" ("->" ret:type)?
+             ";" ~ "expected ';'";
+
+// `impl Shape for Circle;` declares an implementation; `impl<T> Cell<T> { fn ... }` holds methods,
+// whose first parameter is the value they are called on.
+impl_decl = "impl" type_params? owner:impl_type ~ "expected a type"
+            ("for" target:impl_type ~ "expected a type" ";" ~ "expected ';'"
+             | "{" ~ "expected '{' or 'for'" method:fn_decl* "}" ~ "expected '}'");
+impl_type = name:NAME type_args? | "int" | "float" | "bool" | "string";
 
 global_decl = "global" name:NAME ~ "expected a global name" ":" ~ "expected ':'"
               type:type ~ "expected a type" ";" ~ "expected ';'";
@@ -38,8 +51,9 @@ fn_decl = "fn" name:NAME ~ "expected a function name" type_params? "(" ~ "expect
           (param ("," param)*)? ")" ~ "expected ')'" ("->" ret:type)?
           body:block ~ "expected a function body";
 param = name:NAME ":" ~ "expected ':'" type:type ~ "expected a type";
-type_params = "<" tparam:NAME ~ "expected a type parameter" ("," tparam:NAME ~ "expected a type parameter")*
-              ">" ~ "expected '>'";
+type_params = "<" tparam:type_param ~ "expected a type parameter"
+              ("," tparam:type_param ~ "expected a type parameter")* ">" ~ "expected '>'";
+type_param = name:NAME (":" bound:NAME ~ "expected an interface" ("+" bound:NAME ~ "expected an interface")*)?;
 
 type = base:base_type nullable:"?"?;
 base_type = "unit" | "bool" | "int" | "float" | "string" | "any" | "never"

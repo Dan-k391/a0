@@ -209,6 +209,9 @@ impl<'a> TextParser<'a> {
                 ("enum_decl", Some(n)) => {
                     self.b.declare_generic_enum(&n, &tparams);
                 }
+                ("interface_decl", Some(n)) => {
+                    self.b.declare_interface(&n);
+                }
                 _ => {}
             }
         }
@@ -249,8 +252,80 @@ impl<'a> TextParser<'a> {
         };
         self.fields(tp, "tparam")
             .into_iter()
-            .map(|n| self.text(n).to_string())
+            .map(|p| self.text(self.field(p, "name").unwrap()).to_string())
             .collect()
+    }
+
+    /// The bounds written on `item`'s type parameters, which are the parameters of `owner` from
+    /// `skip` on.
+    fn bounds(&mut self, item: NodeId, owner: Item, skip: u32) -> R<()> {
+        let Some(tp) = self
+            .tree
+            .children(item)
+            .into_iter()
+            .find(|&c| self.kind(c) == "type_params")
+        else {
+            return Ok(());
+        };
+        for (k, p) in self.fields(tp, "tparam").into_iter().enumerate() {
+            for b in self.fields(p, "bound") {
+                let name = self.text(b).to_string();
+                let Some(Item::Interface(i)) = self.type_item(&name) else {
+                    return self.error(
+                        b,
+                        code::UNKNOWN_TYPE,
+                        &format!("unknown interface '{name}'"),
+                    );
+                };
+                self.b.add_bound(owner, skip + k as u32, i);
+            }
+        }
+        Ok(())
+    }
+
+    /// The type an `impl` line names: a struct, an enum, a value type or (before `for`) an
+    /// interface.
+    fn impl_type(&mut self, node: NodeId) -> R<Result<TypeId, InterfaceId>> {
+        let Some(n) = self.field(node, "name") else {
+            return Ok(Ok(match self.tree.text(self.tree.child(node, 0)) {
+                "int" => TypeId::INT,
+                "float" => TypeId::FLOAT,
+                "bool" => TypeId::BOOL,
+                _ => TypeId::STRING,
+            }));
+        };
+        let name = self.text(n).to_string();
+        match self.type_item(&name) {
+            Some(Item::Interface(i)) => Ok(Err(i)),
+            Some(item @ (Item::Struct(_) | Item::Enum(_))) => {
+                Ok(Ok(self.b.instantiate_named(item, &[])))
+            }
+            _ => self.error(n, code::UNKNOWN_TYPE, &format!("unknown type '{name}'")),
+        }
+    }
+
+    /// The signature of a function or method `f` declared by `item`, with its parameters' spans.
+    fn signature(&mut self, f: FuncId, item: NodeId) -> R<()> {
+        self.bind_type_params(Item::Func(f));
+        let (names, types) = self.params(item)?;
+        let ret = self.ret(item)?;
+        let refs: Vec<&str> = names.iter().map(String::as_str).collect();
+        self.at_name(item);
+        self.b.set_signature(f, &refs, &types, ret);
+        let body = self.b.function_body(f);
+        let params: Vec<NodeId> = self
+            .tree
+            .children(item)
+            .into_iter()
+            .filter(|&c| self.kind(c) == "param")
+            .collect();
+        for (i, p) in params.into_iter().enumerate() {
+            if self.spans {
+                let span = self.tree.span(self.field(p, "name").unwrap_or(p));
+                self.b.set_param_span(body, i as u32, span);
+            }
+        }
+        Ok(())
     }
 
     /// Puts the type parameters of `owner` in scope for the types that follow.
@@ -332,26 +407,56 @@ impl<'a> TextParser<'a> {
                 let tparams: Vec<&str> = tparams.iter().map(String::as_str).collect();
                 self.at_name(item);
                 let f = self.b.declare_generic_function(&name, &tparams);
-                self.bind_type_params(Item::Func(f));
-                let (names, types) = self.params(item)?;
-                let ret = self.ret(item)?;
-                let refs: Vec<&str> = names.iter().map(String::as_str).collect();
-                self.at_name(item);
-                self.b.set_signature(f, &refs, &types, ret);
-                let body = self.b.function_body(f);
-                let params: Vec<NodeId> = self
-                    .tree
-                    .children(item)
-                    .into_iter()
-                    .filter(|&c| self.kind(c) == "param")
-                    .collect();
-                for (i, p) in params.into_iter().enumerate() {
-                    if self.spans {
-                        let span = self.tree.span(self.field(p, "name").unwrap_or(p));
-                        self.b.set_param_span(body, i as u32, span);
-                    }
-                }
+                self.bounds(item, Item::Func(f), 0)?;
+                self.signature(f, item)?;
                 funcs.push((f, item));
+            }
+            "interface_decl" => {
+                let Some(Item::Interface(i)) = self.type_item(&name) else {
+                    return Ok(());
+                };
+                let me = self.b.interface_self(i);
+                for sig in self.fields(item, "method") {
+                    self.tparams = vec![("Self".to_string(), me)];
+                    let mut params = Vec::new();
+                    for t in self.fields(sig, "param_type") {
+                        params.push(self.ty(t)?);
+                    }
+                    let ret = self.ret(sig)?;
+                    self.at_name(sig);
+                    let mname = self.text(self.field(sig, "name").unwrap()).to_string();
+                    self.b.add_interface_method(i, &mname, &params, ret);
+                }
+            }
+            "impl_decl" => {
+                let owner = self.impl_type(self.field(item, "owner").unwrap())?;
+                if let Some(target) = self.field(item, "target") {
+                    let (Err(i), Ok(t)) = (owner, self.impl_type(target)?) else {
+                        return self.error(
+                            item,
+                            code::UNKNOWN_TYPE,
+                            "expected `impl Interface for Type;`",
+                        );
+                    };
+                    self.at(item);
+                    self.b.implement(t, i);
+                    return Ok(());
+                }
+                let Ok(owner) = owner else {
+                    return self.error(item, code::UNKNOWN_TYPE, "methods belong to a type");
+                };
+                // A method's own type parameters come after its owner's.
+                let skip = self.b.module().type_args(owner).len() as u32;
+                for method in self.fields(item, "method") {
+                    let mname = self.text(self.field(method, "name").unwrap()).to_string();
+                    let own = self.type_param_names(method);
+                    let own: Vec<&str> = own.iter().map(String::as_str).collect();
+                    self.at_name(method);
+                    let f = self.b.declare_method(owner, &mname, &own);
+                    self.bounds(method, Item::Func(f), skip)?;
+                    self.signature(f, method)?;
+                    funcs.push((f, method));
+                }
             }
             _ => {}
         }
@@ -442,6 +547,7 @@ impl<'a> TextParser<'a> {
                 match self.type_item(&name) {
                     Some(Item::Struct(s)) => self.b.struct_type_args(s, &args),
                     Some(Item::Enum(e)) => self.b.enum_type_args(e, &args),
+                    Some(Item::Interface(i)) if args.is_empty() => self.b.interface_type(i),
                     _ => {
                         return self.error(
                             node,
@@ -735,6 +841,14 @@ impl<'a> TextParser<'a> {
                     _ => {}
                 }
             }
+        }
+        // `o.m(x)` calls a method (`(o.f)(x)` calls a closure in a field).
+        if self.kind(callee) == "field" {
+            let o = self.expr(self.field(callee, "operand").unwrap())?;
+            let name = self.text(self.field(callee, "name").unwrap()).to_string();
+            let args = self.args(node)?;
+            self.at(node);
+            return Ok(self.b.method_call(o, &name, &args));
         }
         let c = self.expr(callee)?;
         let args = self.args(node)?;

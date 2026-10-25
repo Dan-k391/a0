@@ -136,6 +136,9 @@ pub const KEYWORDS: &[&str] = &[
     "break",
     "continue",
     "return",
+    "interface",
+    "impl",
+    "for",
     "throw",
     "try",
     "catch",
@@ -319,6 +322,9 @@ impl HirBuilder {
         self.solve_deferred();
         self.report_unresolved();
         self.resolve_all();
+        self.check_impls();
+        self.check_bounds();
+        self.build_vtables();
         self.report_value_nullables();
         let warnings = self.find_warnings();
         let mut diags = self.diags;
@@ -537,6 +543,43 @@ impl HirBuilder {
                     Some(i) => ExprKind::SetField(o, i, v),
                     None => continue,
                 },
+                ExprKind::MethodCall(o, name, args) => {
+                    let ot = m.resolve(m.expr_type(o));
+                    match crate::methods::resolve_method(m, ot, &name) {
+                        crate::methods::Resolved::Method(f, targs) => {
+                            let targs = targs.into_iter().map(|t| m.resolve(t)).collect();
+                            let mut all = vec![o];
+                            all.extend(args);
+                            ExprKind::Call(f, targs, all)
+                        }
+                        crate::methods::Resolved::Interface(i, k) => {
+                            ExprKind::InterfaceCall(o, i, k, args)
+                        }
+                        crate::methods::Resolved::Field(fi) => {
+                            // The closure in the field, called.
+                            let field = ExprId(m.exprs.len() as u32);
+                            let ft = match m.kind(ot) {
+                                TypeKind::Struct(s, targs) => {
+                                    let (s, targs) = (*s, targs.clone());
+                                    let t = m.structs[s.index()].fields[fi as usize].1;
+                                    let t = m.subst(t, Item::Struct(s), &targs);
+                                    m.resolve(t)
+                                }
+                                _ => continue,
+                            };
+                            let span = m.exprs[i].span;
+                            m.exprs.push(ExprData {
+                                kind: ExprKind::Field(o, fi),
+                                ty: ft,
+                                span,
+                            });
+                            ExprKind::CallValue(field, args)
+                        }
+                        crate::methods::Resolved::Bound | crate::methods::Resolved::None => {
+                            continue;
+                        }
+                    }
+                }
                 _ => continue,
             };
             m.exprs[i].kind = kind;
@@ -670,7 +713,7 @@ impl HirBuilder {
     }
 
     /// Registers a type in the current module; `name` is its name there.
-    fn add_type_name(&mut self, name: &str, item: Item) {
+    pub(crate) fn add_type_name(&mut self, name: &str, item: Item) {
         self.item_name(name);
         let key = self.qualified(name);
         if let Some(first) = self.m.type_names.insert(key, item) {
@@ -692,7 +735,7 @@ impl HirBuilder {
     }
 
     /// Reports a second declaration of `what` at the current span, `first` being the first.
-    fn declared_twice(&mut self, what: &str, first: Option<Span>) {
+    pub(crate) fn declared_twice(&mut self, what: &str, first: Option<Span>) {
         let p = Problem::new(code::DUPLICATE, format!("{what} is declared twice"))
             .label("declared again here")
             .at(first, "first declared here");
@@ -1107,7 +1150,7 @@ impl HirBuilder {
         ExprId(self.m.exprs.len() as u32 - 1)
     }
 
-    fn push(&mut self, kind: ExprKind, hint: TypeId) -> ExprId {
+    pub(crate) fn push(&mut self, kind: ExprKind, hint: TypeId) -> ExprId {
         let e = ExprId(self.m.exprs.len() as u32);
         let ty = match infer(&mut self.m, &kind, hint) {
             Ok(t) => t,
@@ -1975,13 +2018,14 @@ pub(crate) fn infer(m: &mut HirModule, kind: &ExprKind, hint: TypeId) -> Typed {
             }
         }
         ExprKind::Break | ExprKind::Continue | ExprKind::Return(_) => TypeId::NEVER,
-        ExprKind::Throw(value) => {
-            // Lowering boxes the value, so its type must be known.
-            if matches!(m.kind(ty(m, *value)), TypeKind::Var(_)) {
-                return Err(TypeErr::Open(*value));
-            }
-            TypeId::NEVER
+        ExprKind::MethodCall(receiver, name, args) => method_call_type(m, *receiver, name, args)?,
+        ExprKind::InterfaceCall(receiver, i, k, args) => {
+            let want = m.intern(TypeKind::Interface(*i));
+            expect(m, *receiver, want)?;
+            interface_call_type(m, *i, *k, args)?
         }
+        // Lowering boxes the value, whose type `finish` requires to be known like every other.
+        ExprKind::Throw(_) => TypeId::NEVER,
         ExprKind::Try(body, local, handler) => {
             let lt = m.local_type(*local);
             if !m.unify(lt, TypeId::ANY) {
@@ -1997,6 +2041,95 @@ pub(crate) fn infer(m: &mut HirModule, kind: &ExprKind, hint: TypeId) -> Typed {
             None => TypeId::UNIT,
         },
     })
+}
+
+/// The type of `receiver.name(args)` (see `methods.rs`).
+fn method_call_type(m: &mut HirModule, receiver: ExprId, name: &str, args: &[ExprId]) -> Typed {
+    use crate::methods::{Resolved, bound_method, resolve_method};
+    let rt = m.shallow(m.expr_type(receiver));
+    match m.kind(rt) {
+        TypeKind::Var(_) => return Err(TypeErr::Open(receiver)),
+        TypeKind::Never => return Ok(TypeId::NEVER),
+        TypeKind::Error => return Ok(TypeId::ERROR),
+        _ => {}
+    }
+    match resolve_method(m, rt, name) {
+        Resolved::Method(f, mut targs) => {
+            let own = m.funcs[f.index()].type_params.len() - targs.len();
+            if own > 0 {
+                // Fresh type arguments here would not survive to `finish`; `method_call` gives them
+                // when the receiver's type is known.
+                return fail(Problem::new(
+                    code::CANNOT_INFER,
+                    format!("the type of the value `{name}` is called on must be known here"),
+                ));
+            }
+            targs.truncate(m.funcs[f.index()].type_params.len());
+            let (params, ret) = signature(m, f, &targs)?;
+            expect(m, receiver, params[0])?;
+            let mut callee = Callee::function(m, f);
+            if !callee.params.is_empty() {
+                callee.params.remove(0);
+            }
+            args_match(m, &params[1..], args, &callee)?;
+            Ok(ret)
+        }
+        Resolved::Interface(i, k) => interface_call_type(m, i, k, args),
+        Resolved::Field(fi) => {
+            let ft = field_type(m, receiver, fi)?;
+            match m.kind(ft).clone() {
+                TypeKind::Fn(params, ret) => {
+                    let what = format!("this {}", m.term(Term::Closure));
+                    args_match(m, &params, args, &Callee::unknown(what))?;
+                    Ok(ret)
+                }
+                _ => fail(HirBuilder::unknown_method(m, rt, name)),
+            }
+        }
+        Resolved::Bound => {
+            let Some((params, ret, decl)) = bound_method(m, rt, name) else {
+                return fail(HirBuilder::unknown_method(m, rt, name));
+            };
+            let callee = Callee {
+                what: format!("the method `{name}`"),
+                decl,
+                params: Vec::new(),
+            };
+            args_match(m, &params, args, &callee)?;
+            Ok(ret)
+        }
+        Resolved::None => {
+            let p = HirBuilder::unknown_method(m, rt, name);
+            fail(param_note(m, rt, p))
+        }
+    }
+}
+
+/// The type of a call of the `k`th method of interface `i` on an interface value.
+fn interface_call_type(m: &mut HirModule, i: InterfaceId, k: u32, args: &[ExprId]) -> Typed {
+    let sig = m.interfaces[i.index()].methods[k as usize].clone();
+    if crate::methods::mentions_self(m, i, &sig) {
+        return fail(
+            Problem::new(
+                code::NOT_DYNAMIC,
+                format!(
+                    "the method `{}` of `{}` cannot be called on a value of the interface",
+                    sig.name,
+                    m.interfaces[i.index()].name
+                ),
+            )
+            .label("the type of the value is not known here")
+            .at(sig.span, "it uses `Self`, the type of the value")
+            .help("call it through a type parameter bounded by the interface instead"),
+        );
+    }
+    let callee = Callee {
+        what: format!("the method `{}`", sig.name),
+        decl: sig.span,
+        params: Vec::new(),
+    };
+    args_match(m, &sig.params, args, &callee)?;
+    Ok(sig.ret)
 }
 
 fn named_field(m: &HirModule, object: ExprId, name: &str) -> Result<u32, TypeErr> {
@@ -2391,7 +2524,8 @@ pub(crate) fn testable(m: &HirModule, t: TypeId) -> bool {
         | TypeKind::Float
         | TypeKind::String
         | TypeKind::Struct(..)
-        | TypeKind::Enum(..) => true,
+        | TypeKind::Enum(..)
+        | TypeKind::Interface(_) => true,
         TypeKind::Nullable(inner) => testable(m, *inner),
         _ => false,
     }
@@ -2408,6 +2542,11 @@ fn cast_allowed(m: &HirModule, from: TypeId, to: TypeId) -> bool {
         || matches!(tk, TypeKind::Any)
         || (matches!(fk, TypeKind::Any) && testable(m, to))
         || matches!(tk, TypeKind::Nullable(inner) if m.same(from, *inner))
+        || matches!(
+            (fk, tk),
+            (TypeKind::Struct(..) | TypeKind::Enum(..), TypeKind::Interface(i))
+                if crate::methods::implements(m, from, *i)
+        )
 }
 
 /// Whether `e` contains a `break` that targets the innermost loop around it (not a nested loop, not
@@ -2459,6 +2598,10 @@ pub(crate) fn visit_children(m: &HirModule, e: ExprId, f: &mut dyn FnMut(ExprId)
             f(*a);
             f(*b);
             f(*c);
+        }
+        MethodCall(r, _, args) | InterfaceCall(r, _, _, args) => {
+            f(*r);
+            args.iter().for_each(|&a| f(a));
         }
         Call(_, _, args)
         | CallExtern(_, args)

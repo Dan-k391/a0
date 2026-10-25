@@ -591,3 +591,20 @@ book: runtime errors stay fatal, so the official suite's behavior is untouched a
 need no checks; natives other than `clock` exist only in programs that name them, so other programs
 pay neither for the library nor for exceptions; and the extensions' tests (`tests/a0`) run with the
 suite in all six modes but are counted apart from its 241.
+
+## D52. Interface values are plain references; methods are found in tables on the type
+
+Languages need methods, interfaces with dynamic dispatch, and generics that require operations of a
+type. A value of an interface type could have been a fat pointer (the object and a table of
+methods), as in Go and Rust, but every HIR value is one word, which the collector, `any`, arrays,
+fields and nullability all rely on. So an interface value is the object reference itself, and each
+type descriptor carries an interface table: for each interface of the program, the type's methods
+for it. A call loads the type from the object's header, the table, and the method (three loads and
+an indirect call); converting an object to an interface costs nothing; `x is I` reads the table.
+Implementations are declared (`implement`), not inferred from the methods a type happens to have:
+the declaration says which tables to build and gives errors a place to point at. Bounded type
+parameters use the same interfaces, but monomorphization resolves their method calls to direct
+calls, so generic code pays nothing at run time and value types (`int`) can satisfy bounds without
+being objects. Methods that use `Self` work through bounds but not on interface values, which do not
+know the object's type. Left for later: default methods, generic interfaces, and interfaces
+implemented by value types at run time (which would need boxing).

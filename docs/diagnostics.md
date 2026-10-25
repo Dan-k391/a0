@@ -61,6 +61,7 @@ list matches it.
 | E1010 | unknown module |
 | E1011 | private item |
 | E1012 | import cycle |
+| E1013 | unknown method |
 | E2001 | mismatched types |
 | E2002 | wrong number of arguments |
 | E2003 | not a function |
@@ -81,6 +82,8 @@ list matches it.
 | E2018 | not a structure |
 | E2019 | invalid use of a type parameter |
 | E2020 | cannot pass the failure on |
+| E2021 | interface not implemented |
+| E2022 | not callable through an interface value |
 | E3001 | outside a loop |
 | E4001 | no entry point |
 | E4002 | invalid entry point |

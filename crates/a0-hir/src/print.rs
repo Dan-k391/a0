@@ -16,15 +16,39 @@ pub fn print_module(m: &HirModule) -> String {
     let _ = writeln!(p.out, "module {};", quote(&m.name));
     // Types first, as the text format declares them before anything that uses them; otherwise
     // in declaration order, so printing what was parsed gives the same text.
-    let is_type = |i: &&Item| matches!(i, Item::Struct(_) | Item::Enum(_));
-    let types = m.items().iter().filter(is_type);
-    let rest = m.items().iter().filter(|i| !is_type(i));
-    // Modules may declare the same C function; the text declares it once.
+    let is_type = |i: &&Item| matches!(i, Item::Struct(_) | Item::Enum(_) | Item::Interface(_));
+    for item in m.items().iter().filter(is_type) {
+        p.out.push('\n');
+        p.item(*item);
+    }
+    if !m.impls.is_empty() {
+        p.out.push('\n');
+        for &(owner, i, _) in &m.impls {
+            let _ = writeln!(
+                p.out,
+                "impl {} for {};",
+                ident(&m.interfaces[i.index()].name),
+                p.owner_name(owner)
+            );
+        }
+    }
+    // Modules may declare the same C function; the text declares it once. Methods are printed
+    // together, in an `impl` block for their owner where the first of them is.
     let mut externs = std::collections::HashSet::new();
-    for item in types.chain(rest) {
+    let mut owners = std::collections::HashSet::new();
+    for item in m.items().iter().filter(|i| !is_type(i)) {
         if let Item::Extern(x) = item
             && !externs.insert(m.extern_name(*x))
         {
+            continue;
+        }
+        if let Item::Func(f) = item
+            && let Some(&owner) = m.method_owner.get(f)
+        {
+            if owners.insert(owner) {
+                p.out.push('\n');
+                p.impl_block(owner);
+            }
             continue;
         }
         p.out.push('\n');
@@ -98,9 +122,114 @@ impl Printer<'_> {
         self.m.type_name(t)
     }
 
+    /// The name of the owner of methods, as `impl` lines write it.
+    fn owner_name(&self, owner: Owner) -> String {
+        match owner {
+            Owner::Struct(s) => ident(&self.m.structs[s.index()].name).into_owned(),
+            Owner::Enum(e) => ident(&self.m.enums[e.index()].name).into_owned(),
+            Owner::Value(t) => self.m.type_name(t),
+        }
+    }
+
+    /// `impl<T> Cell<T> { fn len(self: Cell<T>) -> int { ... } ... }`: every method of `owner`.
+    fn impl_block(&mut self, owner: Owner) {
+        let m = self.m;
+        let (count, mut methods): (usize, Vec<FuncId>) = (
+            match owner {
+                Owner::Struct(s) => m.structs[s.index()].type_params.len(),
+                Owner::Enum(e) => m.enums[e.index()].type_params.len(),
+                Owner::Value(_) => 0,
+            },
+            m.items()
+                .iter()
+                .filter_map(|i| match i {
+                    Item::Func(f) if m.method_owner.get(f) == Some(&owner) => Some(*f),
+                    _ => None,
+                })
+                .collect(),
+        );
+        methods.dedup();
+        let names = &m.funcs[methods[0].index()].type_params[..count];
+        let header = params(names);
+        let _ = writeln!(
+            self.out,
+            "impl{header} {}{header} {{",
+            self.owner_name(owner)
+        );
+        for f in methods {
+            let full = m.func_name(f);
+            let short = full.rsplit('.').next().unwrap_or(full);
+            let own = &m.funcs[f.index()].type_params[count..];
+            let _ = write!(
+                self.out,
+                "  fn {}{}",
+                ident(short),
+                self.bounded(Item::Func(f), own, count)
+            );
+            let body = m.func_body(f);
+            self.signature(body);
+            self.out.push(' ');
+            self.body_root(body, 1);
+            self.out.push('\n');
+        }
+        self.out.push_str("}\n");
+    }
+
+    /// Type parameters with their bounds: `<T: Shape + Named>`; `skip` of the item's come before.
+    fn bounded(&self, item: Item, names: &[String], skip: usize) -> String {
+        if names.is_empty() {
+            return String::new();
+        }
+        let ps: Vec<String> = names
+            .iter()
+            .enumerate()
+            .map(|(k, n)| {
+                let bounds = self.m.bounds.get(&(item, (skip + k) as u32));
+                match bounds {
+                    Some(bs) if !bs.is_empty() => {
+                        let bs: Vec<String> = bs
+                            .iter()
+                            .map(|i| ident(&self.m.interfaces[i.index()].name).into_owned())
+                            .collect();
+                        format!("{}: {}", ident(n), bs.join(" + "))
+                    }
+                    _ => ident(n).into_owned(),
+                }
+            })
+            .collect();
+        format!("<{}>", ps.join(", "))
+    }
+
     fn item(&mut self, item: Item) {
         let m = self.m;
         match item {
+            Item::Interface(i) => {
+                let def = &m.interfaces[i.index()];
+                let methods: Vec<String> = def
+                    .methods
+                    .iter()
+                    .map(|s| {
+                        let mut ps = vec!["self".to_string()];
+                        ps.extend(s.params.iter().map(|&t| self.ty(t)));
+                        format!(
+                            "fn {}({}){};",
+                            ident(&s.name),
+                            ps.join(", "),
+                            self.ret(s.ret)
+                        )
+                    })
+                    .collect();
+                if methods.is_empty() {
+                    let _ = writeln!(self.out, "interface {} {{}}", ident(&def.name));
+                } else {
+                    let _ = writeln!(
+                        self.out,
+                        "interface {} {{ {} }}",
+                        ident(&def.name),
+                        methods.join(" ")
+                    );
+                }
+            }
             Item::Struct(s) => {
                 let def = &m.structs[s.index()];
                 let fields: Vec<String> = def
@@ -166,7 +295,7 @@ impl Printer<'_> {
                     self.out,
                     "fn {}{}",
                     ident(m.func_name(f)),
-                    params(&m.funcs[f.index()].type_params)
+                    self.bounded(item, &m.funcs[f.index()].type_params, 0)
                 );
                 self.signature(body);
                 self.out.push(' ');
@@ -260,6 +389,15 @@ impl Printer<'_> {
         let left = |a: ExprId, min: u8| self.level(a) < min || self.starts_ambiguously(a);
         match &m.expr(e).kind {
             ExprKind::Unary(UnOp::Neg, _) | ExprKind::Array(_) | ExprKind::Unit => true,
+            // `(o.f)(x)`
+            ExprKind::CallValue(c, _)
+                if matches!(
+                    m.expr(*c).kind,
+                    ExprKind::Field(..) | ExprKind::FieldName(..)
+                ) =>
+            {
+                true
+            }
             ExprKind::Int(v) => *v < 0,
             ExprKind::Float(bits) => {
                 let f = f64::from_bits(*bits);
@@ -275,6 +413,8 @@ impl Printer<'_> {
             | ExprKind::Unwrap(a)
             | ExprKind::Index(a, _)
             | ExprKind::CallValue(a, _)
+            | ExprKind::MethodCall(a, _, _)
+            | ExprKind::InterfaceCall(a, _, _, _)
             | ExprKind::SetField(a, _, _)
             | ExprKind::SetFieldName(a, _, _)
             | ExprKind::SetIndex(a, _, _) => left(*a, POSTFIX),
@@ -318,12 +458,14 @@ impl Printer<'_> {
                 PREFIX
             }
             ExprKind::CallValue(..)
+            | ExprKind::MethodCall(..)
+            | ExprKind::InterfaceCall(..)
             | ExprKind::Field(..)
             | ExprKind::FieldName(..)
             | ExprKind::Unwrap(_)
             | ExprKind::Index(..) => POSTFIX,
             // `return x` swallows everything after it, so it is parenthesized inside operators.
-            ExprKind::Return(Some(_)) => ASSIGN,
+            ExprKind::Return(Some(_)) | ExprKind::Throw(_) => ASSIGN,
             _ => ATOM,
         }
     }
@@ -422,7 +564,28 @@ impl Printer<'_> {
                 self.args(&args, indent);
             }
             ExprKind::CallValue(c, args) => {
-                self.expr(c, POSTFIX, indent);
+                // `(o.f)(x)`: `o.f(x)` would be a method call.
+                if matches!(
+                    m.expr(c).kind,
+                    ExprKind::Field(..) | ExprKind::FieldName(..)
+                ) {
+                    self.out.push('(');
+                    self.expr(c, 0, indent);
+                    self.out.push(')');
+                } else {
+                    self.expr(c, POSTFIX, indent);
+                }
+                self.args(&args, indent);
+            }
+            ExprKind::MethodCall(r, name, args) => {
+                self.expr(r, POSTFIX, indent);
+                let _ = write!(self.out, ".{}", ident(&name));
+                self.args(&args, indent);
+            }
+            ExprKind::InterfaceCall(r, i, k, args) => {
+                self.expr(r, POSTFIX, indent);
+                let name = &m.interfaces[i.index()].methods[k as usize].name;
+                let _ = write!(self.out, ".{}", ident(name));
                 self.args(&args, indent);
             }
             ExprKind::Builtin(op, args) => {
