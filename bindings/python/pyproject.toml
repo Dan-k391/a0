@@ -7,7 +7,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "a0-lang"
-version = "0.9.0"
+version = "1.0.0"
 description = "Build programming languages in Python on A0: grammars, the HIR builder, the JIT, native executables, the language server and the debugger"
 readme = "README.md"
 license = "MIT"

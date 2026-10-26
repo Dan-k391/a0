@@ -23,8 +23,8 @@ extern "C" {
 
 /* The version of this header (docs/compatibility.md). A library of the same major version and at
  * least this minor version provides everything declared here: compare with a0_version(). */
-#define A0_VERSION_MAJOR 0
-#define A0_VERSION_MINOR 9
+#define A0_VERSION_MAJOR 1
+#define A0_VERSION_MINOR 0
 #define A0_VERSION_PATCH 0
 
 /* Marks a declaration deprecated: it keeps working until the next major version, and compilers

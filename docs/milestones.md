@@ -1170,12 +1170,66 @@ Nothing in A0 changed for the benchmark. What it found along the way:
 - Lowering to IR is now the largest stage of a large build (894 ms of 2.7 s on the benchmark
   machine); it is linear but allocates per instruction.
 - The large-program generator's run time is exponential in its modules (each `check` calls its
-  imports'), so the program's run is not a measurement of A0; it should call one import.
+  imports'), so the program's run is not a measurement of A0; it should call one import. (Done in
+  M28.)
 - The collector's pauses grow with the live heap (about 40 ms at 4 million objects); a
   generational or incremental collector is the answer if programs with large heaps need short
   pauses.
 - Closures stored in data structures, or passed to functions too large to inline, stay indirect
   calls.
+
+## M28. v1.0: stable
+
+**Done**
+
+- A compatibility promise (`docs/compatibility.md`, D86) for the command line, the HIR, IR and
+  grammar text formats, the C header, the Python package, the Rust API a language is written
+  against (the covered crates `a0-diag`, `a0-syntax`, `a0-sema`, `a0-ir`, `a0-hir`, `a0-driver`,
+  `a0-build`) and the documented part of `a0rt.h` (`docs/runtime.md`): semantic versioning, what
+  each kind of change may do, and deprecation across at least one minor release before removal in
+  a major one (`#[deprecated]`, `A0_DEPRECATED`, a Python warning).
+- Versioned text formats: each starts with an optional `version 1`, a later version is refused
+  with `E0004`, and HIR and IR are printed with it. The C header and the Python package carry the
+  version and check that the library they load agrees.
+- The Rust API made able to grow: `Language` and its parts are built with constructors and
+  methods; structs and enums that may grow are `#[non_exhaustive]`, and those A0 itself matches
+  exhaustively say that they may grow; `a0_driver::backend` gathers what a language with its own C
+  runtime needs.
+- B0 (`b0/`, D87), the flagship language, written only against the covered crates (a test reads
+  its sources to keep it so): static types with inference, inline structs, sized numbers, enums,
+  generics, interfaces, closures, maps, exceptions, dynamic objects, threads, raw pointers in
+  `unsafe` (its own rule, `E2027`), C functions, modules and packages, and a prelude written in
+  B0. It has every test an example language has (eight modes, diagnostics snapshots, language
+  server, debugger, REPL, packages, threads) and a fuzz test; `examples/wordfreq` is a program of
+  two modules in it.
+- Documentation: the book (`docs/book/`, `docs/SUMMARY.md` for mdBook) from getting started to
+  building a full language, memory, concurrency and dynamic languages, with a guide per example
+  language (each one's README); an API reference with every public item of the covered crates
+  documented, built in CI with warnings as errors; a test that keeps every relative link valid.
+- Releases (`docs/releases.md`): an archive per platform with the tools, `rust-lld`, the target
+  packs, the C API, the Python package and its library, the editor extension and the docs
+  (`release/package.py`, checked alone by `release/check.py`); crates, a wheel and a `.vsix` ready
+  to publish; a workflow that drafts a GitHub release on a tag and publishes nothing.
+- Performance from release to release: `bench/run.py --record` and `bench/history.csv`, printed
+  by `bench/history.py` into `docs/benchmarks.md`. v1.0.0 was measured beside v0.9.0, both built
+  from their tags: they differ by the machine's noise, as nothing in v1.0 touches code generation.
+
+**Changed**
+
+- `Language { .. }`, `Modules { .. }`, `ExitCodes { .. }` and the other struct literals of the
+  driver became constructors and methods; Kaleidoscope and Tin depend only on covered crates.
+- `bench/large/gen.py` calls one import's `check`, so the large program's run time is linear in
+  its modules (M27's open question); its 0.8.0 and 0.9.0 numbers stay apart in the history.
+- Every crate states `rust-version` 1.97, the oldest Rust that builds Cranelift 0.137.
+
+**Open questions**
+
+- `a0-native` from crates.io cannot write aarch64-windows objects until Cranelift takes the change
+  in `vendor/cranelift-object` (D77); the archives, built from the repository, can.
+- The core IR's opcodes and types are open enums by documentation, not `#[non_exhaustive]`: a
+  language that matches on them must keep a fallback arm, which the compiler does not enforce.
+- The benchmark's single runs on a shared machine have outliers of 30%; the history would be
+  steadier with more runs, or the minimum, per number.
 
 ## Overall open questions
 

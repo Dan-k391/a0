@@ -372,7 +372,16 @@ fn hir_text_never_crashes() {
 
 /// The example languages' grammars, each with its programs.
 fn languages() -> Vec<(String, Vec<String>)> {
+    // B0 lives at the top of the repository, the others under examples/.
     let mut out = Vec::new();
+    let b0_programs = corpus(&["b0/tests/programs"], &["b0"])
+        .into_iter()
+        .map(|(_, t)| t)
+        .collect();
+    out.push((
+        std::fs::read_to_string(root().join("b0/b0.a0g")).unwrap(),
+        b0_programs,
+    ));
     for (lang, ext) in [
         ("calc", "calc"),
         ("lispy", "lisp"),

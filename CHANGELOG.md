@@ -6,6 +6,13 @@ APIs. `docs/milestones.md` has the details of each step, with measurements.
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-10-26
+
+Stable: a compatibility promise with versioned text formats and a deprecation process, B0 (the
+flagship language, built only on the public API), the book and an API reference, release
+archives for every platform and packages ready to publish, and performance tracked from release
+to release. Milestone M28 in `docs/milestones.md`.
+
 ### Added
 
 - **B0, the flagship language** (`b0/`, D87): static types with inference, structs and inline
@@ -13,8 +20,8 @@ APIs. `docs/milestones.md` has the details of each step, with measurements.
   threads, manual memory with raw pointers in `unsafe`, C functions, modules and packages, and a
   prelude written in B0. Built only on the covered API, which a test checks; tested like the
   example languages in every mode, with `examples/wordfreq`, a program of two modules. The VS Code
-  extension knows `.b0` files. New code `E2027` (needs `unsafe`).
-
+  extension knows `.b0` files, and its compiler is fuzzed with mutated programs. New code
+  `E2027` (needs `unsafe`).
 - **The A0 book** (`docs/book/README.md`, `docs/SUMMARY.md` for mdBook): from getting started
   and the tutorial through the language's parts and its tools to a full language (B0), memory,
   concurrency, dynamic languages, other platforms and hosting, with a guide to each language. A
@@ -28,7 +35,8 @@ APIs. `docs/milestones.md` has the details of each step, with measurements.
   release on a tag, publishing nothing. The crates have the metadata crates.io needs, the
   examples `publish = false`, and the repository a `LICENSE`.
 - **Performance from release to release**: `bench/run.py --record` keeps headline numbers in
-  `bench/history.csv`; `bench/history.py` prints them by machine.
+  `bench/history.csv`; `bench/history.py` prints them by machine. v1.0.0, measured beside v0.9.0,
+  runs as fast (`docs/benchmarks.md`).
 - **A compatibility promise** for 1.0 (`docs/compatibility.md`, D86): what is covered (the command
   line, the text formats, the C header, the Python package, the Rust API for languages, the part of
   `a0rt.h` in the new `docs/runtime.md`), the rules for each, and how things are deprecated.
@@ -52,6 +60,7 @@ APIs. `docs/milestones.md` has the details of each step, with measurements.
   may grow.
 - Kaleidoscope and Tin depend only on covered crates (and `a0-runtime` for its header).
 - `bench/large/gen.py` makes a program whose run time is linear in its modules.
+- `a0 run`'s usage says it compiles into memory (it has since 0.5).
 
 ## [0.9.0] - 2026-10-26
 

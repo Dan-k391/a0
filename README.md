@@ -246,7 +246,9 @@ packs.
 
 ## Status
 
-Version 0.9.0 (`CHANGELOG.md`). Builds for x86-64 and aarch64 Linux, macOS and Windows, and for
-WebAssembly in the playground; cross-compiles to Linux and Windows from any host with target packs
-(`docs/cross.md`); programs are packages with dependencies (`docs/packages.md`), and every input A0
-reads is fuzzed. Not yet: stable APIs and a compatibility promise (1.0). A0 is MIT-licensed.
+Version 1.0.0 (`CHANGELOG.md`), stable: from 1.0 on, A0 follows Semantic Versioning and keeps
+its command line, text formats, C API, Python package and the Rust API for languages compatible
+until 2.0 ([docs/compatibility.md](docs/compatibility.md)). Builds for x86-64 and aarch64 Linux,
+macOS and Windows, and for WebAssembly in the playground; cross-compiles to Linux and Windows from
+any host; programs are packages with dependencies; every input A0 reads is fuzzed. Releases are
+described in [docs/releases.md](docs/releases.md). A0 is MIT-licensed.
