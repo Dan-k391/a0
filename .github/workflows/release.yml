@@ -89,4 +89,9 @@ jobs:
           # The crates are the same on every platform: one copy of each.
           ls dist
           python3 release/notes.py "${GITHUB_REF_NAME#v}" > notes.md
-          gh release create "$GITHUB_REF_NAME" --draft --title "A0 ${GITHUB_REF_NAME#v}" --notes-file notes.md dist/*
+          # A tag made on GitHub's release page comes with its release: add the files to it.
+          if gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" --clobber dist/*
+          else
+            gh release create "$GITHUB_REF_NAME" --draft --title "A0 ${GITHUB_REF_NAME#v}" --notes-file notes.md dist/*
+          fi

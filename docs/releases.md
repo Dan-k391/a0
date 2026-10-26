@@ -51,7 +51,9 @@ Made by the same script, published by a maintainer:
    `bindings/python/a0/__init__.py` and `version` in `bindings/python/pyproject.toml`,
    `editors/vscode/package.json`, and `README.md`'s status. Tests check that the C header, the
    library and the Python package agree.
-3. Commit, tag `v<version>` and push the tag; the workflow drafts the release.
+3. Commit, tag `v<version>` and push the tag; the workflow drafts the release. A tag can also be
+   made on GitHub's page for a new release (a draft makes no tag: publish it, as a pre-release
+   until it is checked); the workflow then adds the archives and packages to that release.
 4. Check the draft's archives, then publish it, and publish the packages.
 
 ## Performance from release to release
