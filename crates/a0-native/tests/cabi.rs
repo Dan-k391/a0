@@ -99,6 +99,7 @@ shape!(QuadI64, a: i64, b: i64, c: i64, d: i64);
 shape!(TripleF32, a: f32, b: f32, c: f32);
 shape!(OneF32, a: f32);
 shape!(OneI8, a: i8);
+shape!(PairI64, a: i64, b: i64);
 
 /// Structs among other arguments, past the argument registers.
 extern "C" fn many(
@@ -121,6 +122,50 @@ extern "C" fn many(
         + d as f64 * 7.0
         + Bytes3::sum(s) * 8.0
         + TripleF32::sum(u) * 9.0
+}
+
+/// A struct that needs two registers when one is left: System V passes it in memory and gives the
+/// register to the next argument; AArch64 puts it on the stack and the arguments after it too.
+#[allow(clippy::too_many_arguments)]
+extern "C" fn spill_one_left(
+    a: i64,
+    b: i64,
+    c: i64,
+    d: i64,
+    e: i64,
+    q: PairI64,
+    h: i64,
+    i: i64,
+    j: i64,
+) -> f64 {
+    (a + 2 * b + 3 * c + 4 * d + 5 * e + 7 * h + 8 * i + 9 * j) as f64 + PairI64::sum(q) * 6.0
+}
+
+/// The same with every register but one used, of both classes.
+#[allow(clippy::too_many_arguments)]
+extern "C" fn spill_last(
+    a: i64,
+    b: i64,
+    c: i64,
+    d: i64,
+    e: i64,
+    f: i64,
+    g: i64,
+    q: PairI64,
+    h: i64,
+    x0: f64,
+    x1: f64,
+    x2: f64,
+    x3: f64,
+    x4: f64,
+    x5: f64,
+    x6: f64,
+    p: PairF64,
+    y: f64,
+) -> f64 {
+    let ints = a + 2 * b + 3 * c + 4 * d + 5 * e + 6 * f + 7 * g + 9 * h;
+    let floats = x0 + 2.0 * x1 + 3.0 * x2 + 4.0 * x3 + 5.0 * x4 + 6.0 * x5 + 7.0 * x6 + 9.0 * y;
+    ints as f64 + PairI64::sum(q) * 8.0 + floats + PairF64::sum(p) * 8.5
 }
 
 /// More arguments than the interpreter's own foreign calls take.
@@ -161,6 +206,7 @@ fn shapes() -> Vec<Shape> {
         TripleF32::shape(),
         OneF32::shape(),
         OneI8::shape(),
+        PairI64::shape(),
     ]
 }
 
@@ -244,6 +290,17 @@ fn program(shapes: &[Shape]) -> String {
     );
     let _ = writeln!(
         out,
+        "extern func @spill_one_left(i64, i64, i64, i64, i64, ptr byval({}), i64, i64, i64) -> f64",
+        by("PairI64"),
+    );
+    let _ = writeln!(
+        out,
+        "extern func @spill_last(i64, i64, i64, i64, i64, i64, i64, ptr byval({}), i64, f64, f64, f64, f64, f64, f64, f64, ptr byval({}), f64) -> f64",
+        by("PairI64"),
+        by("PairF64"),
+    );
+    let _ = writeln!(
+        out,
         "extern func @ten(i64, i64, i64, i64, i64, i64, i64, i64, i64, i64) -> i64"
     );
     out.push_str("extern func @scale_f32(f32, f32) -> f32\n\nfunc @main() -> i32 {\n");
@@ -278,6 +335,21 @@ fn program(shapes: &[Shape]) -> String {
         index("TripleF32"),
     );
     out.push_str("  call @record_f64(%many)\n");
+    for k in 1..=9 {
+        let _ = writeln!(out, "  %i{k}: i64 = iconst {}", k * 11);
+        let _ = writeln!(out, "  %x{k}: f64 = fconst {k}.25");
+    }
+    let (q, p) = (index("PairI64"), index("PairF64"));
+    let _ = writeln!(
+        out,
+        "  %spill1: f64 = call @spill_one_left(%i1, %i2, %i3, %i4, %i5, %a{q}, %i6, %i7, %i8)"
+    );
+    out.push_str("  call @record_f64(%spill1)\n");
+    let _ = writeln!(
+        out,
+        "  %spill2: f64 = call @spill_last(%i1, %i2, %i3, %i4, %i5, %i6, %i7, %a{q}, %i8, %x1, %x2, %x3, %x4, %x5, %x6, %x7, %a{p}, %x8)"
+    );
+    out.push_str("  call @record_f64(%spill2)\n");
     let mut tens = Vec::new();
     for k in 0..10 {
         let _ = writeln!(out, "  %t{k}: i64 = iconst {}", 10 - k);
@@ -302,6 +374,8 @@ fn symbols(shapes: &[Shape]) -> HostSymbols {
     }
     syms.add("many", many as *const () as usize);
     syms.add("ten", ten as *const () as usize);
+    syms.add("spill_one_left", spill_one_left as *const () as usize);
+    syms.add("spill_last", spill_last as *const () as usize);
     syms.add("scale_f32", scale_f32 as *const () as usize);
     syms
 }
@@ -334,6 +408,32 @@ fn expected(shapes: &[Shape]) -> Vec<String> {
         TripleF32::make(2.5, 3.5, 4.5),
     );
     out.push(format!("{many}"));
+    let i = |k: i64| k * 11;
+    let x = |k: i64| k as f64 + 0.25;
+    let (q, p) = (PairI64::make(2, 3), PairF64::make(2.5, 3.5));
+    let one_left = spill_one_left(i(1), i(2), i(3), i(4), i(5), q, i(6), i(7), i(8));
+    out.push(format!("{one_left}"));
+    let last = spill_last(
+        i(1),
+        i(2),
+        i(3),
+        i(4),
+        i(5),
+        i(6),
+        i(7),
+        q,
+        i(8),
+        x(1),
+        x(2),
+        x(3),
+        x(4),
+        x(5),
+        x(6),
+        x(7),
+        p,
+        x(8),
+    );
+    out.push(format!("{last}"));
     out.push(ten(10, 9, 8, 7, 6, 5, 4, 3, 2, 1).to_string());
     out.push(format!("{}", scale_f32(1.5, -2.25) as f64));
     out

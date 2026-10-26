@@ -3,9 +3,7 @@
 use std::collections::HashMap;
 
 use a0_diag::{Diagnostic, Diagnostics};
-use a0_ir::{
-    FloatCC, FuncId, GlobalId, Inst, IntCC, Module, Opcode, Region, StructPass, SymbolKind, Type,
-};
+use a0_ir::{FloatCC, FuncId, GlobalId, Inst, IntCC, Module, Opcode, Region, SymbolKind, Type};
 use a0_target::Target;
 use cranelift_codegen::Context;
 use cranelift_codegen::ir::{self, InstBuilder, MemFlagsData, TrapCode, condcodes, types};
@@ -474,33 +472,28 @@ fn signature<M: ClifModule>(
 /// The signature of a C function that takes or returns C structs, as the target's C ABI passes
 /// them (`cabi.rs`).
 fn c_signature<M: ClifModule>(obj: &M, m: &Module, f: FuncId, target: Target) -> ir::Signature {
-    use crate::cabi::{Pass, classify};
+    use crate::cabi::{Pass, plan};
     let ptr = clif_type(Type::Ptr, target);
     let mut sig = obj.make_signature();
-    for (i, &p) in m.func_params(f).iter().enumerate() {
-        match m.func_struct_param(f, i as u32) {
-            None => sig.params.push(ir::AbiParam::new(clif_type(p, target))),
-            Some((StructPass::ByValue, s)) => match classify(target, s, false) {
-                Pass::Registers(parts) => {
-                    sig.params
-                        .extend(parts.into_iter().map(|(t, _)| ir::AbiParam::new(t)));
-                }
-                Pass::Stack(size) => sig.params.push(ir::AbiParam::special(
-                    ptr,
-                    ir::ArgumentPurpose::StructArgument(size),
-                )),
-                Pass::Indirect => sig.params.push(ir::AbiParam::new(ptr)),
-            },
-            Some((StructPass::Result, s)) => match classify(target, s, true) {
-                Pass::Registers(parts) => {
-                    sig.returns
-                        .extend(parts.into_iter().map(|(t, _)| ir::AbiParam::new(t)));
-                }
-                _ => sig.params.push(ir::AbiParam::special(
-                    ptr,
-                    ir::ArgumentPurpose::StructReturn,
-                )),
-            },
+    let abi = |t: &(ir::Type, u32)| ir::AbiParam::new(t.0);
+    for (&p, pass) in m.func_params(f).iter().zip(plan(target, m, f, ptr)) {
+        match pass {
+            Pass::Scalar => sig.params.push(ir::AbiParam::new(clif_type(p, target))),
+            Pass::Registers(parts) => sig.params.extend(parts.iter().map(abi)),
+            Pass::Stack(size) => sig.params.push(ir::AbiParam::special(
+                ptr,
+                ir::ArgumentPurpose::StructArgument(size),
+            )),
+            Pass::Indirect => sig.params.push(ir::AbiParam::new(ptr)),
+            Pass::Spilled { pad, words } => {
+                sig.params.extend(pad.into_iter().map(ir::AbiParam::new));
+                sig.params.extend(words.iter().map(abi));
+            }
+            Pass::Returned(parts) => sig.returns.extend(parts.iter().map(abi)),
+            Pass::ResultPointer => sig.params.push(ir::AbiParam::special(
+                ptr,
+                ir::ArgumentPurpose::StructReturn,
+            )),
         }
     }
     if let Some(r) = m.func_ret(f) {
@@ -1089,31 +1082,42 @@ impl<M: ClifModule> Lower<'_, M> {
     /// A call of a C function that takes or returns C structs, which travel as the target's C ABI
     /// says (`cabi.rs`).
     fn c_call(&mut self, inst: Inst, callee: FuncId, args: Vec<ir::Value>) {
-        use crate::cabi::{Pass, classify};
+        use crate::cabi::{Pass, plan};
         let m = self.m;
         let mut abi_args = Vec::new();
         let mut result = None;
-        for (i, &a) in args.iter().enumerate() {
-            match m.func_struct_param(callee, i as u32) {
-                None => abi_args.push(a),
-                Some((StructPass::ByValue, s)) => match classify(self.target, s, false) {
-                    Pass::Registers(parts) => {
-                        let copy = self.padded_copy(a, s.size);
-                        for (t, at) in parts {
-                            let v = self.b.ins().load(t, MemFlagsData::new(), copy, at as i32);
-                            abi_args.push(v);
-                        }
+        let passes = plan(self.target, m, callee, self.ptr);
+        for (i, (&a, pass)) in args.iter().zip(passes).enumerate() {
+            let size = m
+                .func_struct_param(callee, i as u32)
+                .map_or(0, |(_, s)| s.size);
+            match pass {
+                Pass::Scalar | Pass::Stack(_) | Pass::ResultPointer => abi_args.push(a),
+                Pass::Registers(parts) => {
+                    let copy = self.padded_copy(a, size);
+                    for (t, at) in parts {
+                        abi_args.push(self.b.ins().load(t, MemFlagsData::new(), copy, at as i32));
                     }
-                    Pass::Stack(_) => abi_args.push(a),
-                    Pass::Indirect => {
-                        let copy = self.padded_copy(a, s.size);
-                        abi_args.push(copy);
+                }
+                Pass::Indirect => {
+                    let copy = self.padded_copy(a, size);
+                    abi_args.push(copy);
+                }
+                Pass::Spilled { pad, words } => {
+                    // The padding is never read: zeros do.
+                    for t in pad {
+                        abi_args.push(if t.is_float() {
+                            self.b.ins().f64const(0.0)
+                        } else {
+                            self.b.ins().iconst(t, 0)
+                        });
                     }
-                },
-                Some((StructPass::Result, s)) => match classify(self.target, s, true) {
-                    Pass::Registers(parts) => result = Some((a, parts, s.size)),
-                    _ => abi_args.push(a),
-                },
+                    let copy = self.padded_copy(a, size);
+                    for (t, at) in words {
+                        abi_args.push(self.b.ins().load(t, MemFlagsData::new(), copy, at as i32));
+                    }
+                }
+                Pass::Returned(parts) => result = Some((a, parts, size)),
             }
         }
         let fr = self.func_ref(self.func_ids[callee.index()]);

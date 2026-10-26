@@ -97,7 +97,10 @@ backend (`a0-native/src/cabi.rs`): System V x86-64 in up to two registers, integ
 onto the stack; Windows x64 in a register when it is 1, 2, 4 or 8 bytes, otherwise by pointer to a
 copy; AArch64 in floating-point registers for one to four floats of one type, in up to two
 registers when it is 16 bytes or less, otherwise by pointer. Results come back in registers the same
-way, or are written through a pointer the caller passes.
+way, or are written through a pointer the caller passes. Where a struct goes also depends on the
+registers the arguments before it left: one that does not fit goes in memory as a whole (System V
+then gives the registers to the arguments after it; AArch64 does not, and A0 uses them up with
+unused arguments, since Cranelift has no struct arguments there).
 
 The interpreter's own foreign calls take up to eight integer or `f64` arguments and return one.
 It calls other C functions (C structs, `f32`, more arguments) through **thunks**:
