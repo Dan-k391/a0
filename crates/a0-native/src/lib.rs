@@ -12,6 +12,7 @@
 
 mod cabi;
 mod codegen;
+mod codeview;
 mod dwarf;
 mod jit;
 mod link;
@@ -54,5 +55,8 @@ pub fn build_executable(
     )?;
     let mut link = opts.link.clone();
     link.debug_info |= opts.debug_info;
+    if opts.debug_info && target.os() == a0_target::Os::Windows {
+        link.natvis = codeview::natvis(m);
+    }
     link_executable(&object, target, output, &link)
 }

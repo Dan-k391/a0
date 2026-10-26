@@ -402,13 +402,6 @@ impl Language {
                 if inv.debug {
                     opts.debug_info = true;
                     opts.no_optimize = true;
-                    if !target.has_dwarf() {
-                        eprintln!(
-                            "{}: note: Windows' debuggers read PDB, which A0 does not write; debug \
-                             the program with `{} dap` instead",
-                            self.name, self.name
-                        );
-                    }
                 }
                 match a0_native::build_executable(&module, target, Path::new(&output), &opts) {
                     Ok(()) => 0,

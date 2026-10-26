@@ -24,8 +24,12 @@ pub struct LinkOptions {
     /// Stack size of the main thread in bytes, where the target lets the executable choose it.
     pub stack_size: u64,
     /// The object has debug information: on macOS it is then gathered into `<output>.dSYM` with
-    /// `dsymutil`, since debuggers read it from object files, and this one is temporary.
+    /// `dsymutil`, since debuggers read it from object files, and this one is temporary; on
+    /// Windows the linker writes it into `<output>.pdb`.
     pub debug_info: bool,
+    /// With `debug_info` on Windows: a natvis file for the PDB, which tells Visual Studio and
+    /// WinDbg how to show the program's values (empty for none).
+    pub natvis: String,
 }
 
 impl Default for LinkOptions {
@@ -34,6 +38,7 @@ impl Default for LinkOptions {
             libraries: Vec::new(),
             stack_size: 8 << 20,
             debug_info: false,
+            natvis: String::new(),
         }
     }
 }
@@ -117,7 +122,8 @@ pub fn link_executable(
                 .arg("/SUBSYSTEM:CONSOLE")
                 .arg(format!("/STACK:{}", opts.stack_size))
                 .arg(&object_path)
-                .args(&libs);
+                .args(&libs)
+                .args(windows_debug_args(opts, output, &scratch.0)?);
             cmd
         }
         LinkerFlavor::Gnu => {
@@ -257,6 +263,27 @@ fn find_lld(flavor: &str) -> Option<(std::path::PathBuf, Vec<String>)> {
     None
 }
 
+/// The linker's options for a PDB (`/DEBUG`) and its natvis file, with debug information.
+fn windows_debug_args(
+    opts: &LinkOptions,
+    output: &Path,
+    scratch: &Path,
+) -> Result<Vec<String>, Diagnostics> {
+    if !opts.debug_info {
+        return Ok(Vec::new());
+    }
+    // The linker updates a PDB that is there, keeping what an earlier build put in it.
+    let _ = std::fs::remove_file(output.with_extension("pdb"));
+    let mut args = vec!["/DEBUG".to_string(), "/INCREMENTAL:NO".to_string()];
+    if !opts.natvis.is_empty() {
+        let path = scratch.join("a0.natvis");
+        std::fs::write(&path, &opts.natvis)
+            .map_err(|e| link_error(&format!("cannot write {}: {e}", path.display())))?;
+        args.push(format!("/NATVIS:{}", path.display()));
+    }
+    Ok(args)
+}
+
 /// Links with lld against `target`'s pack (D79).
 fn link_with_pack(
     object: &[u8],
@@ -328,7 +355,8 @@ fn link_with_pack(
             .arg(pack.join("libucrt_extra.a"))
             .arg(pack.join("libkernel32.a"))
             .arg(pack.join("libpsapi.a"))
-            .arg(pack.join("libclang_rt.builtins.a"));
+            .arg(pack.join("libclang_rt.builtins.a"))
+            .args(windows_debug_args(opts, output, &scratch.0)?);
     } else {
         // Static: the executable runs on any Linux with the architecture.
         cmd.arg("-static")

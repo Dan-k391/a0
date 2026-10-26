@@ -1112,3 +1112,23 @@ mingw-w64 has no ARM64 libraries; a pack for it can follow the same recipe with 
 target is not the host; `A0_LINK=pack` uses it for the host too, which CI does to run the whole
 corpus through each pack (aarch64 Linux under QEMU). Native builds for the host keep the system's
 linker and C library, which is what a user debugging with gdb or Visual Studio expects.
+
+## D80. Native variables through stack slots, and CodeView for Windows
+
+v0.8 asks for native debug information on Windows and for variables (D59 had lines and functions
+only). Where a variable is at each instruction could come from Cranelift's value labels, which
+give per-range register and stack locations: exact, but they need location lists and are known to
+lose values across Cranelift's own transformations. `-g` already turns the optimizers off, so A0
+takes the simpler road: every source variable gets a stack slot, which each assignment also stores
+to, at a fixed offset from the frame pointer (Cranelift reports its frame layout). The code stays
+in registers as before; the stores cost only `-g` builds, and a variable has one location for the
+whole function, which every debugger reads.
+
+Windows' debuggers read CodeView, gathered by the linker into a PDB; no library A0 uses writes it,
+and the records needed are few, so `codeview.rs` writes them itself (line tables, `S_GPROC32`,
+`S_REGREL32` relative to the frame pointer, structures, pointers and arrays in `.debug$T`, `S_UDT`
+so that the linker keeps the definitions). Structures get unique names, since languages may give
+different types one name (`box`), and strings are named `a0::string`, since WinDbg applies no
+visualizer to a type named `string`. Strings and arrays are shown through a natvis file the linker
+embeds in the PDB; DWARF shows strings as C strings through a location expression instead. CI runs
+cdb where the runner has it, and every host checks the CodeView of objects for both Windows targets.

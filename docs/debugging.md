@@ -62,22 +62,36 @@ dap.configurations.minnow = {
 
 ## Native code: `lang build -g`
 
-`-g` describes an executable for the platform's debugger: DWARF line tables and the program's
-functions, so that gdb and lldb stop at `file:line`, step by lines and print backtraces with source
-functions and lines. It also turns off the optimizers, so that the code follows the source. On
-macOS the information is gathered into `<program>.dSYM` with `dsymutil`.
+`-g` describes an executable for the platform's debugger: lines, functions and variables, so that
+gdb, lldb, Visual Studio, WinDbg and cdb stop at `file:line`, step by lines, print backtraces with
+source functions and lines, and show variables with their values. It also turns off the
+optimizers, so that the code follows the source.
+
+- **Linux and macOS**: DWARF in the executable (on macOS gathered into `<program>.dSYM` with
+  `dsymutil`).
+- **Windows**: CodeView, which the linker gathers into `<program>.pdb`, with a natvis file in it
+  that shows strings as text and arrays as their elements.
 
 ```
 minnow build prog.mn -g -o prog
-gdb -ex 'break prog.mn:4' -ex run -ex bt ./prog
+gdb -ex 'break prog.mn:4' -ex run -ex 'info locals' -ex 'print *p' ./prog
+lldb -o 'breakpoint set --file prog.mn --line 4' -o run -o 'frame variable' ./prog
+cdb -lines -c "bp `prog!prog.mn:4`;g;dv /t;dx -r1 *p" prog.exe      (Windows)
 ```
 
-Not described, and why:
+How variables look:
 
-- **Variables.** Their places in native code (registers, stack slots, at each instruction) would
-  come from Cranelift's value locations, which A0 does not ask for; `lang dap` shows locals.
-- **Windows.** Its debuggers read PDB (CodeView), which A0 does not write; `lang dap` works there.
-- **Types**, beyond the functions: the DWARF has no type entries.
+| Source type | gdb, lldb | Visual Studio, WinDbg |
+|---|---|---|
+| integers, floats, booleans | the value | the value |
+| strings | a C string (`"hello"`) | `a0::string *`, shown as the text |
+| structs, enums, other objects | a pointer to a structure of the fields (`print *p`) | the same (`dx -r1 *p`) |
+| arrays | a pointer to `{len, cap, data}` (`print *xs->data@xs->len`) | the elements |
+| captured variables | the value | a pointer to a box holding the value |
+| maps, `any`, interfaces, closures | a pointer, its target named but not described | the same |
+
+Variables are visible in the whole function, before their declaration too (as zero). `lang dap`
+shows everything, maps and dynamic values included.
 
 ## What a language needs
 
@@ -106,5 +120,8 @@ locals from the names and types the builder knows. Three things help:
   own interpreter state over the shared program, and tells the hook when it starts and ends). A
   thread that reaches a line while another is stopped waits in the hook, where the stopped thread
   can read its frames.
-- Native debug information is DWARF written with `gimli` from the locations Cranelift reports for
-  each instruction (`a0-native/src/dwarf.rs`), relocated against the program's functions.
+- Native debug information comes from the locations Cranelift reports for each instruction and,
+  for variables, from stack slots that `-g` gives every source variable (each assignment also
+  stores there, at a fixed offset from the frame pointer, D80). It is DWARF written with `gimli`
+  (`a0-native/src/dwarf.rs`) or CodeView (`a0-native/src/codeview.rs`), relocated against the
+  program's functions; types come from the IR's debug types.

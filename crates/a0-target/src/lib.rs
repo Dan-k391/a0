@@ -173,7 +173,7 @@ impl Target {
         }
     }
 
-    /// Whether the platform's debuggers read DWARF (gdb, lldb); Windows' read PDB.
+    /// Whether the platform's debuggers read DWARF (gdb, lldb); Windows' read CodeView, in PDBs.
     pub fn has_dwarf(self) -> bool {
         matches!(self.os, Os::Linux | Os::MacOs)
     }

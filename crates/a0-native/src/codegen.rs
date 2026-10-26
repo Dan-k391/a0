@@ -164,23 +164,46 @@ fn compile_object_inner(
     }
 
     let mut product = obj.finish();
-    if opts.debug_info && target.has_dwarf() {
+    if opts.debug_info {
         let functions: Vec<crate::dwarf::Function> = compiled
             .defined
             .iter()
             .zip(&compiled.code_ranges)
-            .map(|(&f, (id, size, _, lines))| crate::dwarf::Function {
-                symbol: product.function_symbol(*id),
-                name: m.func_trace_name(f).unwrap_or(m.func_name(f)),
-                size: *size,
-                ranges: lines,
-            })
+            .zip(&compiled.var_places)
+            .map(
+                |((&f, (id, size, _, lines)), vars)| crate::dwarf::Function {
+                    symbol: product.function_symbol(*id),
+                    name: m.func_trace_name(f).unwrap_or(m.func_name(f)),
+                    size: *size,
+                    ranges: lines,
+                    vars,
+                },
+            )
             .collect();
         let dir = std::env::current_dir()
             .map(|d| d.to_string_lossy().into_owned())
             .unwrap_or_default();
-        crate::dwarf::emit(&mut product.object, &compiled.locations, &functions, &dir)
-            .map_err(|e| backend_error(format!("cannot write debug information: {e}")))?;
+        let written = if target.has_dwarf() {
+            crate::dwarf::emit(
+                &mut product.object,
+                m,
+                target,
+                &compiled.locations,
+                &functions,
+                &dir,
+            )
+        } else {
+            crate::codeview::emit(
+                &mut product.object,
+                m,
+                target.arch(),
+                &compiled.locations,
+                &functions,
+                &dir,
+                &format!("{}.obj", m.name()),
+            )
+        };
+        written.map_err(|e| backend_error(format!("cannot write debug information: {e}")))?;
     }
     product
         .emit()
@@ -198,6 +221,8 @@ pub(crate) struct Compiled {
     pub code_ranges: Vec<CallRanges>,
     /// The functions with bodies, in the order of `code_ranges`.
     pub defined: Vec<FuncId>,
+    /// For each of `defined`, its source variables' places (`var_places_of`), with `lines`.
+    pub var_places: Vec<Vec<crate::dwarf::VarPlace>>,
 }
 
 /// Declares and defines every function and global of a verified module in `obj` (an object file
@@ -254,6 +279,8 @@ pub(crate) fn compile_functions<M: ClifModule>(
     let locations = a0_ir::Locations::build(m);
     // Per defined function: its id, code size and the ranges of its calls with their locations.
     let mut code_ranges: Vec<CallRanges> = Vec::new();
+    let mut var_places = Vec::new();
+    let mut debug_slots;
     let mut defined: Vec<FuncId> = Vec::new();
 
     let frontend_config = obj.target_config();
@@ -286,11 +313,14 @@ pub(crate) fn compile_functions<M: ClifModule>(
                 locations: &locations,
                 lines,
                 line: ir::SourceLoc::default(),
+                debug_slots: Vec::new(),
             };
             lower.function();
+            debug_slots = std::mem::take(&mut lower.debug_slots);
             lower.b.finalize(frontend_config);
         }
         define(obj, func_ids[f.index()], &mut ctx, m.func_name(f))?;
+        var_places.push(var_places_of(&ctx, &debug_slots));
         code_ranges.push(call_ranges(&ctx, func_ids[f.index()]));
         defined.push(f);
         obj.clear_context(&mut ctx);
@@ -303,7 +333,29 @@ pub(crate) fn compile_functions<M: ClifModule>(
         locations,
         code_ranges,
         defined,
+        var_places,
     })
+}
+
+/// Where each source variable's slot is in the compiled function's frame.
+fn var_places_of(
+    ctx: &Context,
+    slots: &[(a0_ir::Var, ir::StackSlot)],
+) -> Vec<crate::dwarf::VarPlace> {
+    let Some(layout) = ctx.compiled_code().and_then(|c| c.buffer.frame_layout()) else {
+        return Vec::new();
+    };
+    slots
+        .iter()
+        .map(|&(var, slot)| {
+            let offset = layout.stackslots[slot].offset as i64 - layout.frame_to_fp_offset as i64;
+            crate::dwarf::VarPlace {
+                var,
+                fp_offset: offset,
+                size: ctx.func.sized_stack_slots[slot].size,
+            }
+        })
+        .collect()
 }
 
 /// A compiled function, its code size, and the code ranges of its calls with their locations:
@@ -632,6 +684,9 @@ struct Lower<'a, M: ClifModule> {
     lines: bool,
     /// The srcloc of the instruction being lowered when `lines`.
     line: ir::SourceLoc,
+    /// When `lines`, a stack slot for each source variable, which every assignment also stores
+    /// to: debuggers read variables there (`dwarf.rs`).
+    debug_slots: Vec<(a0_ir::Var, ir::StackSlot)>,
 }
 
 /// Marks a srcloc that is there for debug information only, so that the code table (which
@@ -673,6 +728,16 @@ impl<M: ClifModule> Lower<'_, M> {
             let zero = self.zero(ty);
             self.b.def_var(cv, zero);
             self.vars.insert(var, cv);
+            if self.lines && m.var_debug(var).is_some() {
+                let data = ir::StackSlotData::new(
+                    ir::StackSlotKind::ExplicitSlot,
+                    ty.bytes(),
+                    ty.bytes().trailing_zeros() as u8,
+                );
+                let slot = self.b.create_sized_stack_slot(data);
+                self.b.ins().stack_store(self.ptr, zero, slot, 0);
+                self.debug_slots.push((var, slot));
+            }
         }
         let body = m.func_body(self.f).unwrap();
         for inst in a0_ir::insts_in_text_order(m, body) {
@@ -1033,6 +1098,13 @@ impl<M: ClifModule> Lower<'_, M> {
             Opcode::Set => {
                 let var = self.vars[&m.inst_var(inst)];
                 self.b.def_var(var, args[0]);
+                if let Some(&(_, slot)) = self
+                    .debug_slots
+                    .iter()
+                    .find(|(v, _)| *v == m.inst_var(inst))
+                {
+                    self.b.ins().stack_store(self.ptr, args[0], slot, 0);
+                }
             }
             Opcode::If => return self.lower_if(inst, args[0]),
             Opcode::Loop => return self.lower_loop(inst),
