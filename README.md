@@ -237,7 +237,7 @@ packs.
 
 ## Status
 
-Version 0.8.0 (`CHANGELOG.md`). Builds for x86-64 and aarch64 Linux, macOS and Windows, and for
+Version 0.9.0 (`CHANGELOG.md`). Builds for x86-64 and aarch64 Linux, macOS and Windows, and for
 WebAssembly in the playground; cross-compiles to Linux and Windows from any host with target packs
-(`docs/cross.md`). Not yet: large-program tooling (manifests, dependencies, incremental
-compilation), stable APIs. A0 is MIT-licensed.
+(`docs/cross.md`); programs are packages with dependencies (`docs/packages.md`), and every input A0
+reads is fuzzed. Not yet: stable APIs and a compatibility promise (1.0). A0 is MIT-licensed.

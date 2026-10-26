@@ -1122,6 +1122,61 @@ Nothing in A0 changed for the benchmark. What it found along the way:
   playground provides, so the command line has no wasm32 target. A WASI build of the runtime to
   link with would give it standalone modules.
 
+## M27. v0.9: large programs and ecosystems
+
+**Done**
+
+- Packages (D81, `docs/packages.md`): a manifest named after the language (`minnow.toml`) with the
+  program's main file and dependencies, from directories or git repositories fetched with `git`
+  into a shared cache and pinned in a lock file; `run`, `build`, `ir`, `hir` take the package,
+  `update` refreshes the lock file and `--locked` refuses to change it. Every language with modules
+  gets this from the driver; the language server and debugger resolve imports the same way.
+  Builds are reproducible byte for byte (a test builds twice, a second apart, and compares).
+- Large programs build fast (D82). On a generated program of 100,000 lines in 175 modules
+  (`bench/large/gen.py`), the build took 2.3 s on the first machine and now 1.2 s: the lexer runs a
+  DFA, the HIR optimizer is linear, the location table is interned, and code generation splits a
+  large program into objects compiled at once on the machine's processors (reproducibly).
+  Rebuilding after a small change compiles everything again in that time; caching was measured
+  against and left out (D82). On this release's benchmark machine: 4.8 s for v0.8.0, 2.7 s now.
+- The language server on that program: an edit to the next answer takes 370 ms instead of
+  2.0 s (benchmark machine), as unchanged files keep their syntax trees and indexes; hover,
+  definition and completion answer in under 5 ms.
+- Deep nesting (D83): compiling happens on a thread with a 1 GB stack and the parser stops at
+  10,000 levels with `E0003`, so no input overflows the compiler's stack.
+- The optimizer on large programs (D84): calls of known closures are inlined, which makes
+  higher-order code 5.8 times faster (`closures`: 823 to 141 ms). The collector was measured with a
+  live heap 64 times larger and its time grew by a third, so it stays as it is.
+- Fuzzing (D85) of every input A0 accepts: IR and HIR text, grammars with their programs (and
+  DSLs), the C API through Python, manifests and lock files; seeded mutation tests in the suite,
+  run longer with `A0_FUZZ_ITERATIONS`. The first runs, hundreds of thousands of inputs, found
+  seven bugs, all fixed with regression tests: diagnostics rendering on spans inside a character,
+  three unchecked handles in the C API and the IR builder, malformed generic types after a wrong
+  number of type arguments, type parameters outside their items, closures that make themselves,
+  and spans ending before they start.
+- The benchmark (`docs/benchmarks.md`) rerun on a new machine for v0.8.0 and v0.9.0, with a
+  `closures` program and a section on large programs.
+
+**Changed**
+
+- A module's imports resolve from its package's source directory; MSVC and lld-link link with
+  `/Brepro`.
+- `HirBuilder` makes generic types with as many type arguments as the item has, whatever it was
+  given (it still reports the difference); the checker rejects a closure made outside the body it
+  was declared in; `Span::new` takes an end before the start as the start.
+- `InlineSite` (HIR) knows when the inlined code was a closure; stack traces name it as before.
+
+**Open questions**
+
+- Lowering to IR is now the largest stage of a large build (894 ms of 2.7 s on the benchmark
+  machine); it is linear but allocates per instruction.
+- The large-program generator's run time is exponential in its modules (each `check` calls its
+  imports'), so the program's run is not a measurement of A0; it should call one import.
+- The collector's pauses grow with the live heap (about 40 ms at 4 million objects); a
+  generational or incremental collector is the answer if programs with large heaps need short
+  pauses.
+- Closures stored in data structures, or passed to functions too large to inline, stay indirect
+  calls.
+
 ## Overall open questions
 
 None at the moment.

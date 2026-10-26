@@ -1270,5 +1270,7 @@ unchecked; the IR builder trusted function and global handles in `func_addr` and
 HIR builder reported a wrong number of type arguments but kept the malformed type, which later
 indexed past its arguments; a type parameter used outside its item reached monomorphization; and a
 closure whose body made the closure itself sent the checker into unbounded recursion (the checker
-now checks the bodies' shape without recursion before any pass walks them). The text parsers,
-verifier, lowering and code generators held.
+now checks the bodies' shape without recursion before any pass walks them); and a span could end
+before it started (`Span::new` now takes such an end as the start). The text parsers, verifier,
+lowering and code generators held.
+

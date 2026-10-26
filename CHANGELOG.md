@@ -6,6 +6,12 @@ APIs. `docs/milestones.md` has the details of each step, with measurements.
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-10-26
+
+Large programs and ecosystems: packages with dependencies, fast builds of large programs, a fast
+language server on them, closures inlined, and every input fuzzed. Milestone M27 in
+`docs/milestones.md`.
+
 ### Added
 
 - **Packages** (D81, `docs/packages.md`): a manifest named after the language (`minnow.toml`)
@@ -22,7 +28,7 @@ APIs. `docs/milestones.md` has the details of each step, with measurements.
   fuzzed in the test suite, from the corpus (`A0_FUZZ_ITERATIONS`, `A0_FUZZ_SEED` to run longer).
 - **Inlining of known closures** (D84): a call of a closure through a local that always holds it,
   such as the parameter of an inlined `fold(xs, 0, fn(a, b) { a + b })`, is inlined; such code
-  runs about 2.8 times faster.
+  runs about 5.8 times faster (`docs/benchmarks.md`).
 - `bench/large/` generates a large package and measures building it and the language server on it;
   the benchmark gains a `closures` program.
 
@@ -43,7 +49,8 @@ APIs. `docs/milestones.md` has the details of each step, with measurements.
 - Rendering a diagnostic whose span starts or ends inside a multi-byte character panicked.
 - `a0_hir_set_struct_inline` and the IR builder's `func_addr` and `global_addr` did not check
   their handles; a type parameter used outside its item, or a closure whose body makes the closure,
-  crashed the compiler instead of being reported.
+  crashed the compiler instead of being reported. A span whose end is before its start (from the
+  C API) overflowed in debug builds.
 
 ## [0.8.0] - 2026-10-26
 
