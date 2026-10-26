@@ -225,7 +225,11 @@ fn run(args: &[String]) -> ExitCode {
             Ok(code) => a0_runtime::exit(code),
         };
     }
-    match a0_interp::run_main(module, a0_interp::HostSymbols::new(), argv) {
+    let mut symbols = a0_interp::HostSymbols::new();
+    if let Err(diags) = a0_native::add_thunks(&module, &mut symbols) {
+        return report(&sources, &diags);
+    }
+    match a0_interp::run_main(module, symbols, argv) {
         Err(diags) => report(&sources, &diags),
         Ok(Err(trap)) => trap.report_and_exit(),
         Ok(Ok(code)) => a0_runtime::exit(code),

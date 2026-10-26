@@ -17,7 +17,7 @@ use std::collections::{BTreeSet, HashMap};
 use a0_diag::{Diagnostic, Diagnostics};
 use a0_ir::{
     Builder, DebugKind, DebugType, FloatCC, FuncId as IrFunc, GlobalId as IrGlobal, IntCC, Opcode,
-    Type, Value, Var,
+    StructPass, Type, Value, Var,
 };
 
 use crate::builder::visit_children;
@@ -648,6 +648,29 @@ impl<'a> Lowerer<'a> {
         }
     }
 
+    /// The scalar fields of the inline struct `t` at `base`, as a C ABI sees them: nested structs
+    /// flattened, each field a number of its size.
+    fn c_fields(&self, t: TypeId, base: u32, out: &mut Vec<(Type, u32)>) {
+        let s = self.m.inline_struct(t).expect("an inline struct");
+        for (k, &(_, f)) in self.m.structs[s.index()].fields.iter().enumerate() {
+            let at = base + self.inline_offset(s, k as u32);
+            if self.m.inline_struct(f).is_some() {
+                self.c_fields(f, at, out);
+                continue;
+            }
+            let ty = match (self.m.kind(f), self.size_align(f).0) {
+                (_, 0) => continue,
+                (TypeKind::F32, _) => Type::F32,
+                (TypeKind::Float, _) => Type::F64,
+                (_, 1) => Type::I8,
+                (_, 2) => Type::I16,
+                (_, 4) => Type::I32,
+                _ => Type::I64,
+            };
+            out.push((ty, at));
+        }
+    }
+
     /// Fresh memory in the frame for a value of the inline type `t`.
     fn temp(&mut self, t: TypeId) -> Value {
         let (size, align) = self.size_align(t);
@@ -951,20 +974,41 @@ impl<'a> Lowerer<'a> {
                 TypeKind::SizedInt(8 | 16, _) => Some(Type::I32),
                 _ => me.ir_type(t),
             };
-            let params: Vec<Type> = x
-                .params
-                .iter()
-                .filter_map(|&t| match (x.abi, t) {
-                    (Abi::C, TypeId::BOOL) => Some(Type::I64),
-                    (Abi::C, t) => c_type(self, t),
-                    _ => self.ir_type(t),
-                })
-                .collect();
-            let ret = match x.abi {
+            // An inline struct travels by value, as C passes structs: the IR gives it as a pointer
+            // to its bytes with its C layout (`byval`), and a struct result as a pointer to where
+            // it goes, before the other parameters (`sret`).
+            let mut params = Vec::new();
+            let mut structs = Vec::new();
+            let mut ret = match x.abi {
                 Abi::C => c_type(self, x.ret),
                 Abi::A0 => self.ir_type(x.ret),
             };
+            if x.abi == Abi::C && self.m.inline_struct(x.ret).is_some() {
+                structs.push((0, StructPass::Result, x.ret));
+                params.push(Type::Ptr);
+                ret = None;
+            }
+            for &t in &x.params {
+                let ir = match (x.abi, t) {
+                    (Abi::C, TypeId::BOOL) => Some(Type::I64),
+                    (Abi::C, t) if self.m.inline_struct(t).is_some() => {
+                        structs.push((params.len() as u32, StructPass::ByValue, t));
+                        Some(Type::Ptr)
+                    }
+                    (Abi::C, t) => c_type(self, t),
+                    _ => self.ir_type(t),
+                };
+                params.extend(ir);
+            }
             let f = self.b.declare_extern(&x.name, &params, ret);
+            for (i, pass, t) in structs {
+                let (size, align) = self.size_align(t);
+                let mut fields = Vec::new();
+                self.c_fields(t, 0, &mut fields);
+                let (types, offsets): (Vec<Type>, Vec<u32>) = fields.into_iter().unzip();
+                self.b
+                    .set_struct_param(f, i, pass, size, align, &types, &offsets);
+            }
             self.externs.push(f);
         }
         for f in &m.funcs {
@@ -1527,6 +1571,10 @@ impl<'a> Lowerer<'a> {
     /// What a C function gets for a value of type `t`: a string's bytes, an array's elements, or
     /// null for null (see `Abi::C`).
     fn c_argument(&mut self, v: Value, t: TypeId) -> Value {
+        // An inline struct's bytes, which the call copies as C wants them.
+        if self.m.inline_struct(t).is_some() {
+            return v;
+        }
         if t == TypeId::BOOL {
             return self.b.cast(Opcode::Zext, v, Type::I64);
         }
@@ -2323,6 +2371,12 @@ impl<'a> Lowerer<'a> {
                             Abi::C => self.c_argument(v, m.expr_type(a)),
                         });
                     }
+                }
+                if abi == Abi::C && m.inline_struct(ty).is_some() {
+                    let memory = self.temp(ty);
+                    ir_args.insert(0, memory);
+                    self.b.call(self.externs[x.index()], &ir_args);
+                    return V::Val(memory);
                 }
                 let mut r = self.b.call(self.externs[x.index()], &ir_args);
                 if let (Abi::C, TypeKind::SizedInt(bits @ (8 | 16), _), Some(v)) =

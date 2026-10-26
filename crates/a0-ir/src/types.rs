@@ -67,6 +67,15 @@ impl Type {
             Type::Ptr => None,
         }
     }
+
+    /// Bytes a value takes in memory, a pointer taking `pointer_bytes`.
+    pub fn bytes(self, pointer_bytes: u32) -> Option<u32> {
+        match self {
+            Type::I1 | Type::I8 => Some(1),
+            Type::Ptr => Some(pointer_bytes),
+            t => t.bits().map(|b| b / 8),
+        }
+    }
 }
 
 impl std::fmt::Display for Type {
@@ -207,6 +216,40 @@ macro_rules! opcodes {
             }
         }
     };
+}
+
+/// How a `ptr` parameter of a C function stands for a C struct (`docs/ir.md`, "C structs"): the
+/// struct passed by value (the pointer says where its bytes are), or, for parameter 0, where the
+/// function's struct result goes (the function then returns nothing in the IR).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[repr(u8)]
+pub enum StructPass {
+    ByValue,
+    Result,
+}
+
+impl StructPass {
+    pub fn name(self) -> &'static str {
+        match self {
+            StructPass::ByValue => "byval",
+            StructPass::Result => "sret",
+        }
+    }
+
+    pub fn from_name(s: &str) -> Option<StructPass> {
+        [StructPass::ByValue, StructPass::Result]
+            .into_iter()
+            .find(|p| p.name() == s)
+    }
+}
+
+/// A C struct's layout: its size and alignment, and its scalar fields with their offsets (nested
+/// structs flattened), which is what a C ABI looks at.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct CStruct {
+    pub size: u32,
+    pub align: u32,
+    pub fields: Vec<(Type, u32)>,
 }
 
 opcodes! {

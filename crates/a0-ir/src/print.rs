@@ -52,7 +52,25 @@ fn print_func(out: &mut String, m: &Module, f: FuncId) {
         None => String::new(),
     };
     let Some(body) = m.func_body(f) else {
-        let params: Vec<&str> = m.func_params(f).iter().map(|t| t.name()).collect();
+        let params: Vec<String> = m
+            .func_params(f)
+            .iter()
+            .enumerate()
+            .map(|(i, t)| match m.func_struct_param(f, i as u32) {
+                Some((pass, s)) => {
+                    let fields: Vec<String> =
+                        s.fields.iter().map(|(t, at)| format!("{t} {at}")).collect();
+                    format!(
+                        "{t} {}({}, {}: {})",
+                        pass.name(),
+                        s.size,
+                        s.align,
+                        fields.join(", ")
+                    )
+                }
+                None => t.name().to_string(),
+            })
+            .collect();
         let _ = writeln!(out, "extern func {name}({}){ret}", params.join(", "));
         return;
     };

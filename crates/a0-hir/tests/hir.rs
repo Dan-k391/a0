@@ -299,12 +299,22 @@ fn main() -> int { free(new N { v: 1 }); 0 }",
         (
             "extern fn f(array<string>);\nfn main() -> int { 0 }",
             "hir.builder",
-            "C functions take numbers, bool, strings and arrays of numbers or bool",
+            "C functions take numbers, bool, pointers, strings, arrays of numbers or bool",
+        ),
+        (
+            "inline struct S { name: string }\nextern fn f(S);\nfn main() -> int { 0 }",
+            "hir.builder",
+            "extern fn f takes S; C functions take numbers",
+        ),
+        (
+            "struct S { x: int }\nextern fn f() -> S;\nfn main() -> int { 0 }",
+            "hir.builder",
+            "extern fn f returns S; C functions return",
         ),
         (
             "extern fn f() -> array<int>;\nfn main() -> int { 0 }",
             "hir.builder",
-            "C functions return numbers, bool, unit or a string",
+            "C functions return numbers, bool, pointers, unit, inline structs of numbers",
         ),
         (
             "extern \"cobol\" fn f();\nfn main() -> int { 0 }",

@@ -77,6 +77,51 @@ impl Builder {
         self.add_func(name, params, ret)
     }
 
+    /// Says that the `ptr` parameter `index` of the C function `f` stands for a C struct of
+    /// `size` bytes aligned to `align`, whose scalar fields are `field_types` at `field_offsets`:
+    /// passed by value (`ByValue`; the pointer says where its bytes are), or, for parameter 0,
+    /// where the struct the function returns goes (`Result`; `f` returns nothing in the IR).
+    /// Each backend passes it as the target's C ABI says (`docs/ir.md`, "C structs").
+    #[allow(clippy::too_many_arguments)]
+    pub fn set_struct_param(
+        &mut self,
+        f: FuncId,
+        index: u32,
+        pass: StructPass,
+        size: u32,
+        align: u32,
+        field_types: &[Type],
+        field_offsets: &[u32],
+    ) {
+        if field_types.len() != field_offsets.len() {
+            self.error("set_struct_param: as many field offsets as field types are needed");
+            return;
+        }
+        if f.is_none()
+            || f.index() >= self.module.funcs.len()
+            || index as usize >= self.module.func_params(f).len()
+        {
+            self.error("set_struct_param: no such function or parameter");
+            return;
+        }
+        let fields = field_types
+            .iter()
+            .copied()
+            .zip(field_offsets.iter().copied())
+            .collect();
+        self.module.struct_params.insert(
+            (f, index),
+            (
+                pass,
+                CStruct {
+                    size,
+                    align,
+                    fields,
+                },
+            ),
+        );
+    }
+
     /// Declares a function to be defined in this module with `begin_function`. Until it has a body
     /// it is treated as extern; declaring first lets functions call each other in any order.
     pub fn declare_function(&mut self, name: &str, params: &[Type], ret: Option<Type>) -> FuncId {

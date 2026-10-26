@@ -3,7 +3,9 @@
 use std::collections::HashMap;
 
 use a0_diag::{Diagnostic, Diagnostics};
-use a0_ir::{FloatCC, FuncId, GlobalId, Inst, IntCC, Module, Opcode, Region, SymbolKind, Type};
+use a0_ir::{
+    FloatCC, FuncId, GlobalId, Inst, IntCC, Module, Opcode, Region, StructPass, SymbolKind, Type,
+};
 use a0_target::Target;
 use cranelift_codegen::Context;
 use cranelift_codegen::ir::{self, InstBuilder, MemFlagsData, TrapCode, condcodes, types};
@@ -244,7 +246,11 @@ pub(crate) fn compile_functions<M: ClifModule>(
         if m.func_is_extern(f) && a0_runtime::reports_location(m.func_name(f)) {
             params.extend([Type::I64, Type::Ptr]);
         }
-        let sig = signature(obj, &params, m.func_ret(f), target);
+        let sig = if m.func_has_struct_params(f) {
+            c_signature(obj, m, f, target)
+        } else {
+            signature(obj, &params, m.func_ret(f), target)
+        };
         let linkage = if m.func_is_extern(f) {
             Linkage::Import
         } else {
@@ -460,6 +466,44 @@ fn signature<M: ClifModule>(
         sig.params.push(ir::AbiParam::new(clif_type(p, target)));
     }
     if let Some(r) = ret {
+        sig.returns.push(ir::AbiParam::new(clif_type(r, target)));
+    }
+    sig
+}
+
+/// The signature of a C function that takes or returns C structs, as the target's C ABI passes
+/// them (`cabi.rs`).
+fn c_signature<M: ClifModule>(obj: &M, m: &Module, f: FuncId, target: Target) -> ir::Signature {
+    use crate::cabi::{Pass, classify};
+    let ptr = clif_type(Type::Ptr, target);
+    let mut sig = obj.make_signature();
+    for (i, &p) in m.func_params(f).iter().enumerate() {
+        match m.func_struct_param(f, i as u32) {
+            None => sig.params.push(ir::AbiParam::new(clif_type(p, target))),
+            Some((StructPass::ByValue, s)) => match classify(target, s, false) {
+                Pass::Registers(parts) => {
+                    sig.params
+                        .extend(parts.into_iter().map(|(t, _)| ir::AbiParam::new(t)));
+                }
+                Pass::Stack(size) => sig.params.push(ir::AbiParam::special(
+                    ptr,
+                    ir::ArgumentPurpose::StructArgument(size),
+                )),
+                Pass::Indirect => sig.params.push(ir::AbiParam::new(ptr)),
+            },
+            Some((StructPass::Result, s)) => match classify(target, s, true) {
+                Pass::Registers(parts) => {
+                    sig.returns
+                        .extend(parts.into_iter().map(|(t, _)| ir::AbiParam::new(t)));
+                }
+                _ => sig.params.push(ir::AbiParam::special(
+                    ptr,
+                    ir::ArgumentPurpose::StructReturn,
+                )),
+            },
+        }
+    }
+    if let Some(r) = m.func_ret(f) {
         sig.returns.push(ir::AbiParam::new(clif_type(r, target)));
     }
     sig
@@ -968,6 +1012,9 @@ impl<M: ClifModule> Lower<'_, M> {
                 let v = self.b.ins().iadd(args[0], args[1]);
                 self.set(inst, v);
             }
+            Opcode::Call if m.func_has_struct_params(m.inst_callee(inst)) => {
+                self.c_call(inst, m.inst_callee(inst), args);
+            }
             Opcode::Call => {
                 let callee = m.inst_callee(inst);
                 let fr = self.func_ref(self.func_ids[callee.index()]);
@@ -1037,6 +1084,93 @@ impl<M: ClifModule> Lower<'_, M> {
             _ => unreachable!("verified IR has no other opcodes"),
         }
         true
+    }
+
+    /// A call of a C function that takes or returns C structs, which travel as the target's C ABI
+    /// says (`cabi.rs`).
+    fn c_call(&mut self, inst: Inst, callee: FuncId, args: Vec<ir::Value>) {
+        use crate::cabi::{Pass, classify};
+        let m = self.m;
+        let mut abi_args = Vec::new();
+        let mut result = None;
+        for (i, &a) in args.iter().enumerate() {
+            match m.func_struct_param(callee, i as u32) {
+                None => abi_args.push(a),
+                Some((StructPass::ByValue, s)) => match classify(self.target, s, false) {
+                    Pass::Registers(parts) => {
+                        let copy = self.padded_copy(a, s.size);
+                        for (t, at) in parts {
+                            let v = self.b.ins().load(t, MemFlagsData::new(), copy, at as i32);
+                            abi_args.push(v);
+                        }
+                    }
+                    Pass::Stack(_) => abi_args.push(a),
+                    Pass::Indirect => {
+                        let copy = self.padded_copy(a, s.size);
+                        abi_args.push(copy);
+                    }
+                },
+                Some((StructPass::Result, s)) => match classify(self.target, s, true) {
+                    Pass::Registers(parts) => result = Some((a, parts, s.size)),
+                    _ => abi_args.push(a),
+                },
+            }
+        }
+        let fr = self.func_ref(self.func_ids[callee.index()]);
+        self.mark_call(Some(inst));
+        let call = self.b.ins().call(fr, &abi_args);
+        self.mark_call(None);
+        let results = self.b.inst_results(call).to_vec();
+        let mut results = results.into_iter();
+        if let Some((dst, parts, size)) = result {
+            // The registers go into a padded copy, then as many bytes as the struct has.
+            let tmp = self.stack_bytes(size.div_ceil(8) * 8);
+            for ((_, at), v) in parts.iter().zip(results.by_ref()) {
+                self.b.ins().store(MemFlagsData::new(), v, tmp, *at as i32);
+            }
+            self.copy_bytes(dst, tmp, size);
+        }
+        if let Some(r) = results.next() {
+            self.set(inst, r);
+        }
+    }
+
+    /// Fresh memory in the frame: `size` bytes aligned to 16.
+    fn stack_bytes(&mut self, size: u32) -> ir::Value {
+        let data = ir::StackSlotData::new(ir::StackSlotKind::ExplicitSlot, size.max(8), 4);
+        let slot = self.b.create_sized_stack_slot(data);
+        self.b.ins().stack_addr(self.ptr, slot, 0)
+    }
+
+    /// A copy of the `size` bytes at `src`, padded with zeros to a multiple of 8 bytes, in the frame.
+    fn padded_copy(&mut self, src: ir::Value, size: u32) -> ir::Value {
+        let padded = size.div_ceil(8) * 8;
+        let tmp = self.stack_bytes(padded);
+        let zero = self.iconst(types::I64, 0);
+        for at in (0..padded).step_by(8) {
+            self.b
+                .ins()
+                .store(MemFlagsData::new(), zero, tmp, at as i32);
+        }
+        self.copy_bytes(tmp, src, size);
+        tmp
+    }
+
+    /// Copies `size` bytes from `src` to `dst`, widest pieces first.
+    fn copy_bytes(&mut self, dst: ir::Value, src: ir::Value, size: u32) {
+        let mut at = 0;
+        for (width, ty) in [
+            (8, types::I64),
+            (4, types::I32),
+            (2, types::I16),
+            (1, types::I8),
+        ] {
+            while size - at >= width {
+                let v = self.b.ins().load(ty, MemFlagsData::new(), src, at as i32);
+                self.b.ins().store(MemFlagsData::new(), v, dst, at as i32);
+                at += width;
+            }
+        }
     }
 
     fn lower_if(&mut self, inst: Inst, cond: ir::Value) -> bool {

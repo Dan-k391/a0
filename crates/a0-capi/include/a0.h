@@ -115,6 +115,16 @@ A0Value a0_builder_select(A0Builder *b, A0Value cond, A0Value x, A0Value y);
 A0Value a0_builder_load(A0Builder *b, A0Type type, A0Value ptr);
 void a0_builder_store(A0Builder *b, A0Value value, A0Value ptr);
 A0Value a0_builder_ptradd(A0Builder *b, A0Value ptr, A0Value offset);
+/* The address of `size` bytes in the function's frame, aligned to `align`. */
+A0Value a0_builder_stack_slot(A0Builder *b, uint32_t size, uint32_t align);
+/* Says that the A0_PTR parameter `index` of the extern `f` stands for a C struct passed by value
+ * ("byval": it points at the struct's bytes) or, for parameter 0 of a function returning nothing,
+ * where the struct it returns goes ("sret"); the struct has `size` bytes aligned to `align` and
+ * scalar fields of `field_types` at `field_offsets` (docs/ir.md, "C structs"). */
+void a0_builder_set_struct_param(A0Builder *b, A0Func f, uint32_t index, const char *pass,
+                                 size_t pass_len, uint32_t size, uint32_t align,
+                                 const A0Type *field_types, size_t type_count,
+                                 const uint32_t *field_offsets, size_t offset_count);
 
 /* Returns A0_NONE for a function that returns nothing. */
 A0Value a0_builder_call(A0Builder *b, A0Func f, const A0Value *args, size_t arg_count);

@@ -432,6 +432,39 @@ impl Parser {
         }
     }
 
+    /// `(SIZE, ALIGN: TYPE OFFSET, ...)`, the layout of a C struct.
+    fn c_struct(&mut self) -> PResult<CStruct> {
+        self.expect(Tok::LParen, "'('")?;
+        let number = |p: &mut Self, what: &str| match *p.peek() {
+            Tok::Int(v) if (0..=u32::MAX as i128).contains(&v) => {
+                p.bump();
+                Ok(v as u32)
+            }
+            _ => p.unexpected(what),
+        };
+        let size = number(self, "the struct's size")?;
+        self.expect(Tok::Comma, "','")?;
+        let align = number(self, "the struct's alignment")?;
+        self.expect(Tok::Colon, "':'")?;
+        let mut fields = Vec::new();
+        loop {
+            let t = self.ty()?;
+            let at = number(self, "the field's offset")?;
+            fields.push((t, at));
+            if *self.peek() == Tok::Comma {
+                self.bump();
+            } else {
+                break;
+            }
+        }
+        self.expect(Tok::RParen, "')'")?;
+        Ok(CStruct {
+            size,
+            align,
+            fields,
+        })
+    }
+
     fn ty(&mut self) -> PResult<Type> {
         if let Tok::Word(w) = self.peek()
             && let Some(t) = Type::from_name(w)
@@ -541,9 +574,18 @@ impl Parser {
                     let (name, _) = self.sym()?;
                     self.expect(Tok::LParen, "'('")?;
                     let mut params = Vec::new();
+                    let mut structs = Vec::new();
                     if *self.peek() != Tok::RParen {
                         loop {
                             params.push(self.ty()?);
+                            // `ptr byval(SIZE, ALIGN: TYPE OFFSET, ...)`: a C struct.
+                            if let Tok::Word(w) = self.peek()
+                                && let Some(pass) = StructPass::from_name(w)
+                            {
+                                self.bump();
+                                let layout = self.c_struct()?;
+                                structs.push((params.len() as u32 - 1, pass, layout));
+                            }
                             if *self.peek() == Tok::Comma {
                                 self.bump();
                             } else {
@@ -560,6 +602,10 @@ impl Parser {
                         .is_none()
                     {
                         return self.error_at(span, &format!("symbol @{name} is already defined"));
+                    }
+                    let f = self.module.lookup_func(&name).unwrap();
+                    for (i, pass, layout) in structs {
+                        self.module.struct_params.insert((f, i), (pass, layout));
                     }
                     self.end_of_line()?;
                 }

@@ -73,6 +73,39 @@ allowed and never execute. A function with a return type must not be able to fal
 body: the verifier proves that the body *terminates* (it ends in a terminator, an `if` whose two branches
 both terminate, or a `loop` with no `break`). A void function that falls off the end returns.
 
+## C structs
+
+C functions that take or return structs by value are declared with the struct's layout on a `ptr`
+parameter (D73):
+
+```
+extern func @div(ptr sret(8, 4: i32 0, i32 4), i32, i32)
+extern func @blend(ptr byval(24, 8: f64 0, i8 8, f32 12, f64 16), f32) -> f32
+```
+
+- `byval(SIZE, ALIGN: TYPE OFFSET, ...)`: the argument points at the struct's bytes, which are passed
+  by value. The callee gets a copy, so the memory is not changed.
+- `sret(...)`, on parameter 0 of a function that returns nothing in the IR: the argument points at
+  where the struct the C function returns goes.
+- The layout is the struct's size and alignment and its scalar fields with their offsets, nested
+  structs flattened: what a C ABI looks at. The verifier checks that the struct parameters are
+  `ptr`s of externs, that the size is a multiple of the alignment (a power of two), and that every
+  field fits, aligned.
+
+Each backend passes the struct as the target's C ABI says, from one implementation in the native
+backend (`a0-native/src/cabi.rs`): System V x86-64 in up to two registers, integer or SSE, or copied
+onto the stack; Windows x64 in a register when it is 1, 2, 4 or 8 bytes, otherwise by pointer to a
+copy; AArch64 in floating-point registers for one to four floats of one type, in up to two
+registers when it is 16 bytes or less, otherwise by pointer. Results come back in registers the same
+way, or are written through a pointer the caller passes.
+
+The interpreter's own foreign calls take up to eight integer or `f64` arguments and return one.
+It calls other C functions (C structs, `f32`, more arguments) through **thunks**:
+`a0_native::add_thunks(&module, &mut symbols)` compiles, in memory, one function
+`void thunk(const uint64_t *args, uint64_t *ret)` per such C function, which the interpreter finds
+with `HostSymbols::thunk`. The drivers and the C API add them before interpreting; without them the
+interpreter reports which function it cannot call.
+
 ## Entry point
 
 A module that is run or turned into an executable defines `func @main() -> i32`. The interpreter and the
@@ -142,7 +175,9 @@ let module = b.finish()?;  // structural errors + verifier diagnostics
 ```
 
 `patch_iconst` changes the value of an `iconst` built earlier, for numbers known only after more code
-is built (a frame size emitted in a prologue).
+is built (a frame size emitted in a prologue). `set_struct_param(f, index, pass, size, align,
+field_types, field_offsets)` gives a C function's struct parameter its layout ("C structs" above;
+`func_struct_param` reads it back).
 
 Misuse (an `else_` without an `if_`, building outside a function, ...) is recorded as a diagnostic and
 reported by `finish`, rather than panicking, so the API stays safe to expose over C.
@@ -200,4 +235,5 @@ span of the offending instruction.
 ## Not yet
 
 Aggregate types, switch and calling-convention attributes are left out until an example language
-needs them (see `docs/decisions.md`); aggregates live in memory, stack slots included.
+needs them (see `docs/decisions.md`); aggregates live in memory, stack slots included, and cross
+into C as "C structs" above say.

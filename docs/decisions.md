@@ -878,9 +878,8 @@ also looks through operators and branches made of literals. `let x = 200;` is an
 
 Arrays of sized numbers keep each element in its own width (one, two or four bytes, generalizing
 D65), so C sees `uint8_t *` and `int32_t *`. C functions take and return sized integers; those
-narrower than 32 bits pass as C promotes them, extended to 32 bits by their sign. `f32` is not yet
-a C function's parameter type: the interpreter's call trampoline (D7) has no single floats, which
-calls through compiled thunks will lift (step five of v0.6). Values of sized types convert to
+narrower than 32 bits pass as C promotes them, extended to 32 bits by their sign, and `f32` as C's
+`float` (the interpreter calls such functions through thunks, D73). Values of sized types convert to
 `any` as `int` or `float`. The debugger shows unsigned and single-float values (`DebugKind::UInt`,
 `Float32`).
 
@@ -945,3 +944,34 @@ nothing is traced, inline structs and pointers may hold references in this mode.
 Garbage-collected programs are unaffected: the mode changes lowering only when chosen. The random
 program generator makes one program in four `manual`, so lowering without frames is checked
 against the interpreter and native code like everything else.
+
+## D73. C structs cross into C by value, through one implementation of the C ABI
+
+v0.6 asks that C structs can be passed to and returned from C functions. How a struct travels
+depends on the target's C ABI: System V x86-64 classifies each eightbyte as integer or SSE and
+spills structs over 16 bytes to the stack; Windows x64 passes 1, 2, 4 and 8-byte structs in a
+register and others by pointer to a copy; AArch64 has homogeneous floating-point aggregates and
+passes larger structs by pointer. Cranelift handles none of this beyond a struct-on-the-stack
+argument and a hidden result pointer, so A0 does the classification itself (`a0-native/src/cabi.rs`).
+
+The core IR has no aggregate types, and gains none: a struct parameter of an extern stays a `ptr`
+(to the struct's bytes, or to where its result goes) annotated with the struct's layout,
+`byval(SIZE, ALIGN: TYPE OFFSET, ...)` or `sret(...)`. The layout is flattened to scalar fields at
+offsets because that is all an ABI looks at, and it keeps the IR free of named types. Struct types
+in the IR would have meant aggregate values, loads and stores of them, and every pass and both
+backends learning them, for a need that only exists at the C boundary.
+
+The interpreter calls C through a generated trampoline (D7) whose shapes are integers and doubles;
+growing it to every struct shape on every ABI would have meant a second implementation of the
+classification, in C, which could disagree with the first. Bringing in libffi was the other
+choice, a new dependency (and a C library to build for every target and WebAssembly) for what the
+code generator already knows. Instead the interpreter calls such functions (and those of `f32` or
+more than eight arguments) through thunks the native backend compiles in memory, one per function:
+it loads the arguments from words, makes the call as native code does, and stores the result. So
+there is one implementation of the C ABI, used by the interpreter, the JIT and executables alike.
+The thunks need the native backend in the process, which every tool that interprets has; the
+playground (WebAssembly, no native code) reports such functions as calls it cannot make.
+
+In the HIR, an `extern fn` takes and returns inline structs (D70) of numbers, booleans, pointers and
+such structs, whose layout is already C's. The test of shapes calls Rust `extern "C"` functions
+(which follow the platform's C ABI) from the JIT and the interpreter, on every CI platform.

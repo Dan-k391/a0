@@ -14,6 +14,10 @@ extern func @putchar(i32) -> i32
 
 extern func @abort()
 
+extern func @div(ptr sret(8, 4: i32 0, i32 4), i32, i32)
+
+extern func @blend(ptr byval(24, 8: f64 0, i8 8, f32 12, f64 16), f32) -> f32
+
 func @"binary|"(%lhs: f64, %rhs: f64) -> f64 {
   %0: f64 = fadd %lhs, %rhs
   return %0

@@ -220,11 +220,12 @@ fn prepare(lang: &Language, args: &Json) -> Result<Prepared, String> {
         }
     };
     module.set_sources(sources.clone());
-    let _ = session().sources.set(sources);
-    let symbols = match lang.host_symbols {
+    let mut symbols = match lang.host_symbols {
         Some(f) => f(),
         None => a0_interp::HostSymbols::new(),
     };
+    a0_native::add_thunks(&module, &mut symbols).map_err(|d| render(&d, &sources))?;
+    let _ = session().sources.set(sources);
     let mut argv = vec![path];
     argv.extend(
         args.get("args")

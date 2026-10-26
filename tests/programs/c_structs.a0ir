@@ -1,0 +1,43 @@
+; C structs by value: `div` and `lldiv` from the C library return structs, which the IR gives as
+; a pointer to where the result goes (`sret`), each backend as the target's C ABI says.
+; expect-stdout: 3
+; expect-stdout: 2
+; expect-stdout: 142857142857
+; expect-stdout: 1
+module "cs"
+
+extern func @div(ptr sret(8, 4: i32 0, i32 4), i32, i32)
+extern func @lldiv(ptr sret(16, 8: i64 0, i64 8), i64, i64)
+extern func @a0_print_i64(i64)
+extern func @a0_print_newline()
+
+func @main() -> i32 {
+  %r: ptr = stack_slot 8, 4
+  %a: i32 = iconst 17
+  %b: i32 = iconst 5
+  call @div(%r, %a, %b)
+  %q: i32 = load %r
+  %four: i64 = iconst 4
+  %rp: ptr = ptradd %r, %four
+  %m: i32 = load %rp
+  %q64: i64 = sext %q
+  %m64: i64 = sext %m
+  call @a0_print_i64(%q64)
+  call @a0_print_newline()
+  call @a0_print_i64(%m64)
+  call @a0_print_newline()
+  %r2: ptr = stack_slot 16, 8
+  %x: i64 = iconst 1000000000000
+  %y: i64 = iconst 7
+  call @lldiv(%r2, %x, %y)
+  %q2: i64 = load %r2
+  %eight: i64 = iconst 8
+  %r2p: ptr = ptradd %r2, %eight
+  %m2: i64 = load %r2p
+  call @a0_print_i64(%q2)
+  call @a0_print_newline()
+  call @a0_print_i64(%m2)
+  call @a0_print_newline()
+  %z: i32 = iconst 0
+  return %z
+}

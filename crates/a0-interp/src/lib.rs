@@ -262,7 +262,10 @@ struct Shape {
 
 impl Shape {
     /// The `a0_ffi_call` description of this shape, or why it cannot be called from the interpreter.
-    fn ffi(&self) -> Result<(u32, i32), String> {
+    fn ffi(&self, structs: bool) -> Result<(u32, i32), String> {
+        if structs {
+            return Err("C struct parameters".to_string());
+        }
         if self.params.len() > a0_runtime::FFI_MAX_ARGS {
             return Err(format!("more than {} arguments", a0_runtime::FFI_MAX_ARGS));
         }
@@ -303,6 +306,11 @@ enum FuncKind {
         ret_kind: i32,
         /// It is one of the runtime's functions that take a location and a frame pointer.
         reports: bool,
+    },
+    /// A C function (at `function`) called through a thunk (at `address`, `HostSymbols::thunk`).
+    Thunk {
+        address: usize,
+        function: usize,
     },
     /// An extern that is never called or referenced; calling it is a bug in the verifier's sense.
     Unresolved,
@@ -449,7 +457,11 @@ impl Interpreter {
                             );
                             FuncKind::Unresolved
                         }
-                        Some(address) => match shape.ffi() {
+                        Some(function) if symbols.thunk(&name).is_some() => FuncKind::Thunk {
+                            address: symbols.thunk(&name).unwrap(),
+                            function,
+                        },
+                        Some(address) => match shape.ffi(module.func_has_struct_params(f)) {
                             Ok((mask, ret_kind)) => FuncKind::Native {
                                 address,
                                 mask,
@@ -464,7 +476,10 @@ impl Interpreter {
                                             "the interpreter cannot call @{name}: it has {why}"
                                         ),
                                     )
-                                    .with_span_opt(module.func_span(f)),
+                                    .with_span_opt(module.func_span(f))
+                                    .with_note(
+                                        "a0_native::add_thunks compiles what it needs to call it",
+                                    ),
                                 );
                                 FuncKind::Unresolved
                             }
@@ -485,6 +500,7 @@ impl Interpreter {
                 SymbolKind::Global => global_addrs[sym.index as usize],
                 SymbolKind::Func => match &funcs[sym.index as usize].kind {
                     FuncKind::Native { address, .. } => *address as u64,
+                    FuncKind::Thunk { function, .. } => *function as u64,
                     _ => token_base + sym.index as u64,
                 },
             }
@@ -688,6 +704,35 @@ impl Interpreter {
                 let extra = if reports { Some(loc) } else { None };
                 self.native_call(address, mask, ret_kind, ret, caller_base, args, extra)
             }
+            &FuncKind::Thunk { address, .. } => {
+                let ret = self.funcs[f as usize].shape.ret;
+                let words: Vec<u64> = args
+                    .iter()
+                    .map(|&a| self.stack[caller_base + a as usize])
+                    .collect();
+                let mut result = 0u64;
+                if self.hook.is_some() {
+                    let this: *const Interpreter = self;
+                    DEBUGGEE.with(|d| d.set(this));
+                }
+                // SAFETY: the thunk was compiled for this function's IR signature, and takes the
+                // arguments' words and where its result goes.
+                let raw = unsafe {
+                    a0_runtime::ffi_call(
+                        address,
+                        &[words.as_ptr() as u64, &raw mut result as u64],
+                        0,
+                        ffi_ret::VOID,
+                    )
+                };
+                if self.hook.is_some() {
+                    DEBUGGEE.with(|d| d.set(std::ptr::null()));
+                }
+                match raw {
+                    Some(_) => Ok(ret.map(|t| normalize(t, result)).unwrap_or(0)),
+                    None => Err(Trap::panic("unsupported C call shape".to_string())),
+                }
+            }
             FuncKind::Unresolved => Err(Trap::panic(format!(
                 "call to unresolved external function @{}",
                 self.funcs[f as usize].name
@@ -760,7 +805,7 @@ impl Interpreter {
                 "call_indirect through a null pointer".to_string(),
             ));
         }
-        match sig.ffi() {
+        match sig.ffi(false) {
             Ok((mask, ret_kind)) => {
                 self.native_call(callee as usize, mask, ret_kind, sig.ret, base, args, None)
             }

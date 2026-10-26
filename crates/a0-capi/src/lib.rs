@@ -544,6 +544,39 @@ pub unsafe extern "C" fn a0_builder_ptradd(b: *mut A0Builder, ptr: u32, offset: 
     builder!(b, NONE).b.ptradd(Value(ptr), Value(offset)).0
 }
 
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn a0_builder_stack_slot(b: *mut A0Builder, size: u32, align: u32) -> u32 {
+    builder!(b, NONE).b.stack_slot(size, align).0
+}
+
+#[unsafe(no_mangle)]
+#[allow(clippy::too_many_arguments)]
+pub unsafe extern "C" fn a0_builder_set_struct_param(
+    b: *mut A0Builder,
+    f: u32,
+    index: u32,
+    pass: *const c_char,
+    pass_len: usize,
+    size: u32,
+    align: u32,
+    field_types: *const u32,
+    type_count: usize,
+    field_offsets: *const u32,
+    offset_count: usize,
+) {
+    let b = builder!(b);
+    let pass_name = unsafe { text(pass, pass_len) };
+    let Some(pass) = a0_ir::StructPass::from_name(&pass_name) else {
+        b.fail(format!(
+            "'{pass_name}' is not a way to pass a struct: byval or sret"
+        ));
+        return;
+    };
+    let types = b.types(unsafe { items(field_types, type_count) });
+    let offsets = unsafe { items(field_offsets, offset_count) };
+    b.b.set_struct_param(FuncId(f), index, pass, size, align, &types, offsets);
+}
+
 fn values(handles: &[u32]) -> Vec<Value> {
     handles.iter().map(|&v| Value(v)).collect()
 }
@@ -771,7 +804,11 @@ pub unsafe extern "C" fn a0_run(
         return -1;
     };
     let args = unsafe { run_args(args, count) };
-    let symbols = a0_interp::HostSymbols::new();
+    let mut symbols = a0_interp::HostSymbols::new();
+    if let Err(d) = a0_native::add_thunks(&m.module, &mut symbols) {
+        unsafe { report(diags, Some(d)) };
+        return -1;
+    }
     let outcome = a0_interp::run_main(m.module.clone(), symbols, args);
     a0_runtime::flush();
     let set = |code: i32| {

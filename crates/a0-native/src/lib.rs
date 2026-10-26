@@ -3,16 +3,19 @@
 //! [`compile_object`] lowers a module to Cranelift IR and emits an object file for any supported
 //! [`Target`]. [`link_executable`] links such an object with the C runtime using the system linker
 //! (host target only). [`build_executable`] does both. [`run_main`] runs a module from memory
-//! instead, through Cranelift's JIT, with no linking.
+//! instead, through Cranelift's JIT, with no linking. [`add_thunks`] lets the interpreter call C
+//! functions its own foreign calls cannot.
 //!
 //! IR variables become Cranelift variables, so Cranelift's frontend builds SSA; `if`/`loop` become
 //! blocks. Integer division checks and `unreachable` call the runtime's `a0_rt_trap`, which prints the
 //! same message as the interpreter.
 
+mod cabi;
 mod codegen;
 mod dwarf;
 mod jit;
 mod link;
+mod thunks;
 
 use std::path::Path;
 
@@ -22,6 +25,7 @@ pub use a0_target::Target;
 pub use codegen::{CodegenOptions, ENTRY_SYMBOL, compile_object};
 pub use jit::{JitOptions, jit_supported, run_main};
 pub use link::{Library, LinkOptions, link_executable};
+pub use thunks::add_thunks;
 
 #[derive(Clone, Debug, Default)]
 pub struct BuildOptions {

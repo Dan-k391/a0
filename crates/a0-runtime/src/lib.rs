@@ -187,6 +187,11 @@ pub struct HostSymbols {
     map: std::collections::HashMap<String, usize>,
     /// Whether names not registered are looked up among the process's C functions.
     search_process: bool,
+    /// Thunks through which the interpreter calls C functions it cannot call itself, by the
+    /// functions' names (`a0_native::add_thunks`).
+    thunks: std::collections::HashMap<String, usize>,
+    /// What the thunks' code belongs to, kept as long as the table.
+    keep: Vec<std::sync::Arc<dyn std::any::Any + Send + Sync>>,
 }
 
 impl HostSymbols {
@@ -206,6 +211,8 @@ impl HostSymbols {
         HostSymbols {
             map: std::collections::HashMap::new(),
             search_process: false,
+            thunks: std::collections::HashMap::new(),
+            keep: Vec::new(),
         }
     }
 
@@ -221,6 +228,23 @@ impl HostSymbols {
         for (name, addr) in unsafe { read_symbol_table(table) } {
             self.map.insert(name, addr);
         }
+    }
+
+    /// Registers the thunk for the C function `name`: a function
+    /// `void thunk(const uint64_t *args, uint64_t *ret)` that calls it with one argument per
+    /// 64-bit word of `args` and stores its result at `ret`.
+    pub fn add_thunk(&mut self, name: &str, address: usize) {
+        self.thunks.insert(name.to_string(), address);
+    }
+
+    /// The thunk for the C function `name`, if one was added.
+    pub fn thunk(&self, name: &str) -> Option<usize> {
+        self.thunks.get(name).copied()
+    }
+
+    /// Keeps `owner` (the memory thunks live in) alive as long as this table or a clone of it.
+    pub fn keep_alive(&mut self, owner: std::sync::Arc<dyn std::any::Any + Send + Sync>) {
+        self.keep.push(owner);
     }
 
     pub fn lookup(&self, name: &str) -> Option<usize> {

@@ -49,7 +49,7 @@ def header_functions(prefix, receiver):
                 spec, i = spec + "N", i + 2
             elif t == "const uint8_t *":
                 spec, i = spec + "B", i + 2
-            elif t.startswith("const A0") and t.endswith("*"):
+            elif t == "const uint32_t *" or (t.startswith("const A0") and t.endswith("*")):
                 spec, i = spec + "U", i + 2
             else:
                 spec += {"uint32_t *": "o", "A0Diagnostics **": "D", "int64_t": "i",
@@ -134,6 +134,25 @@ class Bindings(unittest.TestCase):
         module = b.finish()
         self.assertEqual(module.run([]), 5)
         self.assertEqual(a0.Module.parse(str(module)).run([]), 5)
+
+    def test_c_structs(self):
+        # lldiv returns a struct of two int64_t: 100 / 7 is 14, remainder 2.
+        b = a0.Builder("structs")
+        lldiv = b.declare_extern("lldiv", [a0.PTR, a0.I64, a0.I64], a0.VOID)
+        b.set_struct_param(lldiv, 0, "sret", 16, 8, [a0.I64, a0.I64], [0, 8])
+        main = b.declare_function("main", [], a0.I32)
+        b.begin_function(main)
+        r = b.stack_slot(16, 8)
+        b.call(lldiv, [r, b.iconst(a0.I64, 100), b.iconst(a0.I64, 7)])
+        quot = b.load(a0.I64, r)
+        rem = b.load(a0.I64, b.ptradd(r, b.iconst(a0.I64, 8)))
+        both = b.binary("iadd", b.binary("imul", quot, b.iconst(a0.I64, 10)), rem)
+        b.return_(b.cast("trunc", both, a0.I32))
+        b.end_function()
+        module = b.finish()
+        self.assertIn("ptr sret(16, 8: i64 0, i64 8)", str(module))
+        self.assertEqual(module.run([]), 142)
+        self.assertEqual(module.run_jit([]), 142)
 
 
 class Pebble(unittest.TestCase):

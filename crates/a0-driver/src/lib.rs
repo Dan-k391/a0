@@ -367,6 +367,10 @@ impl Language {
                         Ok(code) => a0_runtime::exit(code),
                     };
                 }
+                let mut symbols = symbols;
+                if let Err(d) = a0_native::add_thunks(&module, &mut symbols) {
+                    return self.internal_error(&d, &sources);
+                }
                 match a0_interp::run_main(module, symbols, argv) {
                     Err(d) => self.internal_error(&d, &sources),
                     Ok(Err(trap)) => trap.report_and_exit(),

@@ -209,6 +209,57 @@ fn is_terminated_tracks_returns_and_ifs() {
 }
 
 #[test]
+fn verifier_checks_c_struct_parameters() {
+    for (decl, message) in [
+        (
+            "extern func @f(i64 byval(8, 4: i32 0, i32 4))",
+            "a C struct parameter is a ptr, not i64",
+        ),
+        (
+            "extern func @f(i32, ptr sret(8, 4: i32 0, i32 4))",
+            "a struct result is parameter 0 of a function that returns nothing",
+        ),
+        (
+            "extern func @f(ptr sret(8, 4: i32 0, i32 4)) -> i32",
+            "a struct result is parameter 0 of a function that returns nothing",
+        ),
+        (
+            "extern func @f(ptr byval(6, 4: i32 0))",
+            "a C struct of 6 bytes cannot be aligned to 4",
+        ),
+        (
+            "extern func @f(ptr byval(8, 4: i32 0, i32 6))",
+            "a field of type i32 at 6 does not fit a C struct of 8 bytes",
+        ),
+    ] {
+        let out = errors_of(&format!("module \"m\"\n{decl}\n"));
+        assert!(out.contains(message), "{decl}: {out}");
+    }
+}
+
+#[test]
+fn builder_checks_struct_parameter_indexes() {
+    let mut b = Builder::new("s");
+    let f = b.declare_extern("f", &[Type::Ptr], None);
+    b.set_struct_param(f, 1, StructPass::ByValue, 8, 8, &[Type::I64], &[0]);
+    let err = b.finish().unwrap_err();
+    assert!(err.summary().contains("no such function or parameter"));
+
+    // Text cannot say it, but a builder can.
+    let mut b = Builder::new("s");
+    let f = b.declare_function("f", &[Type::Ptr], None);
+    b.set_struct_param(f, 0, StructPass::ByValue, 8, 8, &[Type::I64], &[0]);
+    b.begin_function(f);
+    b.ret(None);
+    b.end_function();
+    let err = b.finish().unwrap_err();
+    assert!(
+        err.summary()
+            .contains("only C functions (externs) take C structs")
+    );
+}
+
+#[test]
 fn verifier_reports_type_errors_with_spans() {
     let text = "module \"m\"
 func @f(%a: i64, %b: f64) -> i64 {

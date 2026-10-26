@@ -1,0 +1,32 @@
+// C structs by value: inline structs returned from C functions (the C library's `div` and
+// `lldiv`), laid out as C lays them out, and C functions of `f32`.
+// expect-stdout: div 3 2
+// expect-stdout: div -3 -2
+// expect-stdout: lldiv 142857142857 1
+// expect-stdout: kept 3 2
+// expect-stdout: sqrtf 1.5
+// expect-stdout: powf 8
+module "c_structs";
+
+inline struct DivT { quot: i32, rem: i32 }
+inline struct LLDivT { quot: int, rem: int }
+struct Holder { at: DivT }
+
+extern fn div(i32, i32) -> DivT;
+extern fn lldiv(int, int) -> LLDivT;
+extern fn sqrtf(f32) -> f32;
+extern fn powf(f32, f32) -> f32;
+
+fn main() -> int {
+  let d = div(17, 5);
+  print("div " + str(d.quot) + " " + str(d.rem) + "\n");
+  let e = div(-17, 5);
+  print("div " + str(e.quot) + " " + str(e.rem) + "\n");
+  let l = lldiv(1000000000000, 7);
+  print("lldiv " + str(l.quot) + " " + str(l.rem) + "\n");
+  let h = new Holder { at: div(17, 5) };
+  print("kept " + str(h.at.quot) + " " + str(h.at.rem) + "\n");
+  print("sqrtf " + str(sqrtf(2.25)) + "\n");
+  print("powf " + str(powf(2.0, 3.0)) + "\n");
+  0
+}

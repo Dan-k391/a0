@@ -559,6 +559,8 @@ IR_FUNCTIONS = {
     "load": "uu:u",
     "store": "uu:v",
     "ptradd": "uu:u",
+    "stack_slot": "uu:u",
+    "set_struct_param": "uusuuUU:v",
     "call": "uU:u",
     "call_indirect": "uUuU:u",
     "if": "u:v",

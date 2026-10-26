@@ -90,6 +90,7 @@ name = "a0-native"
 version = "0.5.0"
 dependencies = [
  "a0-diag",
+ "a0-interp",
  "a0-ir",
  "a0-runtime",
  "a0-target",

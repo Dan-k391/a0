@@ -140,16 +140,18 @@ fn main() -> int {
 - `global` variables start at the zero value of their type (`0`, `0.0`, `false`, `()`, and `()` for
   `any`); one of reference type must be nullable and starts as `null`.
 - `extern fn` declares a C function (D47). It takes `int` (`int64_t`), `float` (`double`), `bool`
-  (an `int64_t` 0 or 1), sized integers (`int8_t` .. `uint64_t`), `string` (a NUL-terminated
+  (an `int64_t` 0 or 1), sized integers (`int8_t` .. `uint64_t`), `f32` (`float`), pointers,
+  inline structs of numbers, `bool`, pointers and such structs (C structs by value, laid out as C
+  lays them out; `docs/ir.md`, "C structs"), `string` (a NUL-terminated
   `const char *` to the string's own bytes, so a
   string with a NUL byte looks shorter) and arrays of `int`, `float` or `bool` (a pointer to the
   array's elements, `int64_t *`, `double *` or `bool *`, which the function may change but not add
   to), and `T?` of the last two
-  (`NULL` for null). It returns `int`, `float`, `bool` (C's `bool`), `unit` or `string`, which is
+  (`NULL` for null). It returns a number, `bool` (C's `bool`), a pointer, `unit`, such an inline
+  struct, or `string`, which is
   copied (`string?` if it may return `NULL`; for `string`, `NULL` panics). The interpreter finds
   the function in the runtime, in the tables a language registers, or else in the process (the C
   library, loaded libraries), so `extern fn getenv(string) -> string?;` works in both backends.
-  At most eight parameters (the interpreter's FFI).
 - `extern "a0" fn` declares a function of the runtime (or of a language's runtime library) that
   takes and returns A0's own values, of any type (`A0String *`, `A0Array *`, structs and closures
   as pointers to their objects, `any` as its 64-bit word; see `a0rt.h`). It may allocate: its

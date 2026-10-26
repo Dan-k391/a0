@@ -980,10 +980,11 @@ impl HirBuilder {
         self.declare_extern_abi(name, params, ret, Abi::C)
     }
 
-    /// Declares a function written in C, called through `abi`. A C function takes `int`, `float`,
-    /// `bool`, strings and arrays of `int`, `float` or `bool` (or null for `T?`), and returns one of
-    /// the first three, `unit` or a string (`string?` if it can return `NULL`); a function of the
-    /// runtime takes and returns anything. Modules may declare the same C function, with the same
+    /// Declares a function written in C, called through `abi`. A C function takes numbers, `bool`,
+    /// pointers, strings, arrays of numbers or `bool` (or null for `T?`) and inline structs of
+    /// numbers, `bool`, pointers and such structs (by value, as C structs), and returns a number,
+    /// `bool`, a pointer, `unit`, such a struct or a string (`string?` if it can return `NULL`); a
+    /// function of the runtime takes and returns anything. Modules may declare the same C function, with the same
     /// signature.
     pub fn declare_extern_abi(
         &mut self,
@@ -997,8 +998,8 @@ impl HirBuilder {
                 if !self.c_param(t) {
                     let tn = self.m.display_type(t);
                     self.misuse(&format!(
-                        "extern fn {name} takes {tn}; C functions take numbers, bool, strings \
-                         and arrays of numbers or bool"
+                        "extern fn {name} takes {tn}; C functions take numbers, bool, pointers, \
+                         strings, arrays of numbers or bool, and inline structs of numbers"
                     ));
                 }
             }
@@ -1009,11 +1010,13 @@ impl HirBuilder {
                     ret,
                     TypeId::INT | TypeId::FLOAT | TypeId::BOOL | TypeId::UNIT
                 )
-                || matches!(self.m.kind(ret), TypeKind::SizedInt(..) | TypeKind::Ptr(_)))
+                || self.c_scalar(ret)
+                || self.c_struct(ret))
             {
                 let tn = self.m.display_type(ret);
                 self.misuse(&format!(
-                    "extern fn {name} returns {tn}; C functions return numbers, bool, unit or a string"
+                    "extern fn {name} returns {tn}; C functions return numbers, bool, pointers, \
+                     unit, inline structs of numbers or a string"
                 ));
             }
         }
@@ -1041,13 +1044,35 @@ impl HirBuilder {
         }
     }
 
+    /// Whether `t` is a number, `bool` or a pointer, which C has too.
+    fn c_scalar(&self, t: TypeId) -> bool {
+        matches!(t, TypeId::INT | TypeId::FLOAT | TypeId::BOOL)
+            || matches!(
+                self.m.kind(t),
+                TypeKind::SizedInt(..) | TypeKind::F32 | TypeKind::Ptr(_)
+            )
+    }
+
+    /// Whether `t` is an inline struct C can have: of C scalars and such structs.
+    fn c_struct(&self, t: TypeId) -> bool {
+        let Some(s) = self.m.inline_struct(t) else {
+            return false;
+        };
+        let fields = &self.m.structs[s.index()].fields;
+        matches!(self.m.kind(t), TypeKind::Struct(_, args) if args.is_empty())
+            && !fields.is_empty()
+            && fields
+                .iter()
+                .all(|&(_, f)| self.c_scalar(f) || self.c_struct(f))
+    }
+
     /// Whether a C function can take a `t`.
     fn c_param(&self, t: TypeId) -> bool {
         let scalar = |t: TypeId| {
             matches!(t, TypeId::INT | TypeId::FLOAT | TypeId::BOOL)
                 || matches!(self.m.kind(t), TypeKind::SizedInt(..) | TypeKind::Ptr(_))
         };
-        if scalar(t) {
+        if self.c_scalar(t) || self.c_struct(t) {
             return true;
         }
         let t = self.nullable_of(t).unwrap_or(t);

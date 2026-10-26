@@ -34,6 +34,40 @@ pub fn verify(m: &Module) -> Diagnostics {
     }
     for f in 0..m.func_count() {
         let f = FuncId(f);
+        for (i, &t) in m.func_params(f).iter().enumerate() {
+            let Some((pass, s)) = m.func_struct_param(f, i as u32) else {
+                continue;
+            };
+            let problem = if !m.func_is_extern(f) {
+                Some("only C functions (externs) take C structs".to_string())
+            } else if t != Type::Ptr {
+                Some(format!("a C struct parameter is a ptr, not {t}"))
+            } else if pass == StructPass::Result && (i != 0 || m.func_ret(f).is_some()) {
+                Some(
+                    "a struct result is parameter 0 of a function that returns nothing".to_string(),
+                )
+            } else if !s.align.is_power_of_two() || s.size % s.align != 0 {
+                Some(format!(
+                    "a C struct of {} bytes cannot be aligned to {}",
+                    s.size, s.align
+                ))
+            } else if let Some(&(ft, at)) = s.fields.iter().find(|&&(ft, at)| {
+                at + ft.bytes(8).unwrap_or(8) > s.size || at % ft.bytes(8).unwrap_or(1) != 0
+            }) {
+                Some(format!(
+                    "a field of type {ft} at {at} does not fit a C struct of {} bytes",
+                    s.size
+                ))
+            } else {
+                None
+            };
+            if let Some(p) = problem {
+                diags.push(
+                    Diagnostic::error("ir.type", &format!("@{}: {p}", m.func_name(f)))
+                        .with_span_opt(m.func_span(f)),
+                );
+            }
+        }
         if m.func_name(f).is_empty() {
             diags.push(
                 Diagnostic::error("ir.name", "function has an empty name")

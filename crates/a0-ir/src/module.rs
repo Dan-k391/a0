@@ -148,6 +148,8 @@ pub struct Module {
     pub(crate) debug_types: Vec<DebugTypeData>,
     /// The sources spans point into, so that runtime errors can say where they happened.
     pub(crate) sources: Option<SourceMap>,
+    /// Parameters of C functions that stand for C structs, by function and index.
+    pub(crate) struct_params: HashMap<(FuncId, u32), (StructPass, CStruct)>,
 }
 
 impl Module {
@@ -168,6 +170,7 @@ impl Module {
             inlines: Vec::new(),
             debug_types: Vec::new(),
             sources: None,
+            struct_params: HashMap::new(),
         }
     }
 
@@ -517,6 +520,16 @@ impl Module {
     pub fn inst_stack_slot(&self, i: Inst) -> (u32, u32) {
         let imm = self.insts[i.index()].imm;
         (imm as u32, (imm >> 32) as u32)
+    }
+
+    /// Whether parameter `index` of the C function `f` stands for a C struct, and how.
+    pub fn func_struct_param(&self, f: FuncId, index: u32) -> Option<(StructPass, &CStruct)> {
+        self.struct_params.get(&(f, index)).map(|(p, s)| (*p, s))
+    }
+
+    /// Whether a C function takes or returns C structs.
+    pub fn func_has_struct_params(&self, f: FuncId) -> bool {
+        self.struct_params.keys().any(|&(g, _)| g == f)
     }
 
     /// How many loops out from the innermost a `break` or `continue` goes (0: the innermost).
