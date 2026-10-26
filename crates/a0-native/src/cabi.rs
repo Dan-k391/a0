@@ -16,7 +16,8 @@ pub(crate) enum Pass {
     /// A struct in registers: each part a scalar of the type at the offset, read from a copy of the
     /// struct padded to a multiple of 8 bytes.
     Registers(Vec<(ir::Type, u32)>),
-    /// A struct copied onto the stack by the call itself (Cranelift's struct argument; x86-64).
+    /// A struct copied onto the stack by the call itself (Cranelift's struct argument; x86-64),
+    /// from a copy padded to the size given, a multiple of 8 bytes.
     Stack(u32),
     /// A struct passed as a pointer to a copy the caller makes.
     Indirect,
@@ -92,7 +93,7 @@ pub(crate) fn plan(target: Target, m: &Module, f: FuncId, ptr: ir::Type) -> Vec<
                 Some(parts) if left.take(&parts) => Pass::Registers(parts),
                 Some(parts) if aarch64 => {
                     let float = parts[0].0.is_float();
-                    let (n, word) = if float {
+                    let (n, pad) = if float {
                         (std::mem::take(&mut left.float), types::F64)
                     } else {
                         (std::mem::take(&mut left.int), types::I64)
@@ -100,24 +101,24 @@ pub(crate) fn plan(target: Target, m: &Module, f: FuncId, ptr: ir::Type) -> Vec<
                     // On the stack, Apple packs a struct by its alignment, others by 8 bytes.
                     let (word, width) = match (apple, float, s.align) {
                         (true, true, 4) => (types::F32, 4),
-                        _ => (word, 8),
+                        _ => (pad, 8),
                     };
                     let words = (0..s.size.div_ceil(width))
                         .map(|k| (word, k * width))
                         .collect();
                     Pass::Spilled {
-                        pad: vec![word; n as usize],
+                        pad: vec![pad; n as usize],
                         words,
                     }
                 }
                 // System V: a struct that does not fit the registers left goes to memory, and
                 // leaves them to the arguments after it.
-                Some(_) => Pass::Stack(s.size),
+                Some(_) => Pass::Stack(s.size.div_ceil(8) * 8),
                 None if aarch64 || windows => {
                     left.take(&[(ptr, 0)]);
                     Pass::Indirect
                 }
-                None => Pass::Stack(s.size),
+                None => Pass::Stack(s.size.div_ceil(8) * 8),
             },
         };
         out.push(pass);

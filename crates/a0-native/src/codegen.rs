@@ -1092,7 +1092,12 @@ impl<M: ClifModule> Lower<'_, M> {
                 .func_struct_param(callee, i as u32)
                 .map_or(0, |(_, s)| s.size);
             match pass {
-                Pass::Scalar | Pass::Stack(_) | Pass::ResultPointer => abi_args.push(a),
+                Pass::Scalar | Pass::ResultPointer => abi_args.push(a),
+                // Cranelift copies whole eightbytes, so from a padded copy.
+                Pass::Stack(_) => {
+                    let copy = self.padded_copy(a, size);
+                    abi_args.push(copy);
+                }
                 Pass::Registers(parts) => {
                     let copy = self.padded_copy(a, size);
                     for (t, at) in parts {
