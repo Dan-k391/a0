@@ -268,7 +268,7 @@ Dynamic languages spend their time testing, unpacking and comparing `any` values
 the framework's to make fast. Lowering tests an object's type inline (two loads and a compare)
 instead of calling the runtime, and decides `any` equality inline unless both words are references.
 Generated code thereby depends on two offsets in the runtime's layouts (an object's type 24 bytes
-before it, a type's family 24 bytes into its descriptor); `a0rt.h` documents them and `gc.c` checks
+before it, 8 since D64, a type's family 24 bytes into its descriptor); `a0rt.h` documents them and `gc.c` checks
 them at compile time. The optimizer marks a cast as unchecked when an enclosing `is` test of the
 same never-assigned local guards it, so `if v is T { v as T }` tests once. In the runtime, array and
 map buffers up to 256 bytes come from the same free lists as small objects (D18), a map remembers the
@@ -761,3 +761,29 @@ else, and the differential tests run every program in it. Those tests now have e
 interpreter, the JIT, the JIT under GC stress and native executables, each optimized and not. GC
 stress moved from the interpreter to the JIT, since that is where a missing root in generated
 code would show and it runs faster there.
+
+## D64. The collector's cheap gains: a 16-byte header, prefetched marking, a heap three times live
+
+v0.5 asks that allocation-heavy programs spend clearly less time in the collector, starting with
+the cheapest change that works. Without generations a collection costs about what survives it,
+so the collector's total is about the allocation divided by the headroom left after each
+collection; the cheap levers are fewer bytes per object, cheaper marking per object, and more
+headroom. All three were taken; measured on the benchmark's `binarytrees` (Minnow) and
+`binary_trees` (Lox), native, on Linux:
+
+- The object header shrank from 32 to 16 bytes: the size (now 32 bits) and the mark bit, then the
+  type, which generated code now finds 8 bytes before the object instead of 24. Only big objects
+  (over 256 bytes) need the link and the 64-bit size the sweep uses; they get a second header
+  before the first. Minnow's peak heap went from 19.6 to 16.0 MB.
+- Marking pushes objects unmarked with their header prefetched, and checks the mark bit when they
+  leave a queue of eight behind the gray stack, so the cache misses overlap; an object reached
+  twice is pushed twice. About a fifth less marking time.
+- The next collection comes when the heap has grown to three times what survived the last, not
+  two: half as many collections for 1.4 times the peak memory.
+
+Together: Minnow's collector time fell from 123 to 56 ms (the program from 0.30 to 0.20 s), Lox's
+from 833 to 563 ms. What is left is marking the long-lived data again at every collection, which
+only a generational collector avoids. That needs a write barrier on every store of a reference
+into an object (two helpers in lowering and the runtime's array and map stores, it turned out)
+and is left for when large programs show the need (v0.9). Lox's own share shrinks further with
+objects that keep their fields in slots (D65).

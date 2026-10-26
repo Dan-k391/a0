@@ -7,7 +7,8 @@
 #include <time.h>
 
 /* Generated code relies on these offsets (see A0Type in a0rt.h); a wrong one fails to compile. */
-typedef char a0_object_type_offset_is_24[(sizeof(Header) - offsetof(Header, type) == 24) ? 1 : -1];
+typedef char a0_object_type_offset_is_8[(sizeof(Header) - offsetof(Header, type) == 8) ? 1 : -1];
+typedef char a0_header_is_16[(sizeof(Header) == 16) ? 1 : -1];
 typedef char a0_type_family_offset_is_24[(offsetof(A0Type, family) == 24) ? 1 : -1];
 typedef char a0_type_itable_offset_is_32[(offsetof(A0Type, itable) == 32) ? 1 : -1];
 typedef char a0_array_data_offset_is_16[(offsetof(A0Array, data) == 16) ? 1 : -1];
@@ -18,9 +19,12 @@ BUILTIN(a0_builtin_array, "array", A0_KIND_ARRAY);
 BUILTIN(a0_builtin_map, "map", A0_KIND_MAP);
 BUILTIN(a0_builtin_int, "int", A0_KIND_INT);
 
-static Header *objects;
+static BigObject *big_objects;
 static size_t bytes_allocated;
-static size_t next_gc = 1024 * 1024;
+/* See the end of a0_gc_collect. */
+#define GROWTH 3
+#define MIN_HEAP (1024 * 1024)
+static size_t next_gc = MIN_HEAP;
 static int stress = -1;
 static int64_t collections;
 static int64_t live_objects;
@@ -164,8 +168,7 @@ static void small_free(FreeCell **lists, void *p, size_t size) {
 }
 
 /* A dead small object's cell goes back to its free list, its type null again. */
-static void object_cell_free(Header *h) {
-    size_t size = h->size;
+static void object_cell_free(Header *h, size_t size) {
     small_free(object_cells, h, size);
     h->type = NULL;
 }
@@ -178,13 +181,16 @@ void *a0_gc_alloc(const A0Type *type, size_t payload_size) {
     Header *h;
     if (size <= SMALL_LIMIT) {
         h = (Header *)small_alloc(object_cells, size, 1);
+        h->size = (uint32_t)size;
     } else {
-        h = (Header *)check_address(calloc(1, size), size);
-        h->next = objects;
-        objects = h;
+        size += sizeof(BigObject);
+        BigObject *big = (BigObject *)check_address(calloc(1, size), size);
+        big->next = big_objects;
+        big->size = size;
+        big_objects = big;
+        h = (Header *)(big + 1);
     }
     h->type = type;
-    h->size = size;
     bytes_allocated += size;
     return PAYLOAD(h);
 }
@@ -265,11 +271,22 @@ void a0_gc_add_root(void *address, int64_t word_kind) {
 
 /* ---- Marking ---------------------------------------------------------------------------------- */
 
+/* Marking reads every live object's header once, and those reads are cache misses. So an object is
+ * pushed unmarked, with its header prefetched, and checked when it comes out of a small queue
+ * behind the gray stack; by then its header has arrived. An object can then be pushed more than
+ * once, which costs a word of stack. */
+#if defined(__GNUC__) || defined(__clang__)
+#define PREFETCH(p) __builtin_prefetch(p)
+#elif defined(_MSC_VER) && (defined(_M_X64) || defined(_M_IX86))
+#include <xmmintrin.h>
+#define PREFETCH(p) _mm_prefetch((const char *)(p), _MM_HINT_T0)
+#else
+#define PREFETCH(p) ((void)(p))
+#endif
+
 void a0_gc_mark_object(const void *object) {
     if (object == NULL) return;
-    Header *h = HEADER(object);
-    if (h->marked) return;
-    h->marked = 1;
+    PREFETCH(HEADER(object));
     if (gray_count == gray_capacity) {
         gray_capacity = gray_capacity < 64 ? 64 : gray_capacity * 2;
         gray = (const void **)realloc((void *)gray, sizeof(void *) * (size_t)gray_capacity);
@@ -300,6 +317,28 @@ static void trace(const void *object) {
     }
 }
 
+#define PREFETCH_DEPTH 8
+
+/* Marks and traces everything reachable from the gray stack (see a0_gc_mark_object). */
+static void drain_gray(void) {
+    const void *queue[PREFETCH_DEPTH];
+    int head = 0, count = 0;
+    for (;;) {
+        while (count < PREFETCH_DEPTH && gray_count > 0) {
+            queue[(head + count) % PREFETCH_DEPTH] = gray[--gray_count];
+            count++;
+        }
+        if (count == 0) return;
+        const void *object = queue[head];
+        head = (head + 1) % PREFETCH_DEPTH;
+        count--;
+        Header *h = HEADER(object);
+        if (h->marked) continue;
+        h->marked = 1;
+        trace(object);
+    }
+}
+
 static void finalize(void *object) {
     const A0Type *t = HEADER(object)->type;
     if (t->kind == A0_KIND_ARRAY) a0_array_finalize((A0Array *)object);
@@ -312,7 +351,7 @@ void a0_gc_collect(void) {
     for (int64_t i = 0; i < root_count; i++) {
         a0_gc_mark_word(*(uint64_t *)roots[i].address, roots[i].kind);
     }
-    while (gray_count > 0) trace(gray[--gray_count]);
+    drain_gray();
     mark_time += a0_clock() - start;
 
     int64_t live = 0;
@@ -327,29 +366,34 @@ void a0_gc_collect(void) {
                 live++;
             } else {
                 finalize(PAYLOAD(h));
-                bytes_allocated -= h->size;
-                object_cell_free(h);
+                bytes_allocated -= cell;
+                object_cell_free(h, cell);
             }
         }
     }
-    Header **link = &objects;
+    BigObject **link = &big_objects;
     while (*link != NULL) {
-        Header *h = *link;
+        BigObject *big = *link;
+        Header *h = (Header *)(big + 1);
         if (h->marked) {
             h->marked = 0;
             live++;
-            link = &h->next;
+            link = &big->next;
         } else {
-            *link = h->next;
+            *link = big->next;
             finalize(PAYLOAD(h));
-            bytes_allocated -= h->size;
-            free(h);
+            bytes_allocated -= big->size;
+            free(big);
         }
     }
     live_objects = live;
     collections++;
     gc_time += a0_clock() - start;
-    next_gc = bytes_allocated * 2 < 1024 * 1024 ? 1024 * 1024 : bytes_allocated * 2;
+    /* The next collection comes when the heap has grown to GROWTH times what survived this one: a
+     * collection costs about what survives, so the collector's share of the time goes as
+     * 1 / (GROWTH - 1), and the heap peaks at about GROWTH times the live data. */
+    size_t want = bytes_allocated * GROWTH;
+    next_gc = want < MIN_HEAP ? MIN_HEAP : want;
 }
 
 int64_t a0_gc_collections(void) { return collections; }

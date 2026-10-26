@@ -64,7 +64,8 @@ fn string(p: u64) -> String {
 
 /// The descriptor of the object at `p`: its name and kind.
 fn descriptor(p: u64) -> (String, i32) {
-    let t = word(p - 24);
+    // The type is the word before the object (`a0rt.h`).
+    let t = word(p - 8);
     let name = word(t);
     let mut text = Vec::new();
     for i in 0..256 {

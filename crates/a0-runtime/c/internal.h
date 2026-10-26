@@ -16,14 +16,19 @@ typedef struct {
     int64_t value;
 } A0BoxedInt;
 
-/* Every object is preceded by a header; object pointers point at the payload. */
+/* Every object is preceded by a header; object pointers point at the payload. Small objects (up to
+ * 256 bytes with the header) live in cells of chunks, which the sweep walks; big ones are also
+ * preceded by a BigObject that links them for the sweep. */
 typedef struct Header {
-    A0_WORD_PTR(struct Header *, next);
-    A0_WORD_PTR(const A0Type *, type); /* read by generated code */
-    uint64_t size;                      /* header + payload, for accounting */
+    uint32_t size;                      /* header + payload, rounded up to a cell, for accounting */
     uint32_t marked;
-    uint32_t reserved;
+    A0_WORD_PTR(const A0Type *, type); /* read by generated code, just before the payload */
 } Header;
+
+typedef struct BigObject {
+    A0_WORD_PTR(struct BigObject *, next);
+    uint64_t size; /* everything allocated, BigObject included */
+} BigObject;
 
 #define HEADER(p) ((Header *)(p) - 1)
 #define PAYLOAD(h) ((void *)((h) + 1))

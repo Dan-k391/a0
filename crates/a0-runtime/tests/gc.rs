@@ -303,7 +303,31 @@ unsafe fn collection() {
         }
         assert_eq!(live(), 1 + 1 + 200);
         assert_eq!(text(a0_array_get(keep, 199) as Ptr), "199000");
+
+        // Big objects (over 256 bytes, allocated on their own) are traced, kept and freed like
+        // small ones; the type is still the word before the object.
+        let layout = [WORD_REF; 40];
+        let big = a0_type_new(
+            b"Big".as_ptr(),
+            3,
+            40,
+            layout.as_ptr(),
+            std::ptr::null_mut(),
+        );
+        let b = a0_gc_new(big);
+        assert_eq!(*(b as *const Ptr).sub(1), big);
+        *(b as *mut u64).add(39) = s("held by a big object") as u64;
+        a0_array_push(keep, b as u64);
+        for _ in 0..1000 {
+            a0_gc_new(big);
+        }
+        assert_eq!(live(), 1 + 1 + 200 + 2);
+        assert_eq!(
+            text(*(b as *const u64).add(39) as Ptr),
+            "held by a big object"
+        );
         *frame = 0;
         a0_gc_frame_pop(1);
+        assert_eq!(live(), 1);
     }
 }

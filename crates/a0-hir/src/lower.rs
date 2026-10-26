@@ -32,7 +32,7 @@ const ANY_TRUE: i64 = QNAN | 3;
 const CANONICAL_NAN: i64 = 0x7ff8_0000_0000_0000;
 /// Where generated code finds an object's type: in the collector's header, before the payload, and
 /// the type's family within its descriptor (see `a0rt.h`).
-const OBJECT_TYPE_OFFSET: i64 = -24;
+const OBJECT_TYPE_OFFSET: i64 = -8;
 const TYPE_FAMILY_OFFSET: i64 = 24;
 /// Where a type descriptor keeps its interface table: per interface of the module, the table of
 /// the type's methods for it, or null (see `A0Type` in `a0rt.h`).
