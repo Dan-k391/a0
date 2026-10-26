@@ -35,6 +35,8 @@ CLOX_FILES = [
 # chunk), and zoo_batch, which runs for a fixed time instead of a fixed amount of work.
 LOX_PROGRAMS = ["fib", "binary_trees", "method_call", "invocation", "equality", "zoo"]
 NATIVE = ["fib", "sieve", "nbody", "binarytrees"]
+# The numbers `--record` keeps in bench/history.csv, by name, in milliseconds.
+RECORD = {}
 # Programs in Minnow, C and Go only (Tin has no closures).
 MINNOW_ONLY = ["closures"]
 # Each Kaleidoscope program's last line with the same calls doing no work, for LLVM's tutorial:
@@ -147,6 +149,8 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--runs", type=int, default=5)
     parser.add_argument("--out", default=str(WORK / "results.md"))
+    parser.add_argument("--record", metavar="VERSION",
+                        help="append the headline numbers to bench/history.csv under this version")
     args = parser.parse_args()
     runs = args.runs
     WORK.mkdir(parents=True, exist_ok=True)
@@ -220,6 +224,7 @@ def main():
         build, _ = timed([kaleidoscope, "build", str(src), "-o", exe], runs)
         build0, _ = timed([kaleidoscope, "build", str(src), "-o", exe + "-noopt"], runs, env={"A0_OPT": "0"})
         run, out = timed([exe], runs)
+        RECORD[f"kaleidoscope {prog}, native"] = run
         run0, _ = timed([exe + "-noopt"], runs, expect=out)
         jit, _ = timed([kaleidoscope, "run", str(src)], runs, expect=out)
         interp, _ = timed([kaleidoscope, "run", str(src)], max(1, runs // 2), expect=out,
@@ -257,6 +262,7 @@ def main():
         r_c0, _ = timed([str(WORK / f"c-{prog}-O0")], runs, expect=out)
         r_go, _ = timed([str(WORK / f"go-{prog}")], runs, expect=out)
         r_mn, _ = timed([exe], runs, expect=out)
+        RECORD[f"minnow {prog}, native"] = r_mn
         r_mn0, _ = timed([exe + "-noopt"], runs, expect=out)
         r_jit, _ = timed([minnow, "run", str(mn)], runs, expect=out)
         w(f"| {prog} | {ms(b_mn)} | {ms(b_mn0)} | {ms(b_c0)} | {ms(b_c2)} | {ms(b_go)} | {ms(r_mn)} | "
@@ -276,6 +282,7 @@ def main():
         r_c2, out = timed([str(WORK / f"c-{prog}-O2")], runs)
         r_c0, _ = timed([str(WORK / f"c-{prog}-O0")], runs, expect=out)
         r_tin, _ = timed([exe], runs, expect=out)
+        RECORD[f"tin {prog}, native"] = r_tin
         r_tin0, _ = timed([exe + "-noopt"], runs, expect=out)
         r_jit, _ = timed([tin, "run", str(src)], runs, expect=out)
         w(f"| {prog} | {ms(b_tin)} | {ms(r_tin)} | {ms(r_tin0)} | {ms(r_jit)} | {ms(r_c0)} | {ms(r_c2)} |")
@@ -292,6 +299,7 @@ def main():
     base = None
     for n in [1, 2, 4, 8]:
         r_native, out = timed([par_exe, str(n), "5000000"], runs)
+        RECORD[f"parallel, {n} threads"] = r_native
         r_jit, _ = timed([minnow, "run", str(par), str(n), "5000000"], runs)
         if base is None:
             base = (r_native, r_jit)
@@ -335,6 +343,8 @@ def main():
         r_clox, out = timed([clox, str(src)], runs)
         # The programs print the time they took; the rest must agree.
         r_native, mine = timed([exe], runs)
+        RECORD[f"lox {prog}, native"] = r_native
+        RECORD[f"clox {prog}"] = r_clox
         r_native0, mine0 = timed([exe + "-noopt"], runs)
         r_jit, mine_j = timed([lox, str(src)], runs)
         r_interp, mine_i = timed([lox, str(src)], max(1, runs // 2), env={"A0_INTERP": "1"})
@@ -350,6 +360,31 @@ def main():
 
     Path(args.out).write_text("\n".join(report) + "\n")
     print("\n".join(report))
+    if args.record:
+        record(args.record)
+
+
+def record(version):
+    """Appends the headline numbers to bench/history.csv: one row per number, with the version,
+    the date and the machine, so that releases measured on one machine can be compared."""
+    import csv
+    import datetime
+    machine = f"{platform.machine()}, {os.cpu_count()} threads"
+    try:
+        cpu = [l for l in Path("/proc/cpuinfo").read_text().splitlines() if l.startswith("model name")]
+        if cpu:
+            machine = f"{cpu[0].split(':', 1)[1].strip()}, {os.cpu_count()} threads"
+    except OSError:
+        pass
+    path = BENCH / "history.csv"
+    new = not path.exists()
+    with path.open("a", newline="") as f:
+        out = csv.writer(f, lineterminator="\n")
+        if new:
+            out.writerow(["version", "date", "machine", "measure", "ms"])
+        day = datetime.date.today().isoformat()
+        for name, seconds in RECORD.items():
+            out.writerow([version, day, machine, name, f"{seconds * 1000:.0f}"])
 
 
 def large_programs(w, minnow, runs):
@@ -364,6 +399,7 @@ def large_programs(w, minnow, runs):
     w(f"`bench/large/gen.py` makes a Minnow package of {made}: each module imports up to three "
       "earlier ones and calls into them.\n")
     t_build, _ = timed([minnow, "build", main, "-o", exe], runs)
+    RECORD["large program, build"] = t_build
     t_run, out = timed([minnow, "run", main], runs)
     t_exe, out2 = timed([exe], runs)
     if out != out2:
@@ -387,6 +423,8 @@ def large_programs(w, minnow, runs):
     w("|---|---|---|---|---|---|---|")
     for file, program in [(None, "half the modules"), ("main.mn", "every module")]:
         name, medians = lsp.measure(minnow, large, runs, file)
+        if file == "main.mn":
+            RECORD["large program, language server edit to an answer"] = medians[lsp.KEYS[1]] / 1000
         w(f"| {name} | {program} | " + " | ".join(f"{medians[k]:.0f} ms" for k in lsp.KEYS) + " |")
     w("")
 

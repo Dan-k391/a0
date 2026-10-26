@@ -197,7 +197,7 @@ layer, decision D17). A new crate goes into the table above and into `[workspace
 | Diagnostics: rendering, codes (`a0_diag::codes`), the builder's reporting API | `docs/diagnostics.md` (its code table is tested) |
 | A design choice with alternatives | a new `D<n>` entry in `docs/decisions.md` |
 | A milestone ends | `docs/milestones.md` (done / changed / open questions); `CHANGELOG.md` (under Unreleased) |
-| A release | `CHANGELOG.md`, the version in `Cargo.toml`, `A0_VERSION_*` in `a0.h`, `__version__` in `bindings/python/a0`, `editors/vscode/package.json`, `README.md` status, a `v<version>` tag |
+| A release (`docs/releases.md`) | `CHANGELOG.md`, the version in `Cargo.toml` (and the A0 crates' `=x.y.z` there), `A0_VERSION_*` in `a0.h`, `__version__` and `pyproject.toml` in `bindings/python`, `editors/vscode/package.json`, `README.md` status, `bench/run.py --record`, a `v<version>` tag |
 | The covered API (`docs/compatibility.md`) or what languages' C runtimes may use | `docs/compatibility.md`, `docs/runtime.md`, and the changelog (**Deprecated** for what is retired) |
 | What the benchmark measures, or anything that moves its numbers much (codegen, the optimizer, the collector, linking) | `docs/benchmarks.md`, rerunning `bench/run.py` |
 | A workflow or convention | this file and `.claude/skills/` |

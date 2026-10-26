@@ -1,0 +1,8 @@
+# The A0 book for mdBook (`mdbook build docs`); the same Markdown reads on GitHub as it is.
+[book]
+title = "A0"
+src = "."
+language = "en"
+
+[build]
+build-dir = "../target/book"

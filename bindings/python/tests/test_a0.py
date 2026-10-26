@@ -84,6 +84,8 @@ class Bindings(unittest.TestCase):
         parts = [re.search(rf"#define A0_VERSION_{p} (\d+)", header).group(1)
                  for p in ("MAJOR", "MINOR", "PATCH")]
         self.assertEqual(".".join(parts), a0.__version__)
+        pyproject = open(os.path.join(ROOT, "bindings", "python", "pyproject.toml")).read()
+        self.assertIn(f'version = "{a0.__version__}"', pyproject)
 
     def test_grammars_and_trees(self):
         with self.assertRaises(a0.Error) as e:

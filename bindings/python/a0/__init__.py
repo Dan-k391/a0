@@ -46,6 +46,10 @@ def _library_path():
         name = "liba0_capi.dylib"
     else:
         name = "liba0_capi.so"
+    # An installed package (a wheel, a release archive) carries the library inside it.
+    bundled = os.path.join(os.path.dirname(os.path.abspath(__file__)), "lib", name)
+    if os.path.exists(bundled):
+        return bundled
     root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
     for profile in ("release", "debug"):
         candidate = os.path.join(root, "target", profile, name)

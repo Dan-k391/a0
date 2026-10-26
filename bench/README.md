@@ -10,6 +10,8 @@ and what they mean.
 | `minnow/parallel.mn` | Threads: the primes below a limit counted on 1, 2, 4 and 8 threads |
 | `tin/` | The same programs in Tin, A0's systems language, written as the C ones are (pointers, C's allocator) |
 | `run.py` | Builds everything, checks that the implementations print the same, and times compiling and running |
+| `history.csv`, `history.py` | Each release's headline numbers, with the machine they were measured on |
+| `large/` | A generated 100,000-line package, and the language server measured on it |
 
 Lox is measured on the benchmark programs of Crafting Interpreters' own test suite
 (`examples/lox/tests/craftinginterpreters/test/benchmark`), against clox.
@@ -17,6 +19,8 @@ Lox is measured on the benchmark programs of Crafting Interpreters' own test sui
 ```
 sudo apt install clang llvm-dev zlib1g-dev libzstd-dev golang-go   # Ubuntu; or the same from Homebrew
 python3 bench/run.py --runs 5
+python3 bench/run.py --runs 5 --record 1.0.0   # also keep the headline numbers in history.csv
+python3 bench/history.py                       # the numbers by release, as docs/benchmarks.md shows
 ```
 
 The script builds A0 and its languages in release mode, fetches clox (a pinned commit of Crafting

@@ -17,7 +17,8 @@ commands:
   check <file>              parse and verify; print diagnostics
   fmt <file>                print the canonical text form
   lower <file.hir>          print the core IR a HIR module lowers to
-  run <file> [-- args...]   interpret @main and exit with its status
+  run <file> [-- args...]   run @main (compiled into memory; A0_INTERP=1 interprets) and
+                            exit with its status
   build <file> [-o out] [--target T] [--no-opt] [-g]
                             compile to a native executable (host target only); -g describes
                             it for gdb and lldb (Linux, macOS)

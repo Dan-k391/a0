@@ -204,6 +204,43 @@ location table and parallel code generation (on 4 processors here); the language
 after an edit is its reuse of unchanged files' trees and indexes. The other programs' code did not
 change, and their differences are the machine's noise (clox moved as much).
 
+## From release to release
+
+`bench/history.csv` keeps each release's headline numbers (`bench/run.py --record`,
+`docs/releases.md`); `python3 bench/history.py` prints them by machine. On Intel(R) Xeon(R) Processor @ 2.10GHz, 4 threads, in milliseconds:
+
+| | 0.8.0 | 0.9.0 |
+|---|---|---|
+| kaleidoscope fib, native | 20 | 16 |
+| kaleidoscope mandel, native | 954 | 945 |
+| minnow fib, native | 64 | 71 |
+| minnow sieve, native | 138 | 144 |
+| minnow nbody, native | 143 | 139 |
+| minnow binarytrees, native | 505 | 462 |
+| minnow closures, native | 823 | 141 |
+| tin fib, native | 77 | 78 |
+| tin sieve, native | 123 | 98 |
+| tin nbody, native | 87 | 153 |
+| tin binarytrees, native | 388 | 384 |
+| parallel, 1 threads | 2432 | 2427 |
+| parallel, 2 threads | 1261 | 1246 |
+| parallel, 4 threads | 684 | 644 |
+| parallel, 8 threads | 633 | 630 |
+| lox fib, native | 554 | 468 |
+| clox fib | 1327 | 1165 |
+| lox binary_trees, native | 1363 | 1191 |
+| clox binary_trees | 3569 | 3169 |
+| lox method_call, native | 195 | 172 |
+| clox method_call | 245 | 220 |
+| lox invocation, native | 477 | 408 |
+| clox invocation | 423 | 329 |
+| lox equality, native | 101 | 106 |
+| clox equality | 4737 | 4844 |
+| lox zoo, native | 260 | 231 |
+| clox zoo | 431 | 364 |
+| large program, build | 4775 | 2723 |
+| large program, language server edit to an answer | 1973 | 370 |
+
 ## Why
 
 ### Compile time is the linker's

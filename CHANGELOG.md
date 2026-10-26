@@ -15,6 +15,20 @@ APIs. `docs/milestones.md` has the details of each step, with measurements.
   example languages in every mode, with `examples/wordfreq`, a program of two modules. The VS Code
   extension knows `.b0` files. New code `E2027` (needs `unsafe`).
 
+- **The A0 book** (`docs/book/README.md`, `docs/SUMMARY.md` for mdBook): from getting started
+  and the tutorial through the language's parts and its tools to a full language (B0), memory,
+  concurrency, dynamic languages, other platforms and hosting, with a guide to each language. A
+  test keeps every relative link in the documentation valid.
+- **An API reference**: every public item of the covered crates is documented
+  (`#![warn(missing_docs)]`), and CI builds the reference with warnings as errors.
+- **Releases** (`docs/releases.md`): `release/package.py` makes an archive per platform (the
+  tools, `rust-lld`, the target packs, the C API, the Python package with its library, the editor
+  extension, the docs) and the packages to publish (crates, a Python wheel, the `.vsix`);
+  `release/check.py` checks an archive alone; `.github/workflows/release.yml` drafts a GitHub
+  release on a tag, publishing nothing. The crates have the metadata crates.io needs, the
+  examples `publish = false`, and the repository a `LICENSE`.
+- **Performance from release to release**: `bench/run.py --record` keeps headline numbers in
+  `bench/history.csv`; `bench/history.py` prints them by machine.
 - **A compatibility promise** for 1.0 (`docs/compatibility.md`, D86): what is covered (the command
   line, the text formats, the C header, the Python package, the Rust API for languages, the part of
   `a0rt.h` in the new `docs/runtime.md`), the rules for each, and how things are deprecated.

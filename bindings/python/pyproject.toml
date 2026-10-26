@@ -1,0 +1,28 @@
+# The Python package `a0` (docs/python.md). A wheel is made per platform with the shared library
+# inside it: `python3 release/package.py` puts the library at `a0/lib/` and runs `python3 -m build
+# --wheel` here when the `build` module is installed.
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "a0-lang"
+version = "0.9.0"
+description = "Build programming languages in Python on A0: grammars, the HIR builder, the JIT, native executables, the language server and the debugger"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.9"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Topic :: Software Development :: Compilers",
+]
+
+[project.urls]
+Homepage = "https://github.com/Dan-k391/a0"
+Documentation = "https://github.com/Dan-k391/a0/blob/main/docs/python.md"
+
+[tool.setuptools]
+packages = ["a0"]
+
+[tool.setuptools.package-data]
+a0 = ["lib/*"]

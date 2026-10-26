@@ -1,0 +1,92 @@
+# Makes a release's archives and packages on every platform (docs/releases.md) and puts them in a
+# draft GitHub release for a maintainer to check and publish. Nothing is published here: not the
+# release, not the crates, the Python wheels or the VS Code extension.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  packs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        run: rustup toolchain install stable --profile minimal && rustup default stable
+      - name: Install clang, LLVM's tools and mingw-w64
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq clang lld llvm mingw-w64
+      - name: Build the packs
+        run: python3 targets/build.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: packs
+          path: target/packs
+
+  archive:
+    needs: packs
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, macos-15-intel, windows-latest, windows-11-arm]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install rustup
+        shell: bash
+        run: |
+          if ! command -v rustup; then
+            curl -sSf -o rustup-init.exe https://static.rust-lang.org/rustup/dist/aarch64-pc-windows-msvc/rustup-init.exe
+            ./rustup-init.exe -y --profile minimal --default-toolchain none
+            echo "$USERPROFILE/.cargo/bin" >> "$GITHUB_PATH"
+          fi
+      - name: Install Rust
+        run: rustup toolchain install stable --profile minimal && rustup default stable
+      - uses: actions/download-artifact@v4
+        with:
+          name: packs
+          path: target/packs
+      - name: Install the Python build module
+        shell: bash
+        run: $(command -v python3 || command -v python) -m pip install --quiet build
+      - name: Package
+        shell: bash
+        run: $(command -v python3 || command -v python) release/package.py --packs target/packs --out target/dist
+      - name: Check the archive
+        # The tools in the archive run a program and cross-compile one, with nothing else installed.
+        shell: bash
+        run: $(command -v python3 || command -v python) release/check.py target/dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ matrix.os }}
+          path: |
+            target/dist/*.tar.gz
+            target/dist/*.zip
+            target/dist/*.sha256
+            target/dist/*.whl
+            target/dist/*.crate
+
+  draft:
+    needs: archive
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Draft the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # The crates are the same on every platform: one copy of each.
+          ls dist
+          python3 release/notes.py "${GITHUB_REF_NAME#v}" > notes.md
+          gh release create "$GITHUB_REF_NAME" --draft --title "A0 ${GITHUB_REF_NAME#v}" --notes-file notes.md dist/*
