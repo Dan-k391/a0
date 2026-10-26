@@ -231,31 +231,37 @@ impl Language {
 
     /// Runs the driver on `args` (without the program name).
     pub fn run(&self, args: &[String]) -> ExitCode {
+        ExitCode::from(self.run_status(args))
+    }
+
+    /// [`Language::run`], with the exit status as a number (for hosts that are not Rust programs,
+    /// `a0_language_main` in the C API). A program that runs ends the process with its own status.
+    pub fn run_status(&self, args: &[String]) -> u8 {
         let Some(inv) = self.parse_args(args) else {
             eprint!("{}", self.usage());
-            return ExitCode::from(self.exit_codes.usage);
+            return self.exit_codes.usage;
         };
         if inv.command == Command::Lsp {
             let input = Box::new(std::io::BufReader::new(std::io::stdin()));
             let code = self.serve_lsp(input, &mut std::io::stdout());
-            return ExitCode::from(code);
+            return code;
         }
         if inv.command == Command::Repl {
-            return ExitCode::from(repl::repl(self));
+            return repl::repl(self);
         }
         if inv.command == Command::Dap {
             let input = Box::new(std::io::BufReader::new(std::io::stdin()));
-            return ExitCode::from(dap::serve(self, input, Box::new(std::io::stdout())));
+            return dap::serve(self, input, Box::new(std::io::stdout()));
         }
         if inv.command == Command::Explain {
             return match self.codes.explain(&inv.file) {
                 Some(c) => {
                     print!("{}", c.describe(&inv.file));
-                    ExitCode::SUCCESS
+                    0
                 }
                 None => {
                     eprintln!("{}: no error has the code `{}`", self.name, inv.file);
-                    ExitCode::from(self.exit_codes.usage)
+                    self.exit_codes.usage
                 }
             };
         }
@@ -271,7 +277,7 @@ impl Language {
             Ok(t) => t,
             Err(e) => {
                 eprintln!("{}: cannot read {}: {e}", self.name, inv.file);
-                return ExitCode::from(self.exit_codes.io);
+                return self.exit_codes.io;
             }
         };
         let mut sources = SourceMap::new();
@@ -292,13 +298,13 @@ impl Language {
             Err(CompileError::Diagnostics(d)) => {
                 let d = self.codes.apply(&d);
                 eprint!("{}", d.render_with(&sources, &RenderOptions::stderr()));
-                return ExitCode::from(self.exit_codes.compile);
+                return self.exit_codes.compile;
             }
             Err(CompileError::Messages(messages)) => {
                 for m in messages {
                     eprintln!("{}", m.text);
                 }
-                return ExitCode::from(self.exit_codes.compile);
+                return self.exit_codes.compile;
             }
         };
         // The REPL runs its program for each input; warnings would come each time.
@@ -313,14 +319,14 @@ impl Language {
         let module = match program {
             Program::Hir(m) if inv.command == Command::Hir => {
                 print!("{m}");
-                return ExitCode::SUCCESS;
+                return 0;
             }
             Program::Ir(_) if inv.command == Command::Hir => {
                 eprintln!(
                     "{}: this language compiles to the core IR, not the HIR",
                     self.name
                 );
-                return ExitCode::from(self.exit_codes.usage);
+                return self.exit_codes.usage;
             }
             Program::Ir(m) => m,
             // Debug information describes the program as written: no inlining.
@@ -341,7 +347,7 @@ impl Language {
         match inv.command {
             Command::Ir => {
                 print!("{module}");
-                ExitCode::SUCCESS
+                0
             }
             Command::Run => {
                 let symbols = match self.host_symbols {
@@ -370,7 +376,7 @@ impl Language {
             Command::Build => {
                 let Some(target) = a0_native::Target::host() else {
                     eprintln!("{}: native code is not supported on this host", self.name);
-                    return ExitCode::from(self.exit_codes.internal);
+                    return self.exit_codes.internal;
                 };
                 let output = executable_name(&inv.file, inv.output.as_deref(), target.exe_suffix());
                 let mut opts = a0_native::BuildOptions::default();
@@ -389,7 +395,7 @@ impl Language {
                     }
                 }
                 match a0_native::build_executable(&module, target, Path::new(&output), &opts) {
-                    Ok(()) => ExitCode::SUCCESS,
+                    Ok(()) => 0,
                     Err(d) => self.internal_error(&d, &sources),
                 }
             }
@@ -443,9 +449,9 @@ impl Language {
         lsp::serve(self, input, output)
     }
 
-    fn internal_error(&self, d: &Diagnostics, sources: &SourceMap) -> ExitCode {
+    fn internal_error(&self, d: &Diagnostics, sources: &SourceMap) -> u8 {
         eprint!("{}", d.render_with(sources, &RenderOptions::stderr()));
-        ExitCode::from(self.exit_codes.internal)
+        self.exit_codes.internal
     }
 
     /// Parses a command line, or returns `None` if it is not valid.

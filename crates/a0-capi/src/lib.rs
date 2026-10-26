@@ -15,6 +15,7 @@
 #![allow(clippy::missing_safety_doc)]
 
 mod hir;
+mod language;
 
 pub use hir::{A0HirBuilder, A0Str};
 

@@ -1,174 +1,74 @@
-"""The command line of a language written in Python, like the Rust driver's (`a0_driver`):
+"""The command line of a language written in Python: A0's driver, the same as a Rust language's
+(`a0_driver`), through the C API (`a0_language_main`, D67):
 
-    lang run <file> [args...]      run the program (`-` reads it from standard input)
+    lang run <file> [args...]      run the program, at native speed (`-` reads it from standard
+                                   input; `A0_INTERP=1` interprets it)
     lang build <file> [-o output]  compile it to a native executable for the host
     lang hir <file>                print the HIR
     lang ir <file>                 print the core IR
-    lang repl                      a read-eval-print loop
+    lang lsp                       the language server (docs/editors.md)
+    lang dap                       the debugger (docs/debugging.md)
+    lang repl                      a read-eval-print loop (docs/repl.md)
+    lang explain <code>            explain an error code
 
 A language calls `sys.exit(main("lang", compile))`, where `compile(text)` returns the program as an
 `a0.Hir` or raises `a0.Error` with spans into `text`. Errors are shown against the source the way
-the `a0` tool shows them; a program's exit status is passed through. For the REPL, `grammar` (an
-`a0.Grammar`) tells declarations from statements and unfinished lines, and `repl_main` is where a
-language whose statements live in `main` puts them (`"fn main() {\\n{}}\\n"`), as in the Rust
-driver (`docs/repl.md`).
+the `a0` tool shows them; a program's exit status is passed through. `grammar` (an `a0.Grammar`)
+gives the language server its outline, definitions and completion, and lets the REPL tell
+declarations from statements and unfinished lines; `repl_main` is where a language whose
+statements live in `main` puts them (`"fn main() {\n{}}\n"`), as in the Rust driver.
 """
 
-import os
-import subprocess
+import ctypes
 import sys
+import traceback
+from ctypes import CFUNCTYPE, POINTER, c_char_p, c_int, c_size_t, c_void_p
 
 import a0
 
-USAGE = """usage: {name} <command> <file>
-
-commands:
-  run <file> [args...]   run the program
-  build <file> [-o out]  compile it to a native executable
-  hir <file>             print the high-level IR
-  ir <file>              print the core IR
-  repl                   a read-eval-print loop
-"""
+_compile_fn = CFUNCTYPE(c_void_p, c_void_p, c_void_p, c_size_t, POINTER(c_void_p))
+_language_new = a0._fn("a0_language_new", c_void_p, c_char_p, c_size_t)
+_language_set_compiler = a0._fn("a0_language_set_compiler", None, c_void_p, _compile_fn, c_void_p)
+_language_set_grammar = a0._fn("a0_language_set_grammar", None, c_void_p, c_char_p, c_size_t)
+_language_set_repl_main = a0._fn("a0_language_set_repl_main", None, c_void_p, c_char_p, c_size_t)
+_language_main = a0._fn("a0_language_main", c_int, c_void_p, POINTER(c_char_p), c_size_t)
+_language_free = a0._fn("a0_language_free", None, c_void_p)
 
 
 def main(name, compile, argv=None, grammar=None, repl_main=None):
     """Runs the command line `argv` (by default the process's, without the program name) and
     returns the exit status."""
     args = sys.argv[1:] if argv is None else list(argv)
-    if args == ["repl"]:
-        return repl(name, compile, grammar, repl_main)
-    if len(args) < 2 or args[0] not in ("run", "build", "hir", "ir"):
-        sys.stderr.write(USAGE.format(name=name))
-        return 2
-    command, path, rest = args[0], args[1], args[2:]
-    output = None
-    if command == "build" and len(rest) == 2 and rest[0] == "-o":
-        output = rest[1]
-    elif command != "run" and rest:
-        sys.stderr.write(USAGE.format(name=name))
-        return 2
-    try:
-        if path == "-":
-            text = sys.stdin.read()
-            path = "<repl>" if os.environ.get("A0_REPL") else "<stdin>"
-        else:
-            with open(path, encoding="utf-8") as f:
-                text = f.read()
-    except OSError as e:
-        sys.stderr.write(f"{name}: cannot read {path}: {e.strerror}\n")
-        return 2
-    try:
-        hir = compile(text)
-    except a0.Error as e:
-        sys.stderr.write(e.render(path, text))
-        return 1
-    warnings = hir.warnings
-    if warnings is not None and not os.environ.get("A0_REPL"):
-        sys.stderr.write(warnings.render(path, text) + "\n")
-    if command == "hir":
-        sys.stdout.write(str(hir))
-        return 0
-    try:
-        module = hir.lower()
-        if command == "ir":
-            sys.stdout.write(str(module))
-            return 0
-        if command == "run":
-            # Compiled into memory, as the Rust driver runs programs; `A0_INTERP=1` interprets.
-            if os.environ.get("A0_INTERP", "0") not in ("", "0"):
-                return module.run([path] + rest)
-            return module.run_jit([path] + rest)
-        if output is None:
-            output = os.path.splitext(os.path.basename(path))[0]
-        if sys.platform == "win32" and not os.path.splitext(output)[1]:
-            output += ".exe"
-        module.build_executable(output)
-        return 0
-    except a0.Error as e:
-        sys.stderr.write(e.render(path, text))
-        return 1
 
-
-def _ends_early(grammar, text):
-    """Whether the only syntax errors of `text` are at its end: an input not finished yet."""
-    try:
-        grammar.parse(text)
-        return False
-    except a0.Error as e:
-        end = len(text.rstrip().encode())
-        return all(d.span is not None and d.span[0] >= end for d in e.diagnostics)
-
-
-def _parses(grammar, text):
-    try:
-        grammar.parse(text)
-        return True
-    except a0.Error:
-        return False
-
-
-def repl(name, compile, grammar, repl_main):
-    """The read-eval-print loop: the inputs make a program, run again in a process of its own for
-    each input; what it prints beyond what it printed before is shown, and an input that does not
-    compile or makes the program fail is dropped (`docs/repl.md`)."""
-    interactive = sys.stdin.isatty()
-    inputs = []  # (text, is a declaration)
-    seen_out, seen_err = b"", b""
-    pending = ""
-
-    def program(extra=None):
-        items = inputs + ([extra] if extra else [])
-        if repl_main is None:
-            return "".join(t for t, _ in items)
-        declarations = "".join(t for t, d in items if d)
-        return declarations + repl_main.replace("{}", "".join(t for t, d in items if not d))
-
-    if interactive:
-        print(f"{name} (A0): :quit to leave")
-    while True:
-        if interactive:
-            sys.stdout.write("> " if not pending else ". ")
-            sys.stdout.flush()
-        line = sys.stdin.readline()
-        if not line:
-            break
-        line = line.rstrip("\n")
-        if not pending:
-            if line.strip() in (":quit", ":q", ":exit"):
-                break
-            if line.strip() == ":show":
-                for i, text in enumerate(program().splitlines()):
-                    print(f"{i + 1:4} | {text}")
-                continue
-            if not line.strip():
-                continue
-        pending += line + "\n"
-        declarations = "".join(t for t, d in inputs if d) + pending
-        as_statement = program((pending, False))
-        if grammar is not None and line.strip():
-            if _ends_early(grammar, as_statement) or (
-                repl_main is not None and _ends_early(grammar, declarations)
-            ):
-                continue
-        declaration = repl_main is not None and grammar is not None and _parses(grammar, declarations)
-        text = program((pending, declaration))
-        entered, pending = pending, ""
+    def compiler(_context, text, length, diags):
+        source = ctypes.string_at(text, length).decode("utf-8", "replace")
         try:
-            compile(text)
+            hir = compile(source)
         except a0.Error as e:
-            sys.stderr.write(e.render("<repl>", text))
-            continue
-        run = subprocess.run(
-            [sys.executable, os.path.abspath(sys.argv[0]), "run", "-"],
-            input=text.encode(),
-            capture_output=True,
-            env={**os.environ, "A0_REPL": "1"},
-        )
-        for before, now, stream in ((seen_out, run.stdout, sys.stdout), (seen_err, run.stderr, sys.stderr)):
-            new = now[len(before):] if now.startswith(before) else now
-            stream.write(new.decode("utf-8", "replace"))
-            stream.flush()
-        if run.returncode == 0:
-            inputs.append((entered, declaration))
-            seen_out, seen_err = run.stdout, run.stderr
-    return 0
+            # The driver takes the diagnostics over.
+            diags[0], e._handle = e._handle, None
+            return None
+        except Exception:
+            traceback.print_exc()
+            return None
+        return hir._take()
+
+    # Kept in a local for as long as the driver runs: ctypes must not free the callback.
+    callback = _compile_fn(compiler)
+    data = name.encode()
+    language = _language_new(data, len(data))
+    try:
+        _language_set_compiler(language, callback, None)
+        if grammar is not None:
+            data = grammar.text.encode()
+            _language_set_grammar(language, data, len(data))
+        if repl_main is not None:
+            data = repl_main.encode()
+            _language_set_repl_main(language, data, len(data))
+        sys.stdout.flush()
+        sys.stderr.flush()
+        encoded = [a.encode() for a in args]
+        argv = (c_char_p * max(len(encoded), 1))(*encoded)
+        return _language_main(language, argv, len(encoded))
+    finally:
+        _language_free(language)

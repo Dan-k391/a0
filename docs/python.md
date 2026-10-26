@@ -3,8 +3,9 @@
 `bindings/python` is a Python package, `a0`, over the C API (`docs/c-api.md`) with ctypes: no
 compiler, no dependencies, only the shared library that `cargo build -p a0-capi` builds. A language
 written in Python gets the same as one written in Rust: grammars and syntax trees, the HIR builder
-that resolves names, infers and checks types and reports errors, the interpreter, native
-executables, and the collector. [Pebble](../bindings/python/examples/pebble) is an example: a small
+that resolves names, infers and checks types and reports errors, the JIT, the interpreter, native
+executables and the collector, and the driver's commands: the language server, the debugger and
+the REPL. [Pebble](../bindings/python/examples/pebble) is an example: a small
 typed language with functions, arrays and `for` loops, whose compiler is about 230 lines of Python.
 
 ```
@@ -60,19 +61,30 @@ Errors are `a0.Error`: `diagnostics` lists them (code, message, span), `str(erro
 line, and `error.render(name, source)` shows them against the source with the lines they are
 about, as the `a0` tool does.
 
-`a0.driver.main(name, compile)` is the command line of a language, like the Rust driver's:
-`run <file> [args...]`, `build <file> [-o out]`, `hir <file>` and `ir <file>`, with errors and
-warnings rendered against the file. `compile(text)` returns an `a0.Hir` or raises `a0.Error`.
-`run` compiles the program into memory and runs it at native speed (`Module.run_jit`;
-`A0_INTERP=1` interprets it with `Module.run`). A panic prints its message and stack trace on
-standard error and gives 101, as a native executable does, so a language behaves the same in
-every mode.
+`a0.driver.main(name, compile, grammar=..., repl_main=...)` is the command line of a language: the
+Rust driver itself, reached through the C API (`a0_language_main`, D67), so a Python language has
+every command a Rust one has: `run <file> [args...]` (at native speed; `A0_INTERP=1` interprets),
+`build <file> [-o out]`, `hir`, `ir`, `lsp` (the language server, `docs/editors.md`), `dap` (the
+debugger, `docs/debugging.md`), `repl` and `explain <code>`. `compile(text)` returns an `a0.Hir` or
+raises `a0.Error`; the driver calls it whenever it needs the program, the language server on every
+pause in editing. `grammar` (an `a0.Grammar`) gives the language server its outline, definitions
+and completion. A panic prints its message and stack trace on standard error and gives 101, as a
+native executable does, so a language behaves the same in every mode. In VS Code, the entry for a
+Python language runs Python:
+
+```json
+{ "extensions": [".pb"], "command": "python", "args": ["${workspaceFolder}/pebble.py", "lsp"] }
+```
+
+`Module.run` and `Module.run_jit` run a module from Python directly, interpreted and at native
+speed.
 
 ## Testing
 
 `bindings/python/tests/test_a0.py` tests the bindings and runs Pebble's programs interpreted, in the JIT
 (also under GC stress and without the optimizer) and native. `cargo test -p a0-capi --test python` runs
-it against the library cargo just built, on every CI platform:
+it against the library cargo just built, on every CI platform, and tests Pebble's language server
+and debugger with the driver's own clients:
 
 ```
 cargo test -p a0-capi --test python
@@ -81,8 +93,6 @@ A0_LIBRARY=target/debug/a0_capi.dll python -m unittest discover -s bindings/pyth
 
 ## Not yet
 
-- The language server: the driver's server takes a Rust compile function, and the C API does not
-  bind the driver (D20), so a Python language has no `lsp` command. Binding the driver with a C
-  callback for compiling would give it one.
+- Programs of several files: the driver binding compiles one file (`modules` is Rust only).
 - Packaging: the package is used from the checkout; nothing is published to PyPI.
 - One thread at a time, as for the C API: the runtime and the collector keep global state.

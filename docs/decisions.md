@@ -831,3 +831,19 @@ previous version and clox (Linux, best of five): `binary_trees` 1546 → 521 ms 
 collector's share 833 → 134 ms), `zoo` 274 → 112 ms (clox 182), `method_call` 142 → 81 ms (clox
 119), `invocation` 284 → 175 ms (clox 176). The debugger shows an object's fields by name, and
 lowering now describes every struct and enum, so `any` values holding them show their fields too.
+
+## D67. The driver is bound in C with a compile callback, so Python languages get all of it
+
+v0.5 asks for the language server and the debugger for languages written in Python. Python's
+driver was a copy of the Rust driver's simple commands; the server and the debugger are thousands
+of lines that a copy would not keep up with. So the C API binds the driver itself: an opaque
+`A0Language` with a name, a grammar, a REPL template and a compile callback (`text` in, an
+`A0Hir` or diagnostics out), and `a0_language_main(l, args)`, which runs `a0_driver::Language` with
+a compile function that calls the callback. The driver takes its compiler as a plain function, so
+the callback lives in a global: one language per process, which is how drivers run anyway.
+Python's `a0.driver.main` is now a few lines over it, and Python languages have every command of
+Rust ones (`run` in the JIT, `build`, `lsp`, `dap`, `repl`, `explain`); the REPL reruns `python
+lang.py run -` by the process's own arguments. The layer rule changes: the C API may depend on
+`a0-driver`, which is the library languages build on, not a tool. `Language::run_status` returns the
+exit status as a number for it. Not covered: programs of several files (`Modules` takes Rust
+functions).

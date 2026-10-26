@@ -112,6 +112,7 @@ including what makes good diagnostics: `a0_hir_set_name_span`, `a0_hir_set_param
 `a0_hir_call_member`), methods and interfaces (`a0_hir_declare_method`, `a0_hir_implement`,
 `a0_hir_method_call`), exceptions (`a0_hir_throw`, `a0_hir_try_catch`), the codes of diagnostics (`a0_diagnostics_code`),
 HIR text, the core IR builder and text format, the interpreter (`a0_run`), the JIT (`a0_jit_run`)
-and the native backend (`a0_write_object`, `a0_build_executable`). Diagnostics render against their source the way the
-`a0` tool shows them (`a0_diagnostics_render`). Not bound: `a0-sema`, `SyntaxIndex` and the driver
-(D20). The runtime and the collector keep global state, so use A0 from one thread at a time.
+and the native backend (`a0_write_object`, `a0_build_executable`), and the driver (`a0_language_new`,
+`a0_language_main`): a language whose compiler is a C callback gets every command of a Rust
+language, the language server and the debugger included (D67). Diagnostics render against their
+source the way the `a0` tool shows them (`a0_diagnostics_render`). Not bound: `a0-sema` and `SyntaxIndex`. The runtime and the collector keep global state, so use A0 from one thread at a time.

@@ -47,7 +47,7 @@ the debugger (`docs/debugging.md`); the VS Code extension in `editors/vscode` st
 | runtime | `a0-runtime` (C in `include/`, `c/`; Rust glue) | nothing |
 | backends | `a0-interp`, `a0-native` | `a0-ir`, `a0-runtime`, `a0-target`, `a0-diag` |
 | tools | `a0` (CLI), `a0-build` (build-script helper), `a0-driver` (language drivers), `a0-playground` (the playground's engine; no native backend, builds for wasm32-wasip1) | anything |
-| C API | `a0-capi` (`include/a0.h`) | library crates, not the tools |
+| C API | `a0-capi` (`include/a0.h`) | library crates and `a0-driver` (D67), not the other tools |
 | examples | `examples/*` | anything |
 | editors | `editors/vscode` (an extension that starts `lang lsp`; JavaScript) | nothing in Rust |
 | bindings | `bindings/python` (the package `a0`, ctypes over the C API's shared library) | the C API |

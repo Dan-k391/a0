@@ -16,6 +16,8 @@ a0-native.workspace = true
 a0-runtime.workspace = true
 a0-syntax.workspace = true
 a0-hir.workspace = true
+a0-driver.workspace = true
 
 [dev-dependencies]
 cc = "1.2"
+a0-driver.workspace = true

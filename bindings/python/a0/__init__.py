@@ -182,6 +182,8 @@ class Grammar(_Owned):
         handle = _grammar_new(data, len(data), byref(diags))
         _check(diags)
         super().__init__(handle)
+        #: The grammar's text, which the driver gives the language server and the REPL.
+        self.text = text
 
     def parse(self, text):
         """The syntax tree of `text`; raises `Error` with the syntax errors."""

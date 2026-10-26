@@ -505,6 +505,30 @@ A0HirType a0_hir_member_type(A0HirBuilder *b, const char *alias, size_t alias_le
                              const char *name, size_t len, const A0HirType *args,
                              size_t arg_count);
 
+/* ---- The driver: a language's command (D67) ----------------------------------------------- *
+ * A language whose compiler is a C function gets the commands of A0's driver, the same as a
+ * language written in Rust: run (at native speed; A0_INTERP=1 interprets), build, hir, ir, lsp
+ * (the language server), dap (the debugger), repl and explain. The compiler turns the text of one
+ * source file into HIR whose spans are in that text, or returns NULL with *diags. */
+
+typedef struct A0Language A0Language;
+typedef A0Hir *(*A0CompileFn)(void *context, const char *text, size_t len, A0Diagnostics **diags);
+
+/* A language named `name` (its command, in messages and the usage text). */
+A0Language *a0_language_new(const char *name, size_t len);
+void a0_language_set_compiler(A0Language *l, A0CompileFn compile, void *context);
+/* The language's grammar (the text of its .a0g file), for the language server and the REPL. */
+void a0_language_set_grammar(A0Language *l, const char *grammar, size_t len);
+/* For a language whose statements live in a function: the REPL's program, with {} where the
+ * statements typed so far go ("fn main() {
+{}}
+"). */
+void a0_language_set_repl_main(A0Language *l, const char *program, size_t len);
+/* Runs the command line `args` (without the program's name) and returns the exit status; a
+ * program that runs ends the process with its own. One language per process. */
+int a0_language_main(const A0Language *l, const char *const *args, size_t arg_count);
+void a0_language_free(A0Language *l);
+
 #ifdef __cplusplus
 }
 #endif

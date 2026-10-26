@@ -29,7 +29,7 @@ fn the_header_matches_the_exports() {
     let mut declared = called_names(&header, " ");
     declared.extend(called_names(&header, "*"));
     let mut exported = BTreeSet::new();
-    for file in ["src/lib.rs", "src/hir.rs"] {
+    for file in ["src/lib.rs", "src/hir.rs", "src/language.rs"] {
         let source = std::fs::read_to_string(root.join(file)).unwrap();
         exported.extend(called_names(&source, "extern \"C\" fn "));
         // Functions made by macros: `leaf!(a0_hir_unit, unit)`.

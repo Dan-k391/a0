@@ -60,6 +60,10 @@ is `a0 lang <grammar> lsp`:
 { "extensions": [".calc"], "command": "a0", "args": ["lang", "${workspaceFolder}/calc.a0g", "lsp"] }
 ```
 
+A language written in Python (`docs/python.md`) runs Python:
+`{ "extensions": [".pb"], "command": "python", "args": ["${workspaceFolder}/pebble.py", "lsp"] }`.
+The debugger starts the same command with `dap` in place of `lsp`.
+
 VS Code colors names (functions, types, parameters) from semantic tokens with any theme, but keywords,
 strings, numbers and comments only through a TextMate grammar or a `semanticTokenScopes` mapping; the
 extension maps them for every language.

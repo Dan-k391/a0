@@ -115,7 +115,8 @@ native executables and a language server:
 a0 lang examples/calc/calc.a0g run examples/calc/programs/functions.calc
 ```
 
-A language can also be written in Python, through the C API (`docs/python.md`).
+A language can also be written in Python, through the C API (`docs/python.md`), and gets the
+same driver: the JIT, native executables, the language server, the debugger and the REPL.
 [Pebble](bindings/python/examples/pebble) is a typed language with arrays whose compiler is a
 Python file:
 
