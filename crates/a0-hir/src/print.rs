@@ -14,6 +14,9 @@ pub fn print_module(m: &HirModule) -> String {
         out: String::new(),
     };
     let _ = writeln!(p.out, "module {};", quote(&m.name));
+    if m.memory() != crate::model::Memory::Gc {
+        let _ = writeln!(p.out, "memory {};", m.memory().name());
+    }
     // Types first, as the text format declares them before anything that uses them; otherwise
     // in declaration order, so printing what was parsed gives the same text.
     let is_type = |i: &&Item| matches!(i, Item::Struct(_) | Item::Enum(_) | Item::Interface(_));

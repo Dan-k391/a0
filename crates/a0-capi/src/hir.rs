@@ -636,6 +636,20 @@ pub unsafe extern "C" fn a0_hir_report_fix(
 // ---------------------------------------------------------------------------------- declarations
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn a0_hir_set_memory(b: *mut A0HirBuilder, mode: *const c_char, len: usize) {
+    let mode = unsafe { text(mode, len) };
+    unsafe {
+        with_unit(b, |h| {
+            match a0_hir::Memory::from_name(&mode) {
+                Some(m) => h.b.set_memory(m),
+                None => h.fail(format!("'{mode}' is not a memory mode (gc, manual)")),
+            }
+            Some(())
+        })
+    }
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn a0_hir_set_struct_inline(b: *mut A0HirBuilder, s: u32) {
     unsafe {
         with_unit(b, |h| {

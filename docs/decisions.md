@@ -925,3 +925,23 @@ needs them. Unchecked access is pointer access: a language that wants an uncheck
 writes `data(a)[i]`, and everything else keeps its checks (bounds, nulls, conversions). Pointers
 into the collector's objects do not keep them alive; in a language without the collector (D72)
 that question does not arise.
+
+## D72. Without the collector: memory the program frees itself
+
+v0.6 asks that memory management be a per-language choice, with at least one mode without a
+tracing collector: manual, ownership-based or reference-counted. Reference counting would keep
+programs safe without a collector, but needs every copy of a reference counted, every temporary
+released at the right time and cycles broken, all of which lowering would have to get right
+everywhere, and it costs every program on every copy. Ownership needs a checker of its own, which
+is a language's design more than a framework's. Manual memory is what C and C-like languages
+have, costs nothing per operation, and is a small change to what A0 already does. So a HIR module
+says `memory manual;`: lowering then roots nothing (no shadow-stack frames, no global roots, no
+spills), the runtime never collects (`a0_gc_set_manual`, called first thing), and `free(r)`
+returns any reference's memory to the allocator (`a0_gc_free`, which panics on an object freed
+twice: its type is cleared when freed). Allocation is still the runtime's size-class allocator, so
+strings, arrays, maps and closures work unchanged and a program frees them when it chooses. Since
+nothing is traced, inline structs and pointers may hold references in this mode.
+
+Garbage-collected programs are unaffected: the mode changes lowering only when chosen. The random
+program generator makes one program in four `manual`, so lowering without frames is checked
+against the interpreter and native code like everything else.

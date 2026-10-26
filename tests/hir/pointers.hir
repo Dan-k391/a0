@@ -13,7 +13,7 @@
 module "pointers";
 
 extern fn malloc(int) -> ptr<i32>;
-extern fn free(ptr<i32>);
+extern fn `free`(ptr<i32>);
 extern fn memset(ptr<u8>, int, int) -> ptr<u8>;
 extern fn strlen(ptr<u8>) -> int;
 
@@ -31,7 +31,7 @@ fn main() -> int {
   print("sum " + str(p[0]) + "+" + str(p[1]) + "+" + str(p[2]) + "+" + str(p[3]) + " = " + str(p[0] + p[1] + p[2] + p[3]) + "\n");
   let q = offset(p, 2);
   print("offset " + str((q as int) - (p as int)) + " bytes, size_of i32 " + str(size_of::<i32>()) + ", Pair " + str(size_of::<Pair>()) + ", Rgb " + str(size_of::<Rgb>()) + "\n");
-  free(p);
+  `free`(p);
 
   let x = 5;
   let px = addr(x);

@@ -32,7 +32,9 @@ typedef struct Header {
 
 typedef struct BigObject {
     A0_WORD_PTR(struct BigObject *, next);
-    uint64_t size; /* everything allocated, BigObject included */
+    A0_WORD_PTR(struct BigObject *, prev); /* so that `a0_gc_free` unlinks one at once */
+    uint64_t size;                         /* everything allocated, BigObject included */
+    uint64_t reserved;
 } BigObject;
 
 #define HEADER(p) ((Header *)(p) - 1)

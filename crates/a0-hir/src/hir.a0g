@@ -14,7 +14,8 @@ error "unterminated string" /"([^"\\\n]|\\.)*/;
 unknown "unexpected character";
 
 module = "module" name:STRING ~ "expected the module name as a string" ";" ~ "expected ';'"
-         (!EOF item)* EOF;
+         memory:memory_decl? (!EOF item)* EOF;
+memory_decl = "memory" ~ "expected 'memory'" mode:NAME ~ "expected `gc` or `manual`" ";" ~ "expected ';'";
 
 item @inline @recover(before "struct" "enum" "interface" "impl" "global" "extern" "fn")
     = struct_decl | enum_decl | interface_decl | impl_decl | global_decl | extern_decl | fn_decl;

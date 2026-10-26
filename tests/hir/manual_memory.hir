@@ -1,0 +1,48 @@
+// A program that manages its memory itself: no collector, no shadow stack, and `free` for what it
+// allocates. Inline structs and pointers may hold references, which nothing traces. Freeing an
+// object twice is caught.
+// expect-stdout: list 1 2 3 sum 6
+// expect-stdout: names ann, bo
+// expect-stdout: freed 3 nodes
+// expect-stderr: panic: freed twice
+// expect-stderr:     at main (tests/hir/manual_memory.hir:46:3)
+// expect-exit: 101
+module "manual_memory";
+memory manual;
+
+struct Node { value: int, next: Node? }
+inline struct Named { name: string, age: int }
+
+fn main() -> int {
+  let head: Node? = null<Node>;
+  let i = 3;
+  while i > 0 {
+    head = new Node { value: i, next: head } as Node?;
+    i = i - 1;
+  }
+  let text = "list";
+  let sum = 0;
+  let at = head;
+  while at != null<Node> {
+    text = text + " " + str(at!.value);
+    sum = sum + at!.value;
+    at = at!.next;
+  }
+  print(text + " sum " + str(sum) + "\n");
+  let people = [new Named { name: "ann", age: 30 }, new Named { name: "bo", age: 4 }];
+  let p = data(people);
+  print("names " + p[0].name + ", " + p[1].name + "\n");
+  let freed = 0;
+  let node = head;
+  while node != null<Node> {
+    let next = node!.next;
+    free(node!);
+    freed = freed + 1;
+    node = next;
+  }
+  print("freed " + str(freed) + " nodes\n");
+  let once = new Node { value: 0, next: null<Node> };
+  free(once);
+  free(once);
+  0
+}

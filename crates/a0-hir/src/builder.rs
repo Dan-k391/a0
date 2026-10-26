@@ -186,6 +186,8 @@ pub const KEYWORDS: &[&str] = &[
     "data",
     "addr",
     "size_of",
+    "free",
+    "memory",
 ];
 
 /// A name as the text format writes it: as is if it is an identifier and not a keyword, otherwise
@@ -565,6 +567,9 @@ impl HirBuilder {
 
     /// Whether `t` is plain data an inline struct can hold.
     fn plain_data(&self, t: TypeId) -> bool {
+        if self.m.memory == Memory::Manual {
+            return crate::builder::plain(&self.m, t) || matches!(self.m.kind(t), TypeKind::Error);
+        }
         matches!(
             self.m.kind(t),
             TypeKind::Int
@@ -871,6 +876,12 @@ impl HirBuilder {
         });
         self.add_type_name(name, Item::Struct(s));
         s
+    }
+
+    /// Chooses how the program's memory is managed (D72): by the collector (the default), or by
+    /// the program itself, which frees what it allocates with `free` and runs no collector.
+    pub fn set_memory(&mut self, memory: Memory) {
+        self.m.memory = memory;
     }
 
     /// Makes a struct inline (D70): a value whose fields live where it is used, in a variable, a
@@ -2773,7 +2784,7 @@ fn builtin_type(m: &mut HirModule, op: Builtin, args: &[ExprId]) -> Typed {
         | Builtin::Eprint
         | Builtin::Exit
         | Builtin::Panic => 1,
-        Builtin::FieldNames | Builtin::Data | Builtin::Addr => 1,
+        Builtin::FieldNames | Builtin::Data | Builtin::Addr | Builtin::Free => 1,
         Builtin::Offset => 2,
         Builtin::Push
         | Builtin::Has
@@ -2845,6 +2856,23 @@ fn builtin_type(m: &mut HirModule, op: Builtin, args: &[ExprId]) -> Typed {
             TypeKind::Error => TypeId::ERROR,
             _ => return bad(m, "needs a map"),
         },
+        Builtin::Free => {
+            if m.memory == Memory::Gc {
+                return Err(TypeErr::At(
+                    Some(args[0]),
+                    Problem::new(
+                        code::MANUAL_ONLY,
+                        "`free` is for programs that manage their memory themselves",
+                    )
+                    .label("the collector frees this when nothing refers to it")
+                    .help("remove it, or declare the program's memory `manual`"),
+                ));
+            }
+            if !(m.is_reference(t0) || matches!(m.kind(t0), TypeKind::Never | TypeKind::Error)) {
+                return bad(m, "frees a reference");
+            }
+            TypeId::UNIT
+        }
         Builtin::Offset => match m.kind(t0).clone() {
             TypeKind::Ptr(_) => {
                 expect(m, args[1], TypeId::INT)?;
@@ -2979,6 +3007,10 @@ pub(crate) fn testable(m: &HirModule, t: TypeId) -> bool {
 /// Whether a value of type `t` is plain data: no reference the collector must see, so that it can
 /// be pointed at and copied as bytes.
 pub(crate) fn plain(m: &HirModule, t: TypeId) -> bool {
+    // Without the collector, references are plain addresses too.
+    if m.memory == Memory::Manual && (m.is_reference(t) || t == TypeId::ANY) {
+        return true;
+    }
     matches!(
         m.kind(t),
         TypeKind::Int

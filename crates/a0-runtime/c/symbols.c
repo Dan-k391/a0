@@ -54,6 +54,8 @@ const A0Symbol a0_rt_symbols[] = {
     SYM(a0_gc_frame_pop),
     SYM(a0_gc_add_root),
     SYM(a0_gc_collect),
+    SYM(a0_gc_set_manual),
+    SYM(a0_gc_free),
     SYM(a0_gc_collections),
     SYM(a0_gc_live_objects),
     SYM(a0_panic_null),

@@ -117,6 +117,8 @@ codes! {
         "An inline struct's value is its bytes, with no identity and no type information of its own, so it cannot be compared with `==`, held as an `any` or a map's value, or used as an interface. Compare its fields, or use a struct that is not inline.";
     NO_ADDRESS = "E2025", "cannot take the address",
         "A pointer can point at a variable, a field or an element that holds plain data: a number, a boolean, a pointer or an inline struct. Other values (references, `any`) have no address a pointer can hold, and a value that is not stored anywhere has none at all. Store it in a variable first.";
+    MANUAL_ONLY = "E2026", "only without the collector",
+        "Freeing memory is for programs that manage it themselves (`memory manual`): with the collector, an object lives as long as something refers to it, and freeing it would leave those references pointing at nothing.";
 
     OUTSIDE_LOOP = "E3001", "outside a loop",
         "Leaving or continuing a loop is only possible inside a loop.";

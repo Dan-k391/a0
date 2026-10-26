@@ -1176,14 +1176,27 @@ impl Gen {
 }
 
 fn generate(seed: u64) -> String {
-    Gen {
+    let program = Gen {
         rng: Rng::new(seed),
         funcs: Vec::new(),
         current: 0,
         cost: 0,
         fresh: 0,
     }
-    .program()
+    .program();
+    // One program in four manages its memory itself: no collector, no frames, nothing freed.
+    if seed % 4 == 3 {
+        program.replacen(
+            ";
+",
+            ";
+memory manual;
+",
+            1,
+        )
+    } else {
+        program
+    }
 }
 
 /// Runs a command, killing it after a minute so that a miscompiled loop fails the test.
@@ -1352,6 +1365,7 @@ fn the_generator_is_deterministic_and_varied() {
     for feature in [
         ": P",
         ".a = ",
+        "memory manual",
         "= addr(",
         "filled(",
         "array<bool>",

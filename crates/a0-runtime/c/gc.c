@@ -27,6 +27,8 @@ static size_t bytes_allocated;
 #define MIN_HEAP (1024 * 1024)
 static size_t next_gc = MIN_HEAP;
 static int stress = -1;
+/* A program that manages its memory itself (`a0_gc_set_manual`): nothing is ever collected. */
+static int manual;
 static int64_t collections;
 static int64_t live_objects;
 
@@ -93,6 +95,7 @@ static void maybe_collect(size_t incoming) {
         if (enabled("A0_GC_STATS")) atexit(print_stats);
     }
     if (bytes_allocated > peak_bytes) peak_bytes = bytes_allocated;
+    if (manual) return;
     if (stress || bytes_allocated + incoming > next_gc) a0_gc_collect();
 }
 
@@ -187,6 +190,7 @@ void *a0_gc_alloc(const A0Type *type, size_t payload_size) {
         size += sizeof(BigObject);
         BigObject *big = (BigObject *)check_address(calloc(1, size), size);
         big->next = big_objects;
+        if (big_objects != NULL) big_objects->prev = big;
         big->size = size;
         big_objects = big;
         h = (Header *)(big + 1);
@@ -385,6 +389,7 @@ void a0_gc_collect(void) {
             link = &big->next;
         } else {
             *link = big->next;
+            if (big->next != NULL) big->next->prev = big->prev;
             finalize(PAYLOAD(h));
             bytes_allocated -= big->size;
             free(big);
@@ -398,6 +403,30 @@ void a0_gc_collect(void) {
      * 1 / (GROWTH - 1), and the heap peaks at about GROWTH times the live data. */
     size_t want = bytes_allocated * GROWTH;
     next_gc = want < MIN_HEAP ? MIN_HEAP : want;
+}
+
+void a0_gc_set_manual(void) { manual = 1; }
+
+void a0_gc_free(void *object, uint64_t loc, void *frame) {
+    if (object == NULL) return;
+    Header *h = HEADER(object);
+    if (h->type == NULL) a0_rt_fail("freed twice", loc, frame);
+    finalize(object);
+    if (h->size != 0) {
+        bytes_allocated -= h->size;
+        object_cell_free(h, h->size);
+        return;
+    }
+    BigObject *big = (BigObject *)h - 1;
+    if (big->prev != NULL) {
+        big->prev->next = big->next;
+    } else {
+        big_objects = big->next;
+    }
+    if (big->next != NULL) big->next->prev = big->prev;
+    bytes_allocated -= big->size;
+    h->type = NULL;
+    free(big);
 }
 
 int64_t a0_gc_collections(void) { return collections; }

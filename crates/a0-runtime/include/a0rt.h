@@ -254,6 +254,10 @@ void a0_gc_frame_pop(int64_t slots);
  * (A0_WORD_ANY). */
 void a0_gc_add_root(void *address, int64_t word_kind);
 void a0_gc_collect(void);
+/* For a program that manages its memory itself (`memory manual` in the HIR): from now on nothing
+ * is collected, and objects live until `a0_gc_free` (which panics on an object freed twice). */
+void a0_gc_set_manual(void);
+void a0_gc_free(void *object, uint64_t loc, void *frame);
 /* Number of collections so far (for tests and statistics). */
 int64_t a0_gc_collections(void);
 /* Number of live objects after the last collection. */

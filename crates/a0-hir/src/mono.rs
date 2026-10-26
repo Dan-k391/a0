@@ -19,7 +19,11 @@ pub(crate) fn monomorphize(m: &HirModule) -> Result<Option<HirModule>, Diagnosti
     }
     let mut mono = Mono {
         m,
-        out: HirModule::new(&m.name),
+        out: {
+            let mut out = HirModule::new(&m.name);
+            out.memory = m.memory;
+            out
+        },
         origin: HashMap::new(),
         structs: HashMap::new(),
         enums: HashMap::new(),

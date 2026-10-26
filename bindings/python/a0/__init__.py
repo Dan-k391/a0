@@ -431,6 +431,7 @@ HIR_FUNCTIONS = {
     "report_fix": "suus:v",
     "declare_struct": "sN:u",
     "set_struct_inline": "u:v",
+    "set_memory": "s:v",
     "add_field": "usu:u",
     "declare_enum": "sN:u",
     "add_variant": "usU:u",

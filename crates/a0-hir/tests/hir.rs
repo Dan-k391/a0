@@ -176,6 +176,12 @@ fn main() -> int { let v = new V { x: 1 }; v as any; 0 }",
             "it is not a variable, a field or an element",
         ),
         (
+            "struct N { v: int }
+fn main() -> int { free(new N { v: 1 }); 0 }",
+            "E2026",
+            "`free` is for programs that manage their memory themselves",
+        ),
+        (
             "fn main() -> int { break; 0 }",
             "E3001",
             "`break` outside of a loop",

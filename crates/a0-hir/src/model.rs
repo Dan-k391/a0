@@ -159,6 +159,30 @@ pub enum TypeTag {
     Ptr,
 }
 
+/// How a program's memory is managed: by the collector, or by the program, which frees what it
+/// allocates (`free`) and has no collector at all (D72).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[repr(u8)]
+pub enum Memory {
+    Gc,
+    Manual,
+}
+
+impl Memory {
+    pub fn name(self) -> &'static str {
+        match self {
+            Memory::Gc => "gc",
+            Memory::Manual => "manual",
+        }
+    }
+
+    pub fn from_name(s: &str) -> Option<Memory> {
+        [Memory::Gc, Memory::Manual]
+            .into_iter()
+            .find(|m| m.name() == s)
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[repr(u8)]
 pub enum BinOp {
@@ -272,6 +296,7 @@ builtins! {
     Offset = "offset",
     Data = "data",
     Addr = "addr",
+    Free = "free",
     Substr = "substr",
     ByteAt = "byte_at",
     Str = "str",
@@ -595,6 +620,8 @@ pub enum Item {
 #[derive(Clone)]
 pub struct HirModule {
     pub(crate) name: String,
+    /// How the program's memory is managed (D72).
+    pub(crate) memory: Memory,
     pub(crate) types: Vec<TypeKind>,
     pub(crate) type_map: HashMap<TypeKind, TypeId>,
     pub(crate) structs: Vec<StructDef>,
@@ -645,6 +672,7 @@ impl HirModule {
     pub(crate) fn new(name: &str) -> HirModule {
         let mut m = HirModule {
             name: name.to_string(),
+            memory: Memory::Gc,
             types: Vec::new(),
             type_map: HashMap::new(),
             structs: Vec::new(),
@@ -1067,6 +1095,11 @@ impl HirModule {
             Item::Interface(i) => &self.interfaces[i.index()].type_params,
             Item::Global(_) | Item::Extern(_) => &[],
         }
+    }
+
+    /// How the program's memory is managed.
+    pub fn memory(&self) -> Memory {
+        self.memory
     }
 
     /// The inline struct a type is, if it is one.

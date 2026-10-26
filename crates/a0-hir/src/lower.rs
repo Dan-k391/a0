@@ -105,6 +105,8 @@ pub fn lower_with(m: &HirModule, options: LowerOptions) -> Result<a0_ir::Module,
 struct Runtime {
     type_new: IrFunc,
     gc_new: IrFunc,
+    gc_set_manual: IrFunc,
+    gc_free: IrFunc,
     frame_push: IrFunc,
     frame_pop: IrFunc,
     add_root: IrFunc,
@@ -169,6 +171,8 @@ impl Runtime {
         Runtime {
             type_new: f("a0_type_new", &[Ptr, I64, I64, Ptr, Ptr], Some(Ptr)),
             gc_new: f("a0_gc_new", &[Ptr], Some(Ptr)),
+            gc_set_manual: f("a0_gc_set_manual", &[], None),
+            gc_free: f("a0_gc_free", &[Ptr], None),
             frame_push: f("a0_gc_frame_push", &[I64], Some(Ptr)),
             frame_pop: f("a0_gc_frame_pop", &[I64], None),
             add_root: f("a0_gc_add_root", &[Ptr, I64], None),
@@ -480,8 +484,10 @@ impl<'a> Lowerer<'a> {
         }) as i64
     }
 
+    /// Whether values of type `t` are the collector's to see: none are when the program manages
+    /// its memory itself.
     fn is_gc(&self, t: TypeId) -> bool {
-        self.m.is_reference(t) || t == TypeId::ANY
+        self.m.memory() == Memory::Gc && (self.m.is_reference(t) || t == TypeId::ANY)
     }
 
     /// A function's IR signature: the closure's environment if `env`, then where to write a
@@ -1154,6 +1160,7 @@ impl<'a> Lowerer<'a> {
         self.b.hide_from_traces(main);
         self.b.set_span(None);
         self.b.set_inline(None);
+        let manual = self.m.memory() == Memory::Manual;
         let descs: Vec<(IrGlobal, IrGlobal, IrGlobal, usize, usize, Option<IrGlobal>)> = self
             .descs
             .iter()
@@ -1189,6 +1196,10 @@ impl<'a> Lowerer<'a> {
             })
             .collect();
         self.b.begin_function(main);
+        // A program that manages its memory itself runs no collector, from the first allocation.
+        if manual {
+            self.b.call(self.rt.gc_set_manual, &[]);
+        }
         for (global, name, layout, name_len, words, family) in descs {
             let np = self.b.global_addr(name);
             let nl = self.b.iconst(Type::I64, name_len as i64);
@@ -1218,7 +1229,9 @@ impl<'a> Lowerer<'a> {
                 self.b.call(self.rt.add_root, &[a, k]);
             }
         }
-        if let Some((_, value)) = self.exception {
+        if let Some((_, value)) = self.exception
+            && !manual
+        {
             let a = self.b.global_addr(value);
             let k = self.b.iconst(Type::I64, WORD_ANY as i64);
             self.b.call(self.rt.add_root, &[a, k]);
@@ -1237,8 +1250,10 @@ impl<'a> Lowerer<'a> {
         }
         for (g, bytes, len) in strings {
             let a = self.b.global_addr(g);
-            let k = self.b.iconst(Type::I64, WORD_REF as i64);
-            self.b.call(self.rt.add_root, &[a, k]);
+            if !manual {
+                let k = self.b.iconst(Type::I64, WORD_REF as i64);
+                self.b.call(self.rt.add_root, &[a, k]);
+            }
             let p = self.b.global_addr(bytes);
             let n = self.b.iconst(Type::I64, len as i64);
             let s = self.b.call(self.rt.string_new, &[p, n]).unwrap();
@@ -1369,7 +1384,7 @@ impl<'a> Lowerer<'a> {
     }
 
     fn clear_slots(&mut self, from: u32, to: u32) {
-        if from >= to {
+        if from >= to || self.st().frame.is_none() {
             return;
         }
         let zero = self.b.iconst(Type::I64, 0);
@@ -1403,7 +1418,12 @@ impl<'a> Lowerer<'a> {
         self.b.cast(Opcode::Inttoptr, p, Type::Ptr)
     }
 
+    /// Roots `v` in slot `s` (nothing to do for a program without the collector, whose functions
+    /// have no frames).
     fn store_slot(&mut self, s: u32, v: Value, t: TypeId) {
+        if self.st().frame.is_none() {
+            return;
+        }
         let w = self.encode(v, t);
         let a = self.slot_addr(s);
         self.b.store(w, a);
@@ -1772,10 +1792,12 @@ impl<'a> Lowerer<'a> {
             for (k, &l) in self.captures[&body].clone().iter().enumerate() {
                 let s = self.alloc_slot();
                 let w = self.load_word(env, k as u32 + 1);
-                let addr = self.slot_addr(s);
-                let tag = self.b.iconst(Type::I64, REF_TAG);
-                let tagged = self.b.or(w, tag);
-                self.b.store(tagged, addr);
+                if self.st().frame.is_some() {
+                    let addr = self.slot_addr(s);
+                    let tag = self.b.iconst(Type::I64, REF_TAG);
+                    let tagged = self.b.or(w, tag);
+                    self.b.store(tagged, addr);
+                }
                 let var = self.b.declare_var(&m.locals[l.index()].name, Type::Ptr);
                 self.describe_local(var, l, true);
                 let bx = self.b.cast(Opcode::Inttoptr, w, Type::Ptr);
@@ -1996,6 +2018,10 @@ impl<'a> Lowerer<'a> {
     /// makes no runtime calls at all.
     fn needs_frame(&self, body: BodyId, closure: bool) -> bool {
         let m = self.m;
+        // Without the collector nothing is rooted.
+        if m.memory() == Memory::Manual {
+            return false;
+        }
         if closure && !self.captures[&body].is_empty() {
             return true;
         }
@@ -3169,6 +3195,10 @@ impl<'a> Lowerer<'a> {
                 V::Val(self.b.cast(Opcode::Inttoptr, w, Type::Ptr))
             }
             Builtin::Addr => unreachable!("lowered as a place, before its operand"),
+            Builtin::Free => {
+                self.b.call(self.rt.gc_free, &[vs[0].val()]);
+                V::Unit
+            }
             Builtin::Filled => {
                 let TypeKind::Array(elem) = *m.kind(ty) else {
                     return V::Never;

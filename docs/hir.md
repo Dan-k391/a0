@@ -156,8 +156,11 @@ fn main() -> int {
   reference arguments stay rooted during the call. The standard library is built on these
   (`docs/std.md`). Several modules may declare the same C function, with the same signature.
 - The entry point is `fn main() -> int` or `fn main()`; its result is the exit status.
-- Memory management is a per-module choice; `gc` (precise tracing collection) is the only mode so
-  far and the default.
+- Memory management is the program's choice (D72): `gc`, precise tracing collection, the default;
+  or `manual` (`memory manual;` after the module line, `set_memory` in the builder): no collector
+  at all (no shadow stack, no roots, nothing ever collected), and the builtin `free(r)` releases
+  an object, array, string, map or closure (an object freed twice panics). Without the collector,
+  inline structs and pointers may hold references too, since nothing traces them.
 
 ## Expressions
 
@@ -216,6 +219,7 @@ becomes an `int` (or a `float`); `any` does not convert back to a sized type dir
 | `str(x)` | format an `int`, `float`, `bool` (or `string`) as a string (floats: shortest round-trip, `1` not `1.0`) |
 | `print(s)`, `eprint(s)` | write a string to stdout / stderr (no newline added) |
 | `exit(code)`, `panic(message)` | stop the program (`panic` prints `panic: message` and the stack trace, exit 101) |
+| `free(r)` | release a reference's memory (`memory manual` only, E2026) |
 | `clock()` | processor time in seconds, as a `float` |
 
 ## Errors: exceptions and results

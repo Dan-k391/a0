@@ -89,6 +89,7 @@ list matches it.
 | E2023 | literal out of range |
 | E2024 | not possible with an inline value |
 | E2025 | cannot take the address |
+| E2026 | only without the collector |
 | E3001 | outside a loop |
 | E4001 | no entry point |
 | E4002 | invalid entry point |

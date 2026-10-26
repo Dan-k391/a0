@@ -200,6 +200,17 @@ impl<'a> TextParser<'a> {
 
     /// Builds the items of the module; returns the problems with the text.
     fn module(mut self, root: NodeId) -> Diagnostics {
+        if let Some(decl) = self.field(root, "memory") {
+            let mode = self.field(decl, "mode").map(|n| self.text(n).to_string());
+            match mode.as_deref().and_then(Memory::from_name) {
+                Some(memory) => self.b.set_memory(memory),
+                None => {
+                    self.at(decl);
+                    self.b
+                        .report_code(code::SYNTAX, "the memory of a module is `gc` or `manual`");
+                }
+            }
+        }
         let items: Vec<NodeId> = self
             .tree
             .children(root)
