@@ -152,26 +152,21 @@ fn check_programs(run: &dyn Fn(&Path) -> Output) {
 }
 
 // Every mode runs with the HIR optimizer on (the default) and off (`A0_OPT=0`); both must give the
-// expected output.
+// expected output. `a0 run` compiles into memory (the JIT); `A0_INTERP=1` interprets.
 
-fn interpreted(opt: &str) {
+fn in_process(opt: &str, env: &[(&str, &str)]) {
     check_programs(&|file| {
         run(Command::new(env!("CARGO_BIN_EXE_a0"))
             .arg("run")
             .arg(file)
-            .env("A0_OPT", opt))
+            .env("A0_OPT", opt)
+            .envs(env.iter().copied()))
     });
 }
 
-fn gc_stress(opt: &str) {
-    check_programs(&|file| {
-        run(Command::new(env!("CARGO_BIN_EXE_a0"))
-            .arg("run")
-            .arg(file)
-            .env("A0_GC_STRESS", "1")
-            .env("A0_OPT", opt))
-    });
-}
+const INTERPRETED: &[(&str, &str)] = &[("A0_INTERP", "1")];
+const JIT: &[(&str, &str)] = &[];
+const GC_STRESS: &[(&str, &str)] = &[("A0_GC_STRESS", "1")];
 
 fn native(opt: &str) {
     let dir = scratch_dir(&format!("native-{opt}"));
@@ -203,12 +198,17 @@ fn native(opt: &str) {
 
 #[test]
 fn interpreted_programs_match_expectations() {
-    interpreted("1");
+    in_process("1", INTERPRETED);
 }
 
 #[test]
-fn interpreted_programs_survive_gc_stress() {
-    gc_stress("1");
+fn jit_programs_match_expectations() {
+    in_process("1", JIT);
+}
+
+#[test]
+fn programs_survive_gc_stress() {
+    in_process("1", GC_STRESS);
 }
 
 #[test]
@@ -218,12 +218,17 @@ fn native_programs_match_expectations() {
 
 #[test]
 fn unoptimized_interpreted_programs_match_expectations() {
-    interpreted("0");
+    in_process("0", INTERPRETED);
 }
 
 #[test]
-fn unoptimized_interpreted_programs_survive_gc_stress() {
-    gc_stress("0");
+fn unoptimized_jit_programs_match_expectations() {
+    in_process("0", JIT);
+}
+
+#[test]
+fn unoptimized_programs_survive_gc_stress() {
+    in_process("0", GC_STRESS);
 }
 
 #[test]

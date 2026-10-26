@@ -7,7 +7,7 @@ changes, change it here in the same commit.
 
 ```
 cargo build --workspace
-cargo test --workspace              # everything; the Lox suite runs six ways (~35 s)
+cargo test --workspace              # everything; the Lox suite runs eight ways (~35 s)
 cargo test -p a0-ir                 # one crate
 cargo test -p lox --test suite      # the official Lox suite only
 cargo test -p a0-capi --test python # the Python bindings and Pebble (needs Python 3)
@@ -26,6 +26,7 @@ Needs a C compiler: MSVC on Windows (found automatically), `cc` on Linux/macOS. 
 debugging: `a0 run|build|fmt|check file.a0ir|file.hir`, `a0 lower file.hir` (the core IR a HIR
 module becomes), `a0 parse lang.a0g input`, `a0 lang calc.a0g hir|ir|run file` (a language
 defined by its grammar alone), `lox hir|ir file.lox`, `minnow hir|ir file.mn`, `kaleidoscope hir|ir file.k`, and
+`A0_INTERP=1` (`run` interprets instead of compiling into memory with the JIT),
 `A0_GC_STRESS=1` (the collector runs on every allocation), `A0_GC_STATS=1` (what the collector did,
 printed at exit), `A0_OPT=0` (no HIR optimizer),
 `a0 explain E2001` (what an error code means), `A0_BLESS=1` (rewrite the tutorial's listings and the
@@ -73,7 +74,8 @@ layer, decision D17). A new crate goes into the table above and into `[workspace
   they help (the earlier declaration, the parameter, the result type) and a fix where one is
   likely. Words come from `Term`s and types from `display_type`/`quote_type`, never the HIR's own
   spellings. Misuse by a language's code keeps a descriptive code (`hir.builder`).
-- **Interpreter and native code must behave identically**: same output, same stderr, same exit code.
+- **Interpreter, JIT and native code must behave identically**: same output, same stderr, same exit
+  code. `run` uses the JIT (D63); the interpreter is the reference and the debugger's engine.
   Traps and panics go through the C runtime (`a0_rt_fail`, exit 101), which prints the message and
   the stack trace from the program's location table; runtime functions that can fail take the
   location and frame pointer (`REPORTS_LOCATION`, `docs/ir.md`).
@@ -110,15 +112,15 @@ layer, decision D17). A new crate goes into the table above and into `[workspace
 - Every change comes with tests in the crate it touches; bugs get a regression test.
 - **Differential testing**: core IR programs in `tests/programs/*.a0ir` and HIR programs in
   `tests/hir/*.hir` declare `expect-stdout:`, `expect-stderr:` and `expect-exit:` (after `;` or `//`)
-  and run interpreted, natively, and interpreted with `A0_GC_STRESS=1`, each with the HIR optimizer
-  on and off (`A0_OPT=0`) (`crates/a0/tests/programs.rs`). Add a program there for any new IR, HIR,
+  and run interpreted (`A0_INTERP=1`), in the JIT, natively, and in the JIT with `A0_GC_STRESS=1`,
+  each with the HIR optimizer on and off (`A0_OPT=0`) (`crates/a0/tests/programs.rs`). Add a program there for any new IR, HIR,
   optimizer or runtime behavior.
 - **Random programs**: `crates/a0/tests/random.rs` generates seeded HIR programs and requires the
-  six modes to agree (`A0_RANDOM_PROGRAMS`, `A0_RANDOM_SEED` to fuzz longer). When the optimizer or
+  eight modes to agree (`A0_RANDOM_PROGRAMS`, `A0_RANDOM_SEED` to fuzz longer). When the optimizer or
   lowering learns something new, teach the generator to produce it.
 - HIR text must round-trip: `print(parse(print(m))) == print(m)` is tested for every corpus file.
-- Example languages test interpreted and native output (`examples/*/tests`), all three under GC
-  stress too, optimized and not. The Lox suite must stay at all 241 passing in all six modes, and the tests of A0's extensions to
+- Example languages test interpreted, JIT and native output (`examples/*/tests`), and the JIT
+  under GC stress, optimized and not. The Lox suite must stay at all 241 passing in all eight modes, and the tests of A0's extensions to
   Lox (`examples/lox/tests/a0`) with it.
 - Each example language has `tests/lsp.rs`: its server's outline, definitions, hovers,
   diagnostics and quick fixes on a small program, through `a0_driver::lsp::session`; and

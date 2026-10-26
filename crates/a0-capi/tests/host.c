@@ -454,7 +454,8 @@ static void modules(void) {
     a0_hir_free(h);
     if (m == NULL) return;
     fflush(stdout);
-    a0_run(m, NULL, 0, &status, &d);
+    /* Compiled into memory and run at native speed. */
+    a0_jit_run(m, NULL, 0, &status, &d);
     check("running modules", d);
     a0_module_free(m);
 

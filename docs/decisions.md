@@ -740,3 +740,24 @@ is the same program with its calls doing no work, and its run time is the rest o
 The script runs on Linux and macOS, not in CI: timings on shared runners are noise, and the goal
 is a picture rather than a gate. Rejected: a timing tool such as hyperfine (one more thing to
 install, for medians that the script takes itself), and copying the references' sources.
+
+## D63. `run` compiles into memory with Cranelift's JIT; the interpreter stays the reference
+
+v0.5 asks that `lang run` and the REPL run at native speed with no linking. The choices were a
+faster interpreter (still 10 to 50 times slower than native code, D62's numbers), linking with a
+faster linker (still a process and a file), or loading Cranelift's code into the running process.
+It is the last, through `cranelift-jit` (Cranelift's own crate, the same version as the rest; a new
+dependency of `a0-native`). The code generator was made generic over `cranelift_module::Module`, so
+the JIT compiles exactly what an executable contains: the same functions and data, and the same
+tables from return addresses to locations, which the runtime then reads from memory, so traces
+come out the same. C functions resolve through `HostSymbols`, as in the interpreter, which moved
+to `a0-runtime` for both. The program runs on a thread with an executable's stack (8 MB).
+`a0_native::run_main` is the entry point, `a0_jit_run` its C binding.
+
+`lang run`, `a0 run`, the REPL (which reruns `lang run -`) and Python's driver use it;
+`A0_INTERP=1` interprets instead, and hosts without native code (WebAssembly) always interpret.
+The interpreter stays the reference: the debugger runs on it (D58), the playground has nothing
+else, and the differential tests run every program in it. Those tests now have eight modes: the
+interpreter, the JIT, the JIT under GC stress and native executables, each optimized and not. GC
+stress moved from the interpreter to the JIT, since that is where a missing root in generated
+code would show and it runs faster there.

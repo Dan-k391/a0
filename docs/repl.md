@@ -23,7 +23,8 @@ error[E1001]: unknown name `y`
   grammar: an input that parses after the declarations so far is a declaration, anything else a
   statement of `main`.
 - Each input runs the whole program again, in a process of its own (`lang run -`, which reads the
-  program from standard input; the runtime keeps global state, so a process runs one program), and
+  program from standard input and runs it at native speed through the JIT, with no linking; the
+  runtime keeps global state, so a process runs one program), and
   what it prints beyond what the program printed before is shown. Statements typed before run
   again, side effects included; their output is not repeated.
 - An input that does not compile, or that makes the program fail (a panic, a nonzero exit status),

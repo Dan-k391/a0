@@ -134,31 +134,38 @@ fn check(mode: &str, run_one: &dyn Fn(&[String], &str) -> Output) {
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
 
-fn interpreted(mode: &str, opt: &str, stress: bool) {
+fn in_process(mode: &str, opt: &str, env: &[(&str, &str)]) {
     let main = root().join("json/main.mn");
     check(mode, &|args, stdin| {
         let mut cmd = Command::new(env!("CARGO_BIN_EXE_minnow"));
-        cmd.arg("run").arg(&main).args(args).env("A0_OPT", opt);
-        if stress {
-            cmd.env("A0_GC_STRESS", "1");
-        }
+        cmd.arg("run")
+            .arg(&main)
+            .args(args)
+            .env("A0_OPT", opt)
+            .envs(env.iter().copied());
         run(&mut cmd, stdin)
     });
 }
 
 #[test]
 fn the_json_tool_works_in_the_interpreter() {
-    interpreted("interpreted", "1", false);
+    in_process("interpreted", "1", &[("A0_INTERP", "1")]);
+}
+
+#[test]
+fn the_json_tool_works_in_the_jit() {
+    in_process("JIT", "1", &[]);
 }
 
 #[test]
 fn the_json_tool_works_unoptimized() {
-    interpreted("unoptimized, interpreted", "0", false);
+    in_process("unoptimized, interpreted", "0", &[("A0_INTERP", "1")]);
+    in_process("unoptimized, JIT", "0", &[]);
 }
 
 #[test]
 fn the_json_tool_survives_gc_stress() {
-    interpreted("GC stress", "1", true);
+    in_process("GC stress", "1", &[("A0_GC_STRESS", "1")]);
 }
 
 #[test]

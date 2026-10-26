@@ -2,8 +2,8 @@
 
 `crates/a0-capi` makes A0's library crates usable from C (and anything that calls C): parse text with
 a grammar and walk the tree, build HIR (by name, with the builder resolving names and checking
-types, or by handle), build core IR, print and parse both, run modules in the interpreter, and
-compile them to object files for any supported target or to an executable for the host. The header
+types, or by handle), build core IR, print and parse both, run modules in the interpreter or at native
+speed from memory (the JIT), and compile them to object files for any supported target or to an executable for the host. The header
 is `crates/a0-capi/include/a0.h`; it is the reference.
 
 `crates/a0-capi/tests/host.c` is a complete C program that does all of that, including two small
@@ -111,7 +111,7 @@ including what makes good diagnostics: `a0_hir_set_name_span`, `a0_hir_set_param
 `docs/diagnostics.md`, and modules: `a0_hir_begin_module`, `a0_hir_import_module`,
 `a0_hir_call_member`), methods and interfaces (`a0_hir_declare_method`, `a0_hir_implement`,
 `a0_hir_method_call`), exceptions (`a0_hir_throw`, `a0_hir_try_catch`), the codes of diagnostics (`a0_diagnostics_code`),
-HIR text, the core IR builder and text format, the interpreter (`a0_run`) and the native backend
-(`a0_write_object`, `a0_build_executable`). Diagnostics render against their source the way the
+HIR text, the core IR builder and text format, the interpreter (`a0_run`), the JIT (`a0_jit_run`)
+and the native backend (`a0_write_object`, `a0_build_executable`). Diagnostics render against their source the way the
 `a0` tool shows them (`a0_diagnostics_render`). Not bound: `a0-sema`, `SyntaxIndex` and the driver
 (D20). The runtime and the collector keep global state, so use A0 from one thread at a time.

@@ -18,63 +18,9 @@ use a0_diag::{Diagnostic, Diagnostics};
 use a0_ir::{
     FloatCC, FuncId, GlobalId, Inst, IntCC, Module, Opcode, Region, SymbolKind, Type, Value,
 };
-use a0_runtime::{A0Symbol, ffi_ret, trap};
+use a0_runtime::{ffi_ret, trap};
 
-/// Names and addresses of C functions that `extern func` declarations may resolve to.
-pub struct HostSymbols {
-    map: HashMap<String, usize>,
-    /// Whether names not registered are looked up among the process's C functions.
-    search_process: bool,
-}
-
-impl HostSymbols {
-    /// A registry pre-filled with the A0 runtime's functions, which also finds any other C function
-    /// the process can call (the C library's, those of loaded libraries).
-    pub fn new() -> HostSymbols {
-        let mut s = HostSymbols::empty();
-        s.search_process = true;
-        for (name, addr) in a0_runtime::runtime_symbols() {
-            s.map.insert(name, addr);
-        }
-        s
-    }
-
-    /// A registry that finds only what is added to it.
-    pub fn empty() -> HostSymbols {
-        HostSymbols {
-            map: HashMap::new(),
-            search_process: false,
-        }
-    }
-
-    pub fn add(&mut self, name: &str, address: usize) {
-        self.map.insert(name.to_string(), address);
-    }
-
-    /// Adds every entry of a NULL-terminated C symbol table (see `A0Symbol` in `a0rt.h`).
-    ///
-    /// # Safety
-    /// `table` must point to a valid, NULL-terminated `A0Symbol` array.
-    pub unsafe fn add_table(&mut self, table: *const A0Symbol) {
-        for (name, addr) in unsafe { a0_runtime::read_symbol_table(table) } {
-            self.map.insert(name, addr);
-        }
-    }
-
-    pub fn lookup(&self, name: &str) -> Option<usize> {
-        match self.map.get(name) {
-            Some(&address) => Some(address),
-            None if self.search_process => a0_runtime::find_symbol(name),
-            None => None,
-        }
-    }
-}
-
-impl Default for HostSymbols {
-    fn default() -> Self {
-        HostSymbols::new()
-    }
-}
+pub use a0_runtime::HostSymbols;
 
 /// Why execution stopped abnormally.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -434,7 +380,7 @@ impl Interpreter {
             return Err(diags);
         }
         let mut diags = Diagnostics::new();
-        let referenced = referenced_externs(&module);
+        let referenced = a0_ir::referenced_externs(&module);
 
         let tokens = vec![0u8; module.func_count().max(1) as usize].into_boxed_slice();
         let token_base = tokens.as_ptr() as u64;
@@ -1170,27 +1116,6 @@ impl FuncCompiler<'_> {
             _ => unreachable!("verified IR has no other opcodes"),
         }
     }
-}
-
-/// Which externs are called or have their address taken anywhere in the module.
-fn referenced_externs(m: &Module) -> Vec<bool> {
-    let mut used = vec![false; m.func_count() as usize];
-    for f in 0..m.func_count() {
-        if let Some(body) = m.func_body(FuncId(f)) {
-            for inst in a0_ir::insts_in_text_order(m, body) {
-                match m.inst_opcode(inst) {
-                    Opcode::Call => used[m.inst_callee(inst).index()] = true,
-                    Opcode::Addr => {
-                        if let Some(g) = m.inst_symbol(inst).as_func() {
-                            used[g.index()] = true;
-                        }
-                    }
-                    _ => {}
-                }
-            }
-        }
-    }
-    used
 }
 
 // ------------------------------------------------------------------------------------------ semantics

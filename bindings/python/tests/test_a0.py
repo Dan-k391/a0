@@ -105,6 +105,7 @@ class Bindings(unittest.TestCase):
         hir = b.finish()
         self.assertIn("fn main() -> int", str(hir))
         self.assertEqual(hir.lower().run(["demo"]), 42)
+        self.assertEqual(hir.lower().run_jit(["demo"]), 42)
         self.assertEqual(a0.Hir.parse(str(hir)).lower().run([]), 42)
         # Problems are reported with codes and spans, and render against the source.
         source = "print(y)"
@@ -140,9 +141,10 @@ class Pebble(unittest.TestCase):
         folder = os.path.join(PEBBLE, "programs")
         return [os.path.join(folder, p) for p in sorted(os.listdir(folder)) if p.endswith(".pb")]
 
-    def test_programs_run_interpreted(self):
+    def test_programs_run_interpreted_and_in_the_jit(self):
         for program in self.programs():
-            for env in ({}, {"A0_GC_STRESS": "1"}, {"A0_OPT": "0"}):
+            for env in ({"A0_INTERP": "1"}, {}, {"A0_GC_STRESS": "1"}, {"A0_OPT": "0"},
+                        {"A0_OPT": "0", "A0_INTERP": "1"}):
                 with self.subTest(program=os.path.basename(program), env=env):
                     out = pebble("run", program, env=env)
                     self.assertEqual(out.returncode, 0, out.stderr)
@@ -171,15 +173,16 @@ class Pebble(unittest.TestCase):
             self.assertIn("error[E1001]: unknown function `fib`", out.stderr)
             self.assertIn("broken.pb:2:9", out.stderr)
             self.assertIn("error[E2001]: mismatched types", out.stderr)
-            # A panic stops the program the same way interpreted and native.
+            # A panic stops the program the same way interpreted, in the JIT and native.
             panics = os.path.join(tmp, "panics.pb")
             with open(panics, "w", encoding="utf-8") as f:
                 f.write("fn main() {\n  let xs = [1];\n  print(\"before\");\n  print(xs[3]);\n}\n")
-            interpreted = pebble("run", panics)
+            interpreted = pebble("run", panics, env={"A0_INTERP": "1"})
+            jit = pebble("run", panics)
             exe = os.path.join(tmp, "panics")
             self.assertEqual(pebble("build", panics, "-o", exe).returncode, 0)
             native = subprocess.run([exe + EXE], capture_output=True, text=True)
-            for out in (interpreted, native):
+            for out in (interpreted, jit, native):
                 self.assertEqual(out.returncode, a0.PANIC_EXIT_CODE)
                 self.assertEqual(out.stdout, "before\n")
                 self.assertIn("panic: index out of bounds", out.stderr)

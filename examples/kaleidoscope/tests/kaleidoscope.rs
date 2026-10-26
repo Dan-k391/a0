@@ -45,12 +45,19 @@ fn check(file: &Path, output: std::process::Output, mode: &str) -> Option<String
     }
 }
 
-/// Runs every program interpreted or natively, with the HIR optimizer on or off and the collector
-/// running on every allocation or not.
-fn run_all(native: bool, optimize: bool, stress: bool) {
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Mode {
+    Interpreted,
+    Jit,
+    Native,
+}
+
+/// Runs every program interpreted (`A0_INTERP=1`), compiled into memory (the JIT) or natively,
+/// with the HIR optimizer on or off and the collector running on every allocation or not.
+fn run_all(how: Mode, optimize: bool, stress: bool) {
+    let native = how == Mode::Native;
     let mode = format!(
-        "{}{}{}",
-        if native { "native" } else { "interpreted" },
+        "{how:?}{}{}",
         if optimize { "" } else { ", A0_OPT=0" },
         if stress { ", A0_GC_STRESS=1" } else { "" }
     );
@@ -63,6 +70,10 @@ fn run_all(native: bool, optimize: bool, stress: bool) {
         let mut cmd = Command::new(env!("CARGO_BIN_EXE_kaleidoscope"));
         cmd.env("A0_OPT", if optimize { "1" } else { "0" });
         cmd.env("A0_GC_STRESS", if stress { "1" } else { "0" });
+        cmd.env(
+            "A0_INTERP",
+            if how == Mode::Interpreted { "1" } else { "0" },
+        );
         cmd
     };
     let failures: Vec<String> = programs()
@@ -101,20 +112,26 @@ fn run_all(native: bool, optimize: bool, stress: bool) {
 
 #[test]
 fn programs_run_in_the_interpreter() {
-    run_all(false, true, false);
-    run_all(false, false, false);
+    run_all(Mode::Interpreted, true, false);
+    run_all(Mode::Interpreted, false, false);
+}
+
+#[test]
+fn programs_run_in_the_jit() {
+    run_all(Mode::Jit, true, false);
+    run_all(Mode::Jit, false, false);
 }
 
 #[test]
 fn programs_run_natively() {
-    run_all(true, true, false);
-    run_all(true, false, false);
+    run_all(Mode::Native, true, false);
+    run_all(Mode::Native, false, false);
 }
 
 #[test]
 fn programs_survive_gc_stress() {
-    run_all(false, true, true);
-    run_all(false, false, true);
+    run_all(Mode::Jit, true, true);
+    run_all(Mode::Jit, false, true);
 }
 
 /// Compiles `src` and returns the rendered diagnostics (empty if it compiled).

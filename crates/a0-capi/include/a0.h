@@ -154,6 +154,13 @@ void a0_module_free(A0Module *m);
 int a0_run(const A0Module *m, const char *const *args, size_t arg_count, int32_t *status,
            A0Diagnostics **diags);
 
+/* Compiles @main into memory and runs it at native speed (Cranelift's JIT, no linking), with the
+ * given arguments. Returns 0 with the exit status in *status, or -1 if it could not run (*diags).
+ * A program that traps or panics prints why and ends the process with status 101, as an
+ * executable does. Output is flushed before returning. */
+int a0_jit_run(const A0Module *m, const char *const *args, size_t arg_count, int32_t *status,
+               A0Diagnostics **diags);
+
 /* Compiles to an object file for `target` ("x86_64-linux", "aarch64-macos", ...; an empty name
  * means the host). Returns 0 on success, -1 with *diags. */
 int a0_write_object(const A0Module *m, const char *target, size_t target_len, const char *path,

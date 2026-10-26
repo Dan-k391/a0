@@ -1,6 +1,6 @@
 ---
 name: differential-tests
-description: Run and debug A0's differential tests, which require the interpreter and native executables to produce identical stdout, stderr and exit status (IR and HIR programs, Kaleidoscope, Minnow, the Lox suite, GC stress). Use when a backend test fails or when adding a regression test.
+description: Run and debug A0's differential tests, which require the interpreter, the JIT and native executables to produce identical stdout, stderr and exit status (IR and HIR programs, Kaleidoscope, Minnow, the Lox suite, GC stress). Use when a backend test fails or when adding a regression test.
 ---
 
 # Run and debug the differential tests
@@ -9,12 +9,12 @@ description: Run and debug A0's differential tests, which require the interprete
 
 | Suite | Harness | Modes |
 |---|---|---|
-| IR and HIR programs `tests/programs/*.a0ir`, `tests/hir/*.hir` | `crates/a0/tests/programs.rs` | `a0 run`, `a0 build` + run, `a0 run` + `A0_GC_STRESS=1` |
+| IR and HIR programs `tests/programs/*.a0ir`, `tests/hir/*.hir` | `crates/a0/tests/programs.rs` | `a0 run` with `A0_INTERP=1`, `a0 run` (JIT), `a0 build` + run, `a0 run` + `A0_GC_STRESS=1` |
 | Objects for every target | `crates/a0-native/tests/objects.rs` | object inspection only |
-| Kaleidoscope `examples/kaleidoscope/tests/programs/*.k` | `examples/kaleidoscope/tests/kaleidoscope.rs` | interpreted, native, interpreted + `A0_GC_STRESS=1` |
-| Minnow `examples/minnow/tests/programs/*.mn` | `examples/minnow/tests/minnow.rs` | interpreted, native, interpreted + `A0_GC_STRESS=1` |
-| Lox official suite | `examples/lox/tests/suite.rs` | interpreted, native, interpreted + `A0_GC_STRESS=1` |
-| Random HIR programs (seeded generator) | `crates/a0/tests/random.rs` | all three, optimized and not, compared with each other |
+| Kaleidoscope `examples/kaleidoscope/tests/programs/*.k` | `examples/kaleidoscope/tests/kaleidoscope.rs` | interpreted, JIT, native, JIT + `A0_GC_STRESS=1` |
+| Minnow `examples/minnow/tests/programs/*.mn` | `examples/minnow/tests/minnow.rs` | interpreted, JIT, native, JIT + `A0_GC_STRESS=1` |
+| Lox official suite | `examples/lox/tests/suite.rs` | interpreted, JIT, native, JIT + `A0_GC_STRESS=1` |
+| Random HIR programs (seeded generator) | `crates/a0/tests/random.rs` | all four, optimized and not, compared with each other |
 
 Every HIR-based mode runs twice: optimized (the default) and with `A0_OPT=0`. A difference between
 the two is an optimizer bug: compare `a0 lower prog.hir` with and without `A0_OPT=0`, and shrink the

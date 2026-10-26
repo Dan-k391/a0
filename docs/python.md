@@ -42,6 +42,7 @@ b.end_body()
 hir = b.finish()                                # a0.Error with every problem found
 print(hir)                                      # the HIR text format
 module = hir.lower()                            # core IR, optimized unless A0_OPT=0
+status = module.run_jit(["calc"])               # at native speed, from memory: 42
 status = module.run(["calc"])                   # interpreted: 42
 module.build_executable("calc")                 # native, with the system linker
 ```
@@ -62,13 +63,15 @@ about, as the `a0` tool does.
 `a0.driver.main(name, compile)` is the command line of a language, like the Rust driver's:
 `run <file> [args...]`, `build <file> [-o out]`, `hir <file>` and `ir <file>`, with errors and
 warnings rendered against the file. `compile(text)` returns an `a0.Hir` or raises `a0.Error`.
-`Module.run` prints a panic and its stack trace on standard error and returns 101, as a native
-executable does, so a language behaves the same interpreted and native.
+`run` compiles the program into memory and runs it at native speed (`Module.run_jit`;
+`A0_INTERP=1` interprets it with `Module.run`). A panic prints its message and stack trace on
+standard error and gives 101, as a native executable does, so a language behaves the same in
+every mode.
 
 ## Testing
 
-`bindings/python/tests/test_a0.py` tests the bindings and runs Pebble's programs interpreted (also
-under GC stress and without the optimizer) and native. `cargo test -p a0-capi --test python` runs
+`bindings/python/tests/test_a0.py` tests the bindings and runs Pebble's programs interpreted, in the JIT
+(also under GC stress and without the optimizer) and native. `cargo test -p a0-capi --test python` runs
 it against the library cargo just built, on every CI platform:
 
 ```

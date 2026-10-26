@@ -80,14 +80,19 @@ fn check(name: &str, mode: &str, out: &Output, want: &str) {
 }
 
 #[test]
-fn programs_run_interpreted() {
+fn programs_run_interpreted_and_in_the_jit() {
     for (grammar, p, want) in programs() {
         let name = p.file_name().unwrap().to_string_lossy().into_owned();
         let file = p.to_string_lossy();
         for (mode, env) in [
-            ("interpreted", &[][..]),
+            ("interpreted", &[("A0_INTERP", "1")][..]),
+            ("JIT", &[][..]),
             ("GC stress", &[("A0_GC_STRESS", "1")][..]),
             ("unoptimized", &[("A0_OPT", "0")][..]),
+            (
+                "unoptimized, interpreted",
+                &[("A0_OPT", "0"), ("A0_INTERP", "1")][..],
+            ),
         ] {
             check(&name, mode, &lang(grammar, &["run", &file], env), &want);
         }

@@ -339,3 +339,24 @@ fn format_f32(bits: u32) -> String {
         format!("{f:?}")
     }
 }
+
+/// Which externs are called or have their address taken anywhere in the module.
+pub fn referenced_externs(m: &Module) -> Vec<bool> {
+    let mut used = vec![false; m.func_count() as usize];
+    for f in 0..m.func_count() {
+        if let Some(body) = m.func_body(FuncId(f)) {
+            for inst in insts_in_text_order(m, body) {
+                match m.inst_opcode(inst) {
+                    Opcode::Call => used[m.inst_callee(inst).index()] = true,
+                    Opcode::Addr => {
+                        if let Some(g) = m.inst_symbol(inst).as_func() {
+                            used[g.index()] = true;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+    used
+}

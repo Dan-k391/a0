@@ -35,6 +35,8 @@ pub use builder::Builder;
 pub use debug::{Location, Locations};
 pub use module::{InlineSite, Item, Module, region_terminates};
 pub use parse::{parse, parse_and_verify};
-pub use print::{insts_in_text_order, is_bare_ident, print_module, quote_string};
+pub use print::{
+    insts_in_text_order, is_bare_ident, print_module, quote_string, referenced_externs,
+};
 pub use types::*;
 pub use verify::{check_entry, verify};

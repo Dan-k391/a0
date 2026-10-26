@@ -3,8 +3,8 @@
 //!
 //! Each test file states what it expects in comments: `// expect: output`, `// Error ...` and
 //! `// [line N] Error ...` for compile errors (exit 65), `// expect runtime error: message` for runtime
-//! errors (exit 70). Tests run interpreted, as native executables, and interpreted with the garbage
-//! collector running on every allocation.
+//! errors (exit 70). Tests run interpreted, compiled into memory (the JIT), as native executables,
+//! and in the JIT with the garbage collector running on every allocation.
 //!
 //! `tests/a0` holds tests of A0's extensions to Lox (exceptions, natives over the standard library)
 //! in the same form; they run with the suite and are counted apart from it.
@@ -336,14 +336,29 @@ fn run_suite(mode: &str, run: &(dyn Fn(&str, &Path) -> Output + Sync)) {
     eprintln!("{mode}: all {passed} tests passed, and {extensions} of A0's extensions");
 }
 
-// Every mode runs with the HIR optimizer on (the default) and off (`A0_OPT=0`).
+// Every mode runs with the HIR optimizer on (the default) and off (`A0_OPT=0`): interpreted
+// (`A0_INTERP=1`), compiled into memory (`lox file`, the JIT), the JIT under GC stress, and as
+// native executables.
 
-fn interpreted(mode: &str, opt: &str, stress: bool) {
+#[derive(Clone, Copy)]
+enum InProcess {
+    Interpreted,
+    Jit,
+    JitWithGcStress,
+}
+
+fn in_process(mode: &str, opt: &str, how: InProcess) {
     run_suite(mode, &|_, path| {
         let mut cmd = Command::new(env!("CARGO_BIN_EXE_lox"));
         cmd.arg(path).env("A0_OPT", opt);
-        if stress {
-            cmd.env("A0_GC_STRESS", "1");
+        match how {
+            InProcess::Interpreted => {
+                cmd.env("A0_INTERP", "1");
+            }
+            InProcess::Jit => {}
+            InProcess::JitWithGcStress => {
+                cmd.env("A0_GC_STRESS", "1");
+            }
         }
         run(&mut cmd)
     });
@@ -375,12 +390,17 @@ fn native(mode: &str, opt: &str) {
 
 #[test]
 fn suite_interpreted() {
-    interpreted("interpreted", "1", false);
+    in_process("interpreted", "1", InProcess::Interpreted);
 }
 
 #[test]
-fn suite_interpreted_with_gc_stress() {
-    interpreted("interpreted, GC stress", "1", true);
+fn suite_jit() {
+    in_process("JIT", "1", InProcess::Jit);
+}
+
+#[test]
+fn suite_jit_with_gc_stress() {
+    in_process("JIT, GC stress", "1", InProcess::JitWithGcStress);
 }
 
 #[test]
@@ -390,12 +410,21 @@ fn suite_native() {
 
 #[test]
 fn suite_unoptimized_interpreted() {
-    interpreted("unoptimized, interpreted", "0", false);
+    in_process("unoptimized, interpreted", "0", InProcess::Interpreted);
 }
 
 #[test]
-fn suite_unoptimized_interpreted_with_gc_stress() {
-    interpreted("unoptimized, interpreted, GC stress", "0", true);
+fn suite_unoptimized_jit() {
+    in_process("unoptimized, JIT", "0", InProcess::Jit);
+}
+
+#[test]
+fn suite_unoptimized_jit_with_gc_stress() {
+    in_process(
+        "unoptimized, JIT, GC stress",
+        "0",
+        InProcess::JitWithGcStress,
+    );
 }
 
 #[test]

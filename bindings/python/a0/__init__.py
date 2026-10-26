@@ -283,6 +283,8 @@ _module_text = _fn("a0_module_text", c_void_p, c_void_p, POINTER(c_size_t))
 _module_free = _fn("a0_module_free", None, c_void_p)
 _run = _fn("a0_run", c_int, c_void_p, POINTER(c_char_p), c_size_t, POINTER(c_int32),
            POINTER(c_void_p))
+_jit_run = _fn("a0_jit_run", c_int, c_void_p, POINTER(c_char_p), c_size_t, POINTER(c_int32),
+               POINTER(c_void_p))
 _write_object = _fn("a0_write_object", c_int, c_void_p, c_char_p, c_size_t, c_char_p, c_size_t,
                     POINTER(c_void_p))
 _build_executable = _fn("a0_build_executable", c_int, c_void_p, c_char_p, c_size_t,
@@ -329,6 +331,20 @@ class Module(_Owned):
             sys.stderr.write(str(Error(diags.value)) + "\n")
             sys.stderr.flush()
             return status.value
+        _check(diags)
+        return status.value
+
+    def run_jit(self, args=()):
+        """Compiles `main` into memory and runs it at native speed with `args`, returning its exit
+        status. A panic is printed, with its stack trace, and ends the process with
+        `PANIC_EXIT_CODE`, as a native executable does."""
+        sys.stdout.flush()
+        sys.stderr.flush()
+        encoded = [a.encode() for a in args]
+        argv = (c_char_p * max(len(encoded), 1))(*encoded)
+        status = c_int32()
+        diags = c_void_p()
+        _jit_run(self._handle, argv, len(encoded), byref(status), byref(diags))
         _check(diags)
         return status.value
 

@@ -175,6 +175,64 @@ pub fn find_symbol(name: &str) -> Option<usize> {
     (!p.is_null()).then_some(p as usize)
 }
 
+/// Names and addresses of C functions that `extern func` declarations may resolve to, in the
+/// interpreter and in code compiled in memory (the JIT).
+#[derive(Clone)]
+pub struct HostSymbols {
+    map: std::collections::HashMap<String, usize>,
+    /// Whether names not registered are looked up among the process's C functions.
+    search_process: bool,
+}
+
+impl HostSymbols {
+    /// A registry pre-filled with the A0 runtime's functions, which also finds any other C function
+    /// the process can call (the C library's, those of loaded libraries).
+    pub fn new() -> HostSymbols {
+        let mut s = HostSymbols::empty();
+        s.search_process = true;
+        for (name, addr) in runtime_symbols() {
+            s.map.insert(name, addr);
+        }
+        s
+    }
+
+    /// A registry that finds only what is added to it.
+    pub fn empty() -> HostSymbols {
+        HostSymbols {
+            map: std::collections::HashMap::new(),
+            search_process: false,
+        }
+    }
+
+    pub fn add(&mut self, name: &str, address: usize) {
+        self.map.insert(name.to_string(), address);
+    }
+
+    /// Adds every entry of a NULL-terminated C symbol table (see `A0Symbol` in `a0rt.h`).
+    ///
+    /// # Safety
+    /// `table` must point to a valid, NULL-terminated `A0Symbol` array.
+    pub unsafe fn add_table(&mut self, table: *const A0Symbol) {
+        for (name, addr) in unsafe { read_symbol_table(table) } {
+            self.map.insert(name, addr);
+        }
+    }
+
+    pub fn lookup(&self, name: &str) -> Option<usize> {
+        match self.map.get(name) {
+            Some(&address) => Some(address),
+            None if self.search_process => find_symbol(name),
+            None => None,
+        }
+    }
+}
+
+impl Default for HostSymbols {
+    fn default() -> Self {
+        HostSymbols::new()
+    }
+}
+
 /// Initializes the runtime for an in-process run (the interpreter calls this before `main`).
 pub fn init(args: &[String]) {
     // The runtime keeps the pointers, so leak them for the life of the process.
@@ -233,6 +291,18 @@ pub unsafe fn set_debug(locations: &[u8], frames: unsafe extern "C" fn(*mut u32,
     unsafe {
         a0_rt_set_debug(locations.as_ptr(), std::ptr::null());
         a0_rt_set_frames(Some(frames));
+    }
+}
+
+/// Gives the runtime the tables of code compiled into this process's memory (the JIT): the
+/// location table and the code table of `a0rt.h`, as the native backend emits them.
+///
+/// # Safety
+/// Both must point to valid tables that stay valid until the program ends.
+pub unsafe fn set_code_tables(locations: *const u8, code: *const u8) {
+    unsafe {
+        a0_rt_set_debug(locations, code as *const c_void);
+        a0_rt_set_frames(None);
     }
 }
 

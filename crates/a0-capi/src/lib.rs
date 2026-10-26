@@ -706,6 +706,57 @@ pub unsafe extern "C" fn a0_module_free(m: *mut A0Module) {
     unsafe { free(m) }
 }
 
+/// The arguments of a run, `args[0]` the program's name.
+unsafe fn run_args(args: *const *const c_char, count: usize) -> Vec<String> {
+    unsafe { items(args, count) }
+        .iter()
+        .map(|&a| {
+            if a.is_null() {
+                String::new()
+            } else {
+                unsafe { std::ffi::CStr::from_ptr(a) }
+                    .to_string_lossy()
+                    .into_owned()
+            }
+        })
+        .collect()
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn a0_jit_run(
+    m: *const A0Module,
+    args: *const *const c_char,
+    count: usize,
+    status: *mut i32,
+    diags: *mut *mut A0Diagnostics,
+) -> c_int {
+    let Some(m) = (unsafe { m.as_ref() }) else {
+        unsafe { report(diags, Some(error("a0_jit_run: no module"))) };
+        return -1;
+    };
+    let args = unsafe { run_args(args, count) };
+    let outcome = a0_native::run_main(
+        &m.module,
+        a0_interp::HostSymbols::new(),
+        args,
+        &a0_native::JitOptions::default(),
+    );
+    a0_runtime::flush();
+    match outcome {
+        Ok(code) => {
+            if !status.is_null() {
+                unsafe { *status = code };
+            }
+            unsafe { report(diags, None) };
+            0
+        }
+        Err(d) => {
+            unsafe { report(diags, Some(d)) };
+            -1
+        }
+    }
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn a0_run(
     m: *const A0Module,
@@ -718,18 +769,7 @@ pub unsafe extern "C" fn a0_run(
         unsafe { report(diags, Some(error("a0_run: no module"))) };
         return -1;
     };
-    let args: Vec<String> = unsafe { items(args, count) }
-        .iter()
-        .map(|&a| {
-            if a.is_null() {
-                String::new()
-            } else {
-                unsafe { std::ffi::CStr::from_ptr(a) }
-                    .to_string_lossy()
-                    .into_owned()
-            }
-        })
-        .collect();
+    let args = unsafe { run_args(args, count) };
     let symbols = a0_interp::HostSymbols::new();
     let outcome = a0_interp::run_main(m.module.clone(), symbols, args);
     a0_runtime::flush();

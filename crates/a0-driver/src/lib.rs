@@ -4,7 +4,7 @@
 //! runtime support of its own) and calls [`Language::main`]. The driver provides the commands:
 //!
 //! ```text
-//! lang run <file> [args...]      interpret the program
+//! lang run <file> [args...]      run the program, compiled into memory (`A0_INTERP=1`: interpret it)
 //! lang build <file> [-o output]  compile it to a native executable for the host (`.exe` added
 //!                                on Windows)
 //! lang ir <file>                 print the core IR
@@ -202,6 +202,13 @@ pub enum Command {
     Explain,
 }
 
+/// Whether `run` interprets the program (`A0_INTERP=1`, or a host without native code) rather
+/// than compiling it into memory and running it at native speed (D63).
+pub fn interpret() -> bool {
+    std::env::var("A0_INTERP").is_ok_and(|v| !v.is_empty() && v != "0")
+        || !a0_native::jit_supported()
+}
+
 /// Where `build` writes the executable: `-o`'s name, or the source file's stem, with the platform's
 /// suffix added when the name has none (Windows cannot run `fib`, only `fib.exe`).
 fn executable_name(file: &str, output: Option<&str>, suffix: &str) -> String {
@@ -343,6 +350,17 @@ impl Language {
                 };
                 let mut argv = vec![inv.file.clone()];
                 argv.extend(inv.args);
+                if !interpret() {
+                    return match a0_native::run_main(
+                        &module,
+                        symbols,
+                        argv,
+                        &a0_native::JitOptions::default(),
+                    ) {
+                        Err(d) => self.internal_error(&d, &sources),
+                        Ok(code) => a0_runtime::exit(code),
+                    };
+                }
                 match a0_interp::run_main(module, symbols, argv) {
                     Err(d) => self.internal_error(&d, &sources),
                     Ok(Err(trap)) => trap.report_and_exit(),

@@ -511,13 +511,13 @@ That is a whole compiler for functions and arithmetic.
 
 ## 3. The command and the runtime
 
-LLVM's chapter 4 adds a JIT. On A0, `a0-driver` gives a language its command: `run` interprets a
-program, `build` compiles it to a native executable through Cranelift and the system linker, `hir`
+LLVM's chapter 4 adds a JIT. On A0, `a0-driver` gives a language its command: `run` compiles a
+program into memory with Cranelift's JIT and runs it at once (`A0_INTERP=1` interprets it), `build` compiles it to a native executable through Cranelift and the system linker, `hir`
 and `ir` print what the compiler built, `lsp` is a language server, `dap` a debugger, `repl` a
 read-eval-print loop (Kaleidoscope's top-level expressions run where they are typed, so
 `repl_main` is `None`) and `explain` explains an error code. Errors are rendered with the source,
-with A0's codes (`codes` can hide them or give the language's own); the interpreter and native
-code give the same output, errors and exit codes.
+with A0's codes (`codes` can hide them or give the language's own); the interpreter, the JIT and
+native executables give the same output, errors and exit codes.
 
 ```rust file=examples/kaleidoscope/src/main.rs
 //! `kaleidoscope`: run or compile Kaleidoscope programs (`kaleidoscope run|build|ir <file.k>`).
@@ -1001,7 +1001,8 @@ impl Compiler<'_> {
 }
 ```
 
-That is the whole language. The example at the top of the tutorial runs, interpreted or native:
+That is the whole language. The example at the top of the tutorial runs at once, or as an
+executable:
 
 ```console
 $ kaleidoscope run fib.k
@@ -1029,6 +1030,6 @@ up in VS Code (`editors/vscode`), Neovim or Helix.
   strings, arrays, maps, structs, enums with `match`, generics, closures, nullable references with
   `if let`, and `any` for dynamic typing, all garbage collected. `examples/minnow` is a typed
   language that uses them (about 760 lines); `examples/lox` is a dynamically typed one.
-- **Tests.** `examples/kaleidoscope/tests` runs every program interpreted, native and under GC stress,
+- **Tests.** `examples/kaleidoscope/tests` runs every program interpreted, in the JIT, native and under GC stress,
   with the optimizer on and off, checks the compiler's errors, and checks this tutorial.
 - **Other hosts.** A program written in C can build HIR with the same builder (`docs/c-api.md`).

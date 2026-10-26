@@ -10,7 +10,7 @@ use cranelift_codegen::ir::{self, InstBuilder, MemFlagsData, TrapCode, condcodes
 use cranelift_codegen::isa::OwnedTargetIsa;
 use cranelift_codegen::settings::{self, Configurable};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Variable};
-use cranelift_module::{DataDescription, DataId, Linkage, Module as _};
+use cranelift_module::{DataDescription, DataId, Linkage, Module as ClifModule};
 use cranelift_object::{ObjectBuilder, ObjectModule};
 
 /// Symbol under which the IR's `@main` is emitted when an executable entry point is generated.
@@ -43,7 +43,13 @@ fn backend_error(message: String) -> Diagnostics {
     Diagnostic::error("native.codegen", &message).into()
 }
 
-fn make_isa(target: Target, optimize: bool) -> Result<OwnedTargetIsa, Diagnostics> {
+/// Cranelift's ISA for `target`. Code for the JIT (`jit.rs`) is loaded anywhere in memory, so it
+/// reaches symbols through the GOT on x86-64 and with veneers on AArch64, as `cranelift-jit` needs.
+pub(crate) fn make_isa(
+    target: Target,
+    optimize: bool,
+    jit: bool,
+) -> Result<OwnedTargetIsa, Diagnostics> {
     let mut flags = settings::builder();
     let set = |flags: &mut settings::Builder, k: &str, v: &str| {
         flags
@@ -58,15 +64,15 @@ fn make_isa(target: Target, optimize: bool) -> Result<OwnedTargetIsa, Diagnostic
     // Runtime errors find their stack by walking the frame pointer chain (a0rt.h, "Traps and
     // panics").
     set(&mut flags, "preserve_frame_pointers", "true")?;
-    set(
-        &mut flags,
-        "is_pic",
-        if target.requires_pic() {
-            "true"
-        } else {
-            "false"
-        },
-    )?;
+    let pic = if jit {
+        target.arch() == a0_target::Arch::X86_64
+    } else {
+        target.requires_pic()
+    };
+    set(&mut flags, "is_pic", if pic { "true" } else { "false" })?;
+    if jit {
+        set(&mut flags, "use_colocated_libcalls", "false")?;
+    }
     let isa = cranelift_codegen::isa::lookup_by_name(target.triple())
         .map_err(|e| backend_error(format!("Cranelift does not support {target}: {e}")))?;
     isa.finish(settings::Flags::new(flags))
@@ -142,7 +148,7 @@ fn compile_object_inner(
             return Err(diags);
         }
     }
-    let isa = make_isa(target, opts.optimize)?;
+    let isa = make_isa(target, opts.optimize, false)?;
     let builder = ObjectBuilder::new(
         isa,
         m.name().as_bytes().to_vec(),
@@ -150,12 +156,80 @@ fn compile_object_inner(
     )
     .map_err(|e| backend_error(format!("cannot create an object for {target}: {e}")))?;
     let mut obj = ObjectModule::new(builder);
-    let ptr = clif_type(Type::Ptr, target);
+    let main_symbol = if opts.entry_point {
+        ENTRY_SYMBOL
+    } else {
+        "main"
+    };
+    let compiled = compile_functions(&mut obj, m, target, main_symbol, opts.debug_info)?;
 
+    if opts.entry_point {
+        let main = m.lookup_func("main").unwrap();
+        let mut ctx = obj.make_context();
+        let mut fctx = FunctionBuilderContext::new();
+        emit_c_main(
+            &mut obj,
+            &mut ctx,
+            &mut fctx,
+            compiled.func_ids[main.index()],
+            &compiled.rt,
+            target,
+            compiled.tables,
+        )?;
+    }
+
+    let mut product = obj.finish();
+    if opts.debug_info && target.has_dwarf() {
+        let functions: Vec<crate::dwarf::Function> = compiled
+            .defined
+            .iter()
+            .zip(&compiled.code_ranges)
+            .map(|(&f, (id, size, _, lines))| crate::dwarf::Function {
+                symbol: product.function_symbol(*id),
+                name: m.func_trace_name(f).unwrap_or(m.func_name(f)),
+                size: *size,
+                ranges: lines,
+            })
+            .collect();
+        let dir = std::env::current_dir()
+            .map(|d| d.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        crate::dwarf::emit(&mut product.object, &compiled.locations, &functions, &dir)
+            .map_err(|e| backend_error(format!("cannot write debug information: {e}")))?;
+    }
+    product
+        .emit()
+        .map_err(|e| backend_error(format!("cannot write the object file: {e}")))
+}
+
+/// What [`compile_functions`] defined in a Cranelift module.
+pub(crate) struct Compiled {
+    /// Every IR function's id in the Cranelift module, by IR index.
+    pub func_ids: Vec<cranelift_module::FuncId>,
+    pub rt: RuntimeFuncs,
+    /// The location table and the code table (`a0rt.h`), for `a0_rt_set_debug`.
+    pub tables: (DataId, DataId),
+    pub locations: a0_ir::Locations,
+    pub code_ranges: Vec<CallRanges>,
+    /// The functions with bodies, in the order of `code_ranges`.
+    pub defined: Vec<FuncId>,
+}
+
+/// Declares and defines every function and global of a verified module in `obj` (an object file
+/// or the JIT's memory), with the tables runtime errors print traces from. The IR's `@main` is
+/// named `main_symbol`; `lines` gives every instruction its location, for debug information.
+pub(crate) fn compile_functions<M: ClifModule>(
+    obj: &mut M,
+    m: &Module,
+    target: Target,
+    main_symbol: &str,
+    lines: bool,
+) -> Result<Compiled, Diagnostics> {
+    let ptr = clif_type(Type::Ptr, target);
     let symbol_name = |f: FuncId| -> String {
         let name = m.func_name(f);
-        if opts.entry_point && name == "main" {
-            ENTRY_SYMBOL.to_string()
+        if name == "main" && !m.func_is_extern(f) {
+            main_symbol.to_string()
         } else {
             name.to_string()
         }
@@ -170,7 +244,7 @@ fn compile_object_inner(
         if m.func_is_extern(f) && a0_runtime::reports_location(m.func_name(f)) {
             params.extend([Type::I64, Type::Ptr]);
         }
-        let sig = signature(&obj, &params, m.func_ret(f), target);
+        let sig = signature(obj, &params, m.func_ret(f), target);
         let linkage = if m.func_is_extern(f) {
             Linkage::Import
         } else {
@@ -184,10 +258,10 @@ fn compile_object_inner(
     let mut data_ids = Vec::new();
     for g in 0..m.global_count() {
         let g = GlobalId(g);
-        let id = define_global(&mut obj, m, g, target)?;
+        let id = define_global(obj, m, g, target)?;
         data_ids.push(id);
     }
-    let rt = RuntimeFuncs::declare(&mut obj, target)?;
+    let rt = RuntimeFuncs::declare(obj, target)?;
     let locations = a0_ir::Locations::build(m);
     // Per defined function: its id, code size and the ranges of its calls with their locations.
     let mut code_ranges: Vec<CallRanges> = Vec::new();
@@ -201,7 +275,7 @@ fn compile_object_inner(
         if m.func_is_extern(f) {
             continue;
         }
-        ctx.func.signature = signature(&obj, m.func_params(f), m.func_ret(f), target);
+        ctx.func.signature = signature(obj, m.func_params(f), m.func_ret(f), target);
         {
             let builder = FunctionBuilder::new(&mut ctx.func, &mut fctx);
             let mut lower = Lower {
@@ -209,7 +283,7 @@ fn compile_object_inner(
                 f,
                 target,
                 ptr,
-                obj: &mut obj,
+                obj: &mut *obj,
                 b: builder,
                 func_ids: &func_ids,
                 data_ids: &data_ids,
@@ -220,59 +294,32 @@ fn compile_object_inner(
                 trap_sites: Vec::new(),
                 loops: Vec::new(),
                 locations: &locations,
-                lines: opts.debug_info,
+                lines,
                 line: ir::SourceLoc::default(),
             };
             lower.function();
             lower.b.finalize(frontend_config);
         }
-        define(&mut obj, func_ids[f.index()], &mut ctx, m.func_name(f))?;
+        define(obj, func_ids[f.index()], &mut ctx, m.func_name(f))?;
         code_ranges.push(call_ranges(&ctx, func_ids[f.index()]));
         defined.push(f);
         obj.clear_context(&mut ctx);
     }
-    let tables = emit_debug_tables(&mut obj, &locations, &code_ranges)?;
-
-    if opts.entry_point {
-        let main = m.lookup_func("main").unwrap();
-        emit_c_main(
-            &mut obj,
-            &mut ctx,
-            &mut fctx,
-            func_ids[main.index()],
-            &rt,
-            target,
-            tables,
-        )?;
-    }
-
-    let mut product = obj.finish();
-    if opts.debug_info && target.has_dwarf() {
-        let functions: Vec<crate::dwarf::Function> = defined
-            .iter()
-            .zip(&code_ranges)
-            .map(|(&f, (id, size, _, lines))| crate::dwarf::Function {
-                symbol: product.function_symbol(*id),
-                name: m.func_trace_name(f).unwrap_or(m.func_name(f)),
-                size: *size,
-                ranges: lines,
-            })
-            .collect();
-        let dir = std::env::current_dir()
-            .map(|d| d.to_string_lossy().into_owned())
-            .unwrap_or_default();
-        crate::dwarf::emit(&mut product.object, &locations, &functions, &dir)
-            .map_err(|e| backend_error(format!("cannot write debug information: {e}")))?;
-    }
-    product
-        .emit()
-        .map_err(|e| backend_error(format!("cannot write the object file: {e}")))
+    let tables = emit_debug_tables(obj, &locations, &code_ranges)?;
+    Ok(Compiled {
+        func_ids,
+        rt,
+        tables,
+        locations,
+        code_ranges,
+        defined,
+    })
 }
 
 /// A compiled function, its code size, and the code ranges of its calls with their locations:
 /// `(start, end, location)`, offsets from the function's start; then the same for every
 /// instruction that has a location, when debug information is wanted.
-type CallRanges = (
+pub(crate) type CallRanges = (
     cranelift_module::FuncId,
     u32,
     Vec<(u32, u32, u32)>,
@@ -306,15 +353,15 @@ fn call_ranges(ctx: &Context, id: cranelift_module::FuncId) -> CallRanges {
 
 /// Emits the tables runtime errors print traces from (`A0LocationTable` and `A0CodeTable` in
 /// `a0rt.h`) and returns their data ids.
-fn emit_debug_tables(
-    obj: &mut ObjectModule,
+fn emit_debug_tables<M: ClifModule>(
+    obj: &mut M,
     locations: &a0_ir::Locations,
     code: &[CallRanges],
 ) -> Result<(DataId, DataId), Diagnostics> {
     // Tables that hold addresses are writable data: position-independent executables cannot have
     // absolute addresses in read-only data.
-    fn data(
-        obj: &mut ObjectModule,
+    fn data<M: ClifModule>(
+        obj: &mut M,
         name: &str,
         desc: &DataDescription,
     ) -> Result<DataId, Diagnostics> {
@@ -384,8 +431,8 @@ fn emit_debug_tables(
     Ok((locations_id, code_id))
 }
 
-fn define(
-    obj: &mut ObjectModule,
+fn define<M: ClifModule>(
+    obj: &mut M,
     id: cranelift_module::FuncId,
     ctx: &mut Context,
     name: &str,
@@ -401,8 +448,8 @@ fn define(
     })
 }
 
-fn signature(
-    obj: &ObjectModule,
+fn signature<M: ClifModule>(
+    obj: &M,
     params: &[Type],
     ret: Option<Type>,
     target: Target,
@@ -417,8 +464,8 @@ fn signature(
     sig
 }
 
-fn define_global(
-    obj: &mut ObjectModule,
+fn define_global<M: ClifModule>(
+    obj: &mut M,
     m: &Module,
     g: GlobalId,
     target: Target,
@@ -463,7 +510,7 @@ fn target_is_big_endian(_target: Target) -> bool {
 }
 
 /// Runtime functions the generated code calls.
-struct RuntimeFuncs {
+pub(crate) struct RuntimeFuncs {
     trap: cranelift_module::FuncId,
     init: cranelift_module::FuncId,
     exit: cranelift_module::FuncId,
@@ -471,7 +518,7 @@ struct RuntimeFuncs {
 }
 
 impl RuntimeFuncs {
-    fn declare(obj: &mut ObjectModule, target: Target) -> Result<RuntimeFuncs, Diagnostics> {
+    fn declare<M: ClifModule>(obj: &mut M, target: Target) -> Result<RuntimeFuncs, Diagnostics> {
         let mut decl = |name: &str, params: &[Type]| {
             let sig = signature(obj, params, None, target);
             obj.declare_function(name, Linkage::Import, &sig)
@@ -539,12 +586,12 @@ struct LoopBlocks {
     exit_used: bool,
 }
 
-struct Lower<'a> {
+struct Lower<'a, M: ClifModule> {
     m: &'a Module,
     f: FuncId,
     target: Target,
     ptr: ir::Type,
-    obj: &'a mut ObjectModule,
+    obj: &'a mut M,
     b: FunctionBuilder<'a>,
     func_ids: &'a [cranelift_module::FuncId],
     data_ids: &'a [DataId],
@@ -566,7 +613,7 @@ struct Lower<'a> {
 /// finds calls by return address) keeps only calls.
 const LINE_ONLY: u32 = 1 << 31;
 
-impl Lower<'_> {
+impl<M: ClifModule> Lower<'_, M> {
     fn ty(&self, t: Type) -> ir::Type {
         clif_type(t, self.target)
     }

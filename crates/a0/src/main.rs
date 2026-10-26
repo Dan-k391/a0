@@ -214,6 +214,17 @@ fn run(args: &[String]) -> ExitCode {
     }
     let mut argv = vec![path.to_string()];
     argv.extend(program_args.iter().cloned());
+    if !a0_driver::interpret() {
+        return match a0_native::run_main(
+            &module,
+            a0_interp::HostSymbols::new(),
+            argv,
+            &a0_native::JitOptions::default(),
+        ) {
+            Err(diags) => report(&sources, &diags),
+            Ok(code) => a0_runtime::exit(code),
+        };
+    }
     match a0_interp::run_main(module, a0_interp::HostSymbols::new(), argv) {
         Err(diags) => report(&sources, &diags),
         Ok(Err(trap)) => trap.report_and_exit(),

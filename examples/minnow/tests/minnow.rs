@@ -138,9 +138,15 @@ fn check_all(mode: &str, run_one: &dyn Fn(&Path) -> Output) {
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
 
-// Every mode runs with the HIR optimizer on (the default) and off (`A0_OPT=0`).
+// Every mode runs with the HIR optimizer on (the default) and off (`A0_OPT=0`): interpreted
+// (`A0_INTERP=1`), compiled into memory (the JIT), the JIT under GC stress, and native.
 
-fn interpreted(mode: &str, opt: &str, stress: bool) {
+/// The environment of each way `run` runs a program.
+const INTERPRETED: &[(&str, &str)] = &[("A0_INTERP", "1")];
+const JIT: &[(&str, &str)] = &[];
+const GC_STRESS: &[(&str, &str)] = &[("A0_GC_STRESS", "1")];
+
+fn in_process(mode: &str, opt: &str, env: &[(&str, &str)]) {
     check_all(mode, &|f| {
         // Run where the program is, so that stack traces name it as its expectations do.
         let (stdin, args) = inputs(f);
@@ -151,10 +157,8 @@ fn interpreted(mode: &str, opt: &str, stress: bool) {
             .arg(f.file_name().unwrap())
             .args(&args)
             .env("A0_OPT", opt)
-            .env("A0_TEST_OUT", &out);
-        if stress {
-            cmd.env("A0_GC_STRESS", "1");
-        }
+            .env("A0_TEST_OUT", &out)
+            .envs(env.iter().copied());
         let output = run(&mut cmd, &stdin);
         std::fs::remove_dir_all(&out).ok();
         output
@@ -200,12 +204,17 @@ fn native(mode: &str, opt: &str) {
 
 #[test]
 fn programs_run_in_the_interpreter() {
-    interpreted("interpreted", "1", false);
+    in_process("interpreted", "1", INTERPRETED);
+}
+
+#[test]
+fn programs_run_in_the_jit() {
+    in_process("JIT", "1", JIT);
 }
 
 #[test]
 fn programs_survive_gc_stress() {
-    interpreted("GC stress", "1", true);
+    in_process("GC stress", "1", GC_STRESS);
 }
 
 #[test]
@@ -215,12 +224,17 @@ fn programs_run_natively() {
 
 #[test]
 fn unoptimized_programs_run_in_the_interpreter() {
-    interpreted("unoptimized, interpreted", "0", false);
+    in_process("unoptimized, interpreted", "0", INTERPRETED);
+}
+
+#[test]
+fn unoptimized_programs_run_in_the_jit() {
+    in_process("unoptimized, JIT", "0", JIT);
 }
 
 #[test]
 fn unoptimized_programs_survive_gc_stress() {
-    interpreted("unoptimized, GC stress", "0", true);
+    in_process("unoptimized, GC stress", "0", GC_STRESS);
 }
 
 #[test]

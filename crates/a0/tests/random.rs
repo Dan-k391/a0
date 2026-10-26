@@ -1036,21 +1036,23 @@ fn outcome(out: &Output) -> String {
     )
 }
 
-/// Runs `file` in all six modes; a description of each that differs from the first.
+/// Runs `file` in all eight modes (interpreted, the JIT, the JIT under GC stress and native, each
+/// optimized and not); a description of each that differs from the first.
 fn differences(file: &Path, dir: &Path) -> Vec<String> {
     let a0 = env!("CARGO_BIN_EXE_a0");
     let mut runs: Vec<(String, Output)> = Vec::new();
     for opt in ["0", "1"] {
-        for stress in ["0", "1"] {
+        for (mode, env) in [
+            ("interpreted", ("A0_INTERP", "1")),
+            ("JIT", ("A0_GC_STRESS", "0")),
+            ("JIT, GC stress", ("A0_GC_STRESS", "1")),
+        ] {
             let out = run(Command::new(a0)
                 .arg("run")
                 .arg(file)
                 .env("A0_OPT", opt)
-                .env("A0_GC_STRESS", stress));
-            runs.push((
-                format!("interpreted, A0_OPT={opt}, A0_GC_STRESS={stress}"),
-                out,
-            ));
+                .env(env.0, env.1));
+            runs.push((format!("{mode}, A0_OPT={opt}"), out));
         }
         let exe = dir.join(format!(
             "{}-{opt}{}",

@@ -3,7 +3,8 @@
 [![CI](https://github.com/Dan-k391/a0/actions/workflows/ci.yml/badge.svg)](https://github.com/Dan-k391/a0/actions/workflows/ci.yml)
 
 A0 is a framework for building programming languages. You write a grammar and a compiler from its
-syntax trees to A0's high-level IR; your language gets an interpreter, native executables, garbage
+syntax trees to A0's high-level IR; your language runs at once at native speed (a JIT), compiles to
+native executables, has an interpreter for debugging, garbage
 collection, an optimizer, error messages in its own terms, and editor support.
 
 ```
@@ -25,9 +26,10 @@ grammar ──a0-syntax──▶ syntax tree ──your compiler──▶ HIR �
 - **A standard library** every language can offer: files, standard input, arguments, the
   environment, time, mathematics and strings. Calling C functions that take strings and arrays
   takes only their declaration.
-- **Two backends that agree**: an interpreter, and native code through Cranelift linked by the
-  system linker, on Linux (x86-64, aarch64), macOS (aarch64, x86-64) and Windows (x86-64). Same
-  output, errors and exit codes, checked on every test program.
+- **Backends that agree**: native code through Cranelift, run at once from memory (a JIT) or
+  linked into executables by the system linker, and an interpreter, the reference, on Linux
+  (x86-64, aarch64), macOS (aarch64, x86-64) and Windows (x86-64). Same output, errors and exit
+  codes, checked on every test program.
 - **A precise garbage collector** and an **optimizer**, on by default, with no work in the frontend.
 - **Diagnostics as good as rustc's**, from the builder: codes with explanations, related locations
   (where an expected type comes from, the earlier declaration), "did you mean" fixes, warnings, in
@@ -132,7 +134,7 @@ By hand:
    and checks types and reports errors. Runtime support can be written in HIR itself and parsed with
    `a0_hir::parse`. A language that needs full control can emit the core IR (`docs/ir.md`) with
    `a0_ir::Builder` instead.
-3. Give `a0_driver::Language` your compile function and grammar. It provides `run` (interpreter),
+3. Give `a0_driver::Language` your compile function and grammar. It provides `run` (native speed, through the JIT),
    `build` (native executable, `-g` for gdb and lldb), `ir`, `hir`, `lsp`, `dap` (debugger) and
    `repl`, renders diagnostics and maps errors to your exit codes.
 
@@ -165,7 +167,7 @@ A0 is not published on crates.io; depend on it from git (`a0-hir = { git =
 ```
 a0 check prog.a0ir                        # parse and verify IR
 a0 fmt prog.a0ir                          # print the canonical form
-a0 run prog.a0ir                          # interpret @main
+a0 run prog.a0ir                          # run @main (JIT; A0_INTERP=1 interprets)
 a0 build prog.a0ir                        # native executable for the host
 a0 obj --target aarch64-linux prog.a0ir   # object file for another target
 a0 parse lang.a0g input.txt               # try a grammar: print the tree or the errors

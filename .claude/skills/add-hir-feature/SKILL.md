@@ -38,8 +38,8 @@ identically interpreted, natively and under `A0_GC_STRESS=1`.
    a binding in `crates/a0-capi` (`src/hir.rs`, `include/a0.h`).
 8. `docs/hir.md` - the type/expression/builtin tables and lowering notes.
 9. Tests:
-   - a program in `tests/hir/<name>.hir` with `// expect-stdout:` lines (runs in all six modes:
-     interpreted, native, GC stress, each with and without the optimizer);
+   - a program in `tests/hir/<name>.hir` with `// expect-stdout:` lines (runs in all eight modes:
+     interpreted, JIT, native, GC stress, each with and without the optimizer);
    - typing errors in `crates/a0-hir/tests/hir.rs` (`type_errors_are_reported_with_locations`),
      each with its code: a new kind of error gets a code and explanation in `a0_diag::codes` and a
      row in `docs/diagnostics.md`, a short message with a primary label, related labels where an

@@ -1,6 +1,6 @@
 """The command line of a language written in Python, like the Rust driver's (`a0_driver`):
 
-    lang run <file> [args...]      interpret the program (`-` reads it from standard input)
+    lang run <file> [args...]      run the program (`-` reads it from standard input)
     lang build <file> [-o output]  compile it to a native executable for the host
     lang hir <file>                print the HIR
     lang ir <file>                 print the core IR
@@ -23,7 +23,7 @@ import a0
 USAGE = """usage: {name} <command> <file>
 
 commands:
-  run <file> [args...]   interpret the program
+  run <file> [args...]   run the program
   build <file> [-o out]  compile it to a native executable
   hir <file>             print the high-level IR
   ir <file>              print the core IR
@@ -74,7 +74,10 @@ def main(name, compile, argv=None, grammar=None, repl_main=None):
             sys.stdout.write(str(module))
             return 0
         if command == "run":
-            return module.run([path] + rest)
+            # Compiled into memory, as the Rust driver runs programs; `A0_INTERP=1` interprets.
+            if os.environ.get("A0_INTERP", "0") not in ("", "0"):
+                return module.run([path] + rest)
+            return module.run_jit([path] + rest)
         if output is None:
             output = os.path.splitext(os.path.basename(path))[0]
         if sys.platform == "win32" and not os.path.splitext(output)[1]:

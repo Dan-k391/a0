@@ -2,7 +2,8 @@
 //!
 //! [`compile_object`] lowers a module to Cranelift IR and emits an object file for any supported
 //! [`Target`]. [`link_executable`] links such an object with the C runtime using the system linker
-//! (host target only). [`build_executable`] does both.
+//! (host target only). [`build_executable`] does both. [`run_main`] runs a module from memory
+//! instead, through Cranelift's JIT, with no linking.
 //!
 //! IR variables become Cranelift variables, so Cranelift's frontend builds SSA; `if`/`loop` become
 //! blocks. Integer division checks and `unreachable` call the runtime's `a0_rt_trap`, which prints the
@@ -10,6 +11,7 @@
 
 mod codegen;
 mod dwarf;
+mod jit;
 mod link;
 
 use std::path::Path;
@@ -18,6 +20,7 @@ use a0_diag::Diagnostics;
 use a0_ir::Module;
 pub use a0_target::Target;
 pub use codegen::{CodegenOptions, ENTRY_SYMBOL, compile_object};
+pub use jit::{JitOptions, jit_supported, run_main};
 pub use link::{Library, LinkOptions, link_executable};
 
 #[derive(Clone, Debug, Default)]
