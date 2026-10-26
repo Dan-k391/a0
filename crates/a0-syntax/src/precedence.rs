@@ -9,11 +9,14 @@
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct Operand {
+    /// The index of the operand or of the step.
     pub index: u32,
+    /// Whether `index` names an earlier step rather than an original operand.
     pub is_step: bool,
 }
 
 impl Operand {
+    /// The original operand at `index`.
     pub fn leaf(index: u32) -> Operand {
         Operand {
             index,
@@ -21,6 +24,7 @@ impl Operand {
         }
     }
 
+    /// The result of step `index`.
     pub fn step(index: u32) -> Operand {
         Operand {
             index,
@@ -33,8 +37,11 @@ impl Operand {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct Combine {
+    /// The left operand.
     pub left: Operand,
+    /// The index of the operator in the chain.
     pub op: u32,
+    /// The right operand.
     pub right: Operand,
 }
 

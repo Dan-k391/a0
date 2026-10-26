@@ -23,6 +23,8 @@
 //! assert!(ir.lookup_func("main").is_some());
 //! ```
 
+#![warn(missing_docs)]
+
 mod builder;
 mod check;
 pub mod dsl;

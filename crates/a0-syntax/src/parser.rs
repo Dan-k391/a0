@@ -23,8 +23,11 @@ pub const MAX_NESTING: usize = 10_000;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct Token {
+    /// Its kind: a literal or named token of the grammar.
     pub kind: KindId,
+    /// The byte offset of its first byte.
     pub start: u32,
+    /// The byte offset after its last byte.
     pub end: u32,
 }
 

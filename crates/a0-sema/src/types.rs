@@ -17,9 +17,11 @@ use a0_diag::{Diagnostic, Diagnostics, Span};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[repr(transparent)]
+/// A type, by its index in [`Types`].
 pub struct TypeId(pub u32);
 
 impl TypeId {
+    /// The index, for tables indexed by type.
     pub fn index(self) -> usize {
         self.0 as usize
     }
@@ -32,7 +34,9 @@ impl TypeId {
 pub enum TypeTag {
     /// A type known by name only: `int`, `string`, ... Equal names are the same type.
     Named,
+    /// An array of elements of one type.
     Array,
+    /// A function type: parameters and a result.
     Function,
     /// A declared struct. Every declaration is a distinct type, even with the same name.
     Struct,
@@ -65,6 +69,7 @@ pub struct Types {
 }
 
 impl Types {
+    /// No types yet.
     pub fn new() -> Types {
         Types::default()
     }
@@ -86,10 +91,12 @@ impl Types {
         self.intern(Kind::Named(name.to_string()))
     }
 
+    /// The type of arrays of `elem`.
     pub fn array(&mut self, elem: TypeId) -> TypeId {
         self.intern(Kind::Array(elem))
     }
 
+    /// The type of functions taking `params` and returning `ret`.
     pub fn function(&mut self, params: &[TypeId], ret: TypeId) -> TypeId {
         self.intern(Kind::Function(params.to_vec(), ret))
     }
@@ -193,10 +200,12 @@ impl Types {
         }
     }
 
+    /// The number of fields of struct `s`.
     pub fn field_count(&self, s: TypeId) -> u32 {
         self.struct_def(s).map_or(0, |d| d.fields.len() as u32)
     }
 
+    /// The index of the field `name` of struct `s`, if it has one.
     pub fn field_index(&self, s: TypeId, name: &str) -> Option<u32> {
         let d = self.struct_def(s)?;
         d.fields
@@ -205,10 +214,12 @@ impl Types {
             .map(|i| i as u32)
     }
 
+    /// The name of field `i` of struct `s`.
     pub fn field_name(&self, s: TypeId, i: u32) -> &str {
         &self.struct_def(s).expect("not a struct").fields[i as usize].0
     }
 
+    /// The type of field `i` of struct `s`.
     pub fn field_type(&self, s: TypeId, i: u32) -> TypeId {
         self.struct_def(s).expect("not a struct").fields[i as usize].1
     }

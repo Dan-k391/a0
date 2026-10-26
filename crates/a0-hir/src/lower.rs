@@ -80,6 +80,7 @@ pub fn lower(m: &HirModule) -> Result<a0_ir::Module, Diagnostics> {
     lower_with(m, LowerOptions::default())
 }
 
+/// [`lower`] with the given options.
 pub fn lower_with(m: &HirModule, options: LowerOptions) -> Result<a0_ir::Module, Diagnostics> {
     let entry = crate::check::check_entry(m);
     if entry.has_errors() {

@@ -41,6 +41,7 @@ pub struct Builder {
 }
 
 impl Builder {
+    /// A builder of a new, empty module named `module_name`.
     pub fn new(module_name: &str) -> Builder {
         Builder::from_module(Module::new(module_name))
     }
@@ -244,6 +245,7 @@ impl Builder {
         (self.span, self.inline)
     }
 
+    /// Restores a location saved with `location`: the span and inline site of what is built next.
     pub fn set_location(&mut self, (span, inline): (Option<Span>, InlineId)) {
         self.span = span;
         self.inline = inline;
@@ -381,6 +383,7 @@ impl Builder {
         t.index() < self.module.debug_types.len()
     }
 
+    /// Declares a variable of the current function, of type `ty`; `name` (may be empty) is for the text format and debuggers.
     pub fn declare_var(&mut self, name: &str, ty: Type) -> Var {
         if self.func.is_none() {
             self.error("declare_var called outside a function");
@@ -416,6 +419,7 @@ impl Builder {
 
     // ---------------------------------------------------------------- constants
 
+    /// An integer constant of type `ty` (wrapped to its width).
     pub fn iconst(&mut self, ty: Type, value: i64) -> Value {
         self.inst(
             Opcode::Iconst,
@@ -425,6 +429,7 @@ impl Builder {
         )
     }
 
+    /// A float constant of type `ty`.
     pub fn fconst(&mut self, ty: Type, value: f64) -> Value {
         let bits = match ty {
             Type::F32 => (value as f32).to_bits() as u64,
@@ -454,6 +459,7 @@ impl Builder {
         self.inst(Opcode::Fconst, &[], bits, Some(ty))
     }
 
+    /// The null pointer.
     pub fn null(&mut self) -> Value {
         self.inst(Opcode::Null, &[], 0, Some(Type::Ptr))
     }
@@ -506,50 +512,62 @@ impl Builder {
         self.inst(op, &[a, b], 0, Some(ty))
     }
 
+    /// `a + b`, wrapping.
     pub fn iadd(&mut self, a: Value, b: Value) -> Value {
         self.binary(Opcode::Iadd, a, b)
     }
 
+    /// `a - b`, wrapping.
     pub fn isub(&mut self, a: Value, b: Value) -> Value {
         self.binary(Opcode::Isub, a, b)
     }
 
+    /// `a * b`, wrapping.
     pub fn imul(&mut self, a: Value, b: Value) -> Value {
         self.binary(Opcode::Imul, a, b)
     }
 
+    /// `a / b`, signed; traps on division by zero.
     pub fn sdiv(&mut self, a: Value, b: Value) -> Value {
         self.binary(Opcode::Sdiv, a, b)
     }
 
+    /// `a % b`, signed; traps on division by zero.
     pub fn srem(&mut self, a: Value, b: Value) -> Value {
         self.binary(Opcode::Srem, a, b)
     }
 
+    /// Bitwise and.
     pub fn and(&mut self, a: Value, b: Value) -> Value {
         self.binary(Opcode::And, a, b)
     }
 
+    /// Bitwise or.
     pub fn or(&mut self, a: Value, b: Value) -> Value {
         self.binary(Opcode::Or, a, b)
     }
 
+    /// Bitwise exclusive or.
     pub fn xor(&mut self, a: Value, b: Value) -> Value {
         self.binary(Opcode::Xor, a, b)
     }
 
+    /// Float `a + b`.
     pub fn fadd(&mut self, a: Value, b: Value) -> Value {
         self.binary(Opcode::Fadd, a, b)
     }
 
+    /// Float `a - b`.
     pub fn fsub(&mut self, a: Value, b: Value) -> Value {
         self.binary(Opcode::Fsub, a, b)
     }
 
+    /// Float `a * b`.
     pub fn fmul(&mut self, a: Value, b: Value) -> Value {
         self.binary(Opcode::Fmul, a, b)
     }
 
+    /// Float `a / b`.
     pub fn fdiv(&mut self, a: Value, b: Value) -> Value {
         self.binary(Opcode::Fdiv, a, b)
     }
@@ -563,22 +581,27 @@ impl Builder {
         self.inst(op, &[a], 0, Some(ty))
     }
 
+    /// Integer negation, wrapping.
     pub fn ineg(&mut self, a: Value) -> Value {
         self.unary(Opcode::Ineg, a)
     }
 
+    /// Bitwise not (logical not for `i1`).
     pub fn not(&mut self, a: Value) -> Value {
         self.unary(Opcode::Not, a)
     }
 
+    /// Float negation.
     pub fn fneg(&mut self, a: Value) -> Value {
         self.unary(Opcode::Fneg, a)
     }
 
+    /// An integer comparison: an `i1`.
     pub fn icmp(&mut self, cc: IntCC, a: Value, b: Value) -> Value {
         self.inst(Opcode::Icmp, &[a, b], cc as u64, Some(Type::I1))
     }
 
+    /// A float comparison: an `i1`.
     pub fn fcmp(&mut self, cc: FloatCC, a: Value, b: Value) -> Value {
         self.inst(Opcode::Fcmp, &[a, b], cc as u64, Some(Type::I1))
     }
@@ -591,6 +614,7 @@ impl Builder {
         self.inst(op, &[a], 0, Some(to))
     }
 
+    /// `a` if `cond` (an `i1`) is true, otherwise `b`.
     pub fn select(&mut self, cond: Value, a: Value, b: Value) -> Value {
         let ty = self.ty(a);
         self.inst(Opcode::Select, &[cond, a, b], 0, Some(ty))
@@ -598,10 +622,12 @@ impl Builder {
 
     // ---------------------------------------------------------------- memory
 
+    /// Reads a `ty` at `ptr`.
     pub fn load(&mut self, ty: Type, ptr: Value) -> Value {
         self.inst(Opcode::Load, &[ptr], 0, Some(ty))
     }
 
+    /// Writes `value` at `ptr`.
     pub fn store(&mut self, value: Value, ptr: Value) {
         self.inst(Opcode::Store, &[value, ptr], 0, None);
     }

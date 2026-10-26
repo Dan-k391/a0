@@ -885,6 +885,7 @@ pub struct Package {
 #[derive(Clone, Debug, Default)]
 #[non_exhaustive]
 pub struct Packages {
+    /// The packages: the root first, then its dependencies.
     pub list: Vec<Package>,
     /// The root package's main file, if it has one.
     pub main: Option<PathBuf>,

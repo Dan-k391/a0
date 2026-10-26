@@ -30,6 +30,8 @@
 //! );
 //! ```
 
+#![warn(missing_docs)]
+
 mod grammar;
 mod imports;
 mod index;

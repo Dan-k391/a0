@@ -235,6 +235,7 @@ pub struct HirBuilder {
 }
 
 impl HirBuilder {
+    /// A builder of a new, empty module named `module_name`.
     pub fn new(module_name: &str) -> HirBuilder {
         HirBuilder::from_module(HirModule::new(module_name))
     }
@@ -258,6 +259,7 @@ impl HirBuilder {
         }
     }
 
+    /// The module built so far.
     pub fn module(&self) -> &HirModule {
         &self.m
     }
@@ -699,6 +701,7 @@ impl HirBuilder {
         self.m.resolve(t)
     }
 
+    /// `array<elem>`.
     pub fn array_type(&mut self, elem: TypeId) -> TypeId {
         self.m.intern(TypeKind::Array(elem))
     }
@@ -714,6 +717,7 @@ impl HirBuilder {
         self.push(ExprKind::SizeOf(t), TypeId::NEVER)
     }
 
+    /// `map<key, value>`; keys are `int`, `bool` or `string`.
     pub fn map_type(&mut self, key: TypeId, value: TypeId) -> TypeId {
         if !matches!(
             self.m.kind(key),
@@ -728,6 +732,7 @@ impl HirBuilder {
         self.m.intern(TypeKind::Map(key, value))
     }
 
+    /// The type of functions and closures taking `params` and returning `ret`.
     pub fn fn_type(&mut self, params: &[TypeId], ret: TypeId) -> TypeId {
         self.m.intern(TypeKind::Fn(params.to_vec(), ret))
     }
@@ -761,10 +766,12 @@ impl HirBuilder {
         self.m.intern(TypeKind::Struct(s, args))
     }
 
+    /// The type of a non-generic enum.
     pub fn enum_type(&mut self, e: EnumId) -> TypeId {
         self.enum_type_args(e, &[])
     }
 
+    /// A generic enum's type with `args` (one per type parameter).
     pub fn enum_type_args(&mut self, e: EnumId, args: &[TypeId]) -> TypeId {
         let args = self.arity(Item::Enum(e), args);
         self.m.intern(TypeKind::Enum(e, args))
@@ -898,6 +905,7 @@ impl HirBuilder {
         self.m.structs[s.index()].inline = true;
     }
 
+    /// Adds a field to a struct; returns its index.
     pub fn add_field(&mut self, s: StructId, name: &str, ty: TypeId) -> u32 {
         self.item_name(name);
         let def = &self.m.structs[s.index()];
@@ -919,10 +927,12 @@ impl HirBuilder {
         def.fields.len() as u32 - 1
     }
 
+    /// Declares an enum; add its variants with [`HirBuilder::add_variant`].
     pub fn declare_enum(&mut self, name: &str) -> EnumId {
         self.declare_generic_enum(name, &[])
     }
 
+    /// Declares an enum with type parameters, used by its variants through [`HirBuilder::type_param`].
     pub fn declare_generic_enum(&mut self, name: &str, type_params: &[&str]) -> EnumId {
         let e = EnumId(self.m.enums.len() as u32);
         let type_params = self.type_param_names(type_params);
@@ -936,6 +946,7 @@ impl HirBuilder {
         e
     }
 
+    /// Adds a variant whose payload has the types `fields`; returns its index.
     pub fn add_variant(&mut self, e: EnumId, name: &str, fields: &[TypeId]) -> u32 {
         self.item_name(name);
         if let Some(v) = self.m.variant_index(e, name) {
@@ -1149,6 +1160,7 @@ impl HirBuilder {
         self.add_params(body, param_names, params);
     }
 
+    /// A function's body, whose root is set with [`HirBuilder::set_root`].
     pub fn function_body(&self, f: FuncId) -> BodyId {
         self.m.funcs[f.index()].body
     }
@@ -1200,6 +1212,7 @@ impl HirBuilder {
         }
     }
 
+    /// Parameter `i` of a body, as a local.
     pub fn param(&self, body: BodyId, i: u32) -> LocalId {
         self.m.bodies[body.index()].params[i as usize]
     }
@@ -1360,30 +1373,37 @@ impl HirBuilder {
         e
     }
 
+    /// An expression's type as inferred so far.
     pub fn type_of(&self, e: ExprId) -> TypeId {
         self.m.expr_type(e)
     }
 
+    /// The unit value.
     pub fn unit(&mut self) -> ExprId {
         self.push(ExprKind::Unit, TypeId::UNIT)
     }
 
+    /// `true` or `false`.
     pub fn bool_lit(&mut self, v: bool) -> ExprId {
         self.push(ExprKind::Bool(v), TypeId::BOOL)
     }
 
+    /// An integer literal, of the type expected of it (`int` unless something else is).
     pub fn int(&mut self, v: i64) -> ExprId {
         self.push(ExprKind::Int(v), TypeId::INT)
     }
 
+    /// A float literal.
     pub fn float(&mut self, v: f64) -> ExprId {
         self.push(ExprKind::Float(v.to_bits()), TypeId::FLOAT)
     }
 
+    /// A float literal given by its bits.
     pub fn float_bits(&mut self, bits: u64) -> ExprId {
         self.push(ExprKind::Float(bits), TypeId::FLOAT)
     }
 
+    /// A string literal.
     pub fn string(&mut self, s: &str) -> ExprId {
         self.push(ExprKind::Str(s.to_string()), TypeId::STRING)
     }
@@ -1394,10 +1414,12 @@ impl HirBuilder {
         self.push(ExprKind::Null, t)
     }
 
+    /// Reads a local.
     pub fn local(&mut self, l: LocalId) -> ExprId {
         self.push(ExprKind::Local(l), TypeId::NEVER)
     }
 
+    /// Reads a global.
     pub fn global(&mut self, g: GlobalId) -> ExprId {
         self.push(ExprKind::Global(g), TypeId::NEVER)
     }
@@ -1414,18 +1436,22 @@ impl HirBuilder {
         self.push(ExprKind::Func(f, type_args), TypeId::NEVER)
     }
 
+    /// Declares local `l` with its first value; it is in scope until the end of the enclosing block.
     pub fn let_(&mut self, l: LocalId, init: ExprId) -> ExprId {
         self.push(ExprKind::Let(l, init), TypeId::UNIT)
     }
 
+    /// Assigns to a local.
     pub fn set_local(&mut self, l: LocalId, value: ExprId) -> ExprId {
         self.push(ExprKind::SetLocal(l, value), TypeId::UNIT)
     }
 
+    /// Assigns to a global.
     pub fn set_global(&mut self, g: GlobalId, value: ExprId) -> ExprId {
         self.push(ExprKind::SetGlobal(g, value), TypeId::UNIT)
     }
 
+    /// Assigns to field `field` of a struct.
     pub fn set_field(&mut self, object: ExprId, field: u32, value: ExprId) -> ExprId {
         self.push(ExprKind::SetField(object, field, value), TypeId::UNIT)
     }
@@ -1443,18 +1469,22 @@ impl HirBuilder {
         self.push(ExprKind::SetIndex(target, index, value), TypeId::UNIT)
     }
 
+    /// A unary operation.
     pub fn unary(&mut self, op: UnOp, a: ExprId) -> ExprId {
         self.push(ExprKind::Unary(op, a), TypeId::NEVER)
     }
 
+    /// A binary operation.
     pub fn binary(&mut self, op: BinOp, a: ExprId, b: ExprId) -> ExprId {
         self.push(ExprKind::Binary(op, a, b), TypeId::NEVER)
     }
 
+    /// `a && b`, short-circuit.
     pub fn and(&mut self, a: ExprId, b: ExprId) -> ExprId {
         self.push(ExprKind::And(a, b), TypeId::BOOL)
     }
 
+    /// `a || b`, short-circuit.
     pub fn or(&mut self, a: ExprId, b: ExprId) -> ExprId {
         self.push(ExprKind::Or(a, b), TypeId::BOOL)
     }
@@ -1471,6 +1501,7 @@ impl HirBuilder {
         self.push(ExprKind::Call(f, type_args, args.to_vec()), TypeId::NEVER)
     }
 
+    /// Calls a C function.
     pub fn call_extern(&mut self, x: ExternId, args: &[ExprId]) -> ExprId {
         self.push(ExprKind::CallExtern(x, args.to_vec()), TypeId::NEVER)
     }
@@ -1504,6 +1535,7 @@ impl HirBuilder {
         self.push(ExprKind::New(s, fields.to_vec()), t)
     }
 
+    /// Field `field` of a struct.
     pub fn field(&mut self, object: ExprId, field: u32) -> ExprId {
         self.push(ExprKind::Field(object, field), TypeId::NEVER)
     }
@@ -1522,6 +1554,7 @@ impl HirBuilder {
         self.push(ExprKind::Variant(e, v, args.to_vec()), t)
     }
 
+    /// A variant of a generic enum with explicit type arguments.
     pub fn variant_generic(
         &mut self,
         e: EnumId,
@@ -1543,6 +1576,7 @@ impl HirBuilder {
         ArmId(self.m.arms.len() as u32 - 1)
     }
 
+    /// Takes an enum value apart: the arm of its variant runs, with the payload in the arm's locals.
     pub fn match_(&mut self, scrutinee: ExprId, arms: &[ArmId]) -> ExprId {
         self.push(ExprKind::Match(scrutinee, arms.to_vec()), TypeId::NEVER)
     }
@@ -1569,10 +1603,12 @@ impl HirBuilder {
         self.push(ExprKind::NewObject, TypeId::OBJECT)
     }
 
+    /// `target[index]`: an array element (bounds-checked), a map's value, or a pointer's element.
     pub fn index(&mut self, target: ExprId, index: ExprId) -> ExprId {
         self.push(ExprKind::Index(target, index), TypeId::NEVER)
     }
 
+    /// Calls a builtin (`len`, `push`, `print`, ...).
     pub fn builtin(&mut self, op: Builtin, args: &[ExprId]) -> ExprId {
         self.push(ExprKind::Builtin(op, args.to_vec()), TypeId::NEVER)
     }
@@ -1592,6 +1628,7 @@ impl HirBuilder {
         self.push(ExprKind::Is(e, ty), TypeId::BOOL)
     }
 
+    /// `if cond { then } else { els }`; its value is the branches' when both have one.
     pub fn if_(&mut self, cond: ExprId, then: ExprId, els: Option<ExprId>) -> ExprId {
         self.push(ExprKind::If(cond, then, els), TypeId::NEVER)
     }
@@ -1622,22 +1659,27 @@ impl HirBuilder {
         self.push(ExprKind::Try(body, local, handler), TypeId::NEVER)
     }
 
+    /// `while cond { body }`.
     pub fn while_(&mut self, cond: ExprId, body: ExprId) -> ExprId {
         self.push(ExprKind::While(cond, body), TypeId::UNIT)
     }
 
+    /// `loop { body }`, left with `break`.
     pub fn loop_(&mut self, body: ExprId) -> ExprId {
         self.push(ExprKind::Loop(body), TypeId::NEVER)
     }
 
+    /// Leaves the innermost loop.
     pub fn break_(&mut self) -> ExprId {
         self.push(ExprKind::Break, TypeId::NEVER)
     }
 
+    /// Starts the innermost loop's next round.
     pub fn continue_(&mut self) -> ExprId {
         self.push(ExprKind::Continue, TypeId::NEVER)
     }
 
+    /// Returns from the body, with a value or not.
     pub fn return_(&mut self, value: Option<ExprId>) -> ExprId {
         self.push(ExprKind::Return(value), TypeId::NEVER)
     }

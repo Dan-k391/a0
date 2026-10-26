@@ -30,6 +30,7 @@ pub struct Import {
     pub names: Vec<(String, Span)>,
     /// The path as written, and the whole import.
     pub path_span: Span,
+    /// The whole import.
     pub span: Span,
 }
 

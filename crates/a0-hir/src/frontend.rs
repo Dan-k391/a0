@@ -39,6 +39,7 @@ impl HirBuilder {
         }
     }
 
+    /// Ends the body begun last.
     pub fn end_body(&mut self) {
         self.close_scope();
         if let Some((_, saved)) = self.body_stack.pop() {
@@ -65,6 +66,7 @@ impl HirBuilder {
         self.shadow_scopes.push(0);
     }
 
+    /// Closes the scope opened last; its locals go out of scope.
     pub fn pop_scope(&mut self) {
         self.close_scope();
     }
@@ -219,6 +221,7 @@ impl HirBuilder {
         self.let_(l, value)
     }
 
+    /// The local named `name` in scope, if there is one.
     pub fn lookup_local(&self, name: &str) -> Option<LocalId> {
         self.names
             .lookup(name)
@@ -251,12 +254,14 @@ impl HirBuilder {
         }
     }
 
+    /// Adds a note to the diagnostic reported last.
     pub fn report_note(&mut self, note: &str) {
         if let Some(d) = self.diags.last_mut() {
             d.notes.push(note.to_string());
         }
     }
 
+    /// Adds a suggestion to the diagnostic reported last.
     pub fn report_help(&mut self, help: &str) {
         if let Some(d) = self.diags.last_mut() {
             d.helps.push(help.to_string());

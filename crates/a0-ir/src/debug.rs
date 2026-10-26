@@ -17,9 +17,13 @@ use crate::types::{FuncId, InlineId, Inst};
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub struct Location {
+    /// The function, as stack traces name it.
     pub func: String,
+    /// The source file.
     pub file: String,
+    /// The line, from 1.
     pub line: u32,
+    /// The column, from 1, in characters.
     pub col: u32,
     /// The location this one was inlined at, as an index into the table plus one (0 for none).
     pub parent: u32,
@@ -27,6 +31,7 @@ pub struct Location {
 
 /// The locations of a module's instructions.
 pub struct Locations {
+    /// The locations, which instructions refer to by index.
     pub entries: Vec<Location>,
     /// Per instruction: its location's index plus one, or 0.
     inst: Vec<u32>,

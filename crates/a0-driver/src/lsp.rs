@@ -1202,6 +1202,7 @@ pub(crate) fn builtin_file(sources: &SourceMap, id: SourceId) -> Option<PathBuf>
     Some(path)
 }
 
+/// The path of a `file:` URI, if it is one.
 pub fn uri_to_path(uri: &str) -> Option<PathBuf> {
     let rest = uri.strip_prefix("file://")?;
     let mut bytes = Vec::new();

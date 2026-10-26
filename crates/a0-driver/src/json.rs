@@ -3,11 +3,17 @@
 use std::fmt;
 
 #[derive(Clone, Debug, PartialEq)]
+/// A JSON value, as the language server and the debugger exchange them.
 pub enum Json {
+    /// `null`.
     Null,
+    /// `true` or `false`.
     Bool(bool),
+    /// A number.
     Number(f64),
+    /// A string.
     String(String),
+    /// An array.
     Array(Vec<Json>),
     /// Members in insertion order.
     Object(Vec<(String, Json)>),
@@ -50,6 +56,7 @@ impl Json {
         }
     }
 
+    /// The string, if this is one.
     pub fn as_str(&self) -> Option<&str> {
         match self {
             Json::String(s) => Some(s),
@@ -57,6 +64,7 @@ impl Json {
         }
     }
 
+    /// The number, if this is one.
     pub fn as_f64(&self) -> Option<f64> {
         match self {
             Json::Number(n) => Some(*n),
@@ -64,12 +72,14 @@ impl Json {
         }
     }
 
+    /// The number, if this is one that fits in a `u32`.
     pub fn as_u32(&self) -> Option<u32> {
         self.as_f64()
             .filter(|n| n.fract() == 0.0 && *n >= 0.0 && *n <= u32::MAX as f64)
             .map(|n| n as u32)
     }
 
+    /// The elements, if this is an array; none otherwise.
     pub fn as_array(&self) -> &[Json] {
         match self {
             Json::Array(items) => items,
@@ -77,6 +87,7 @@ impl Json {
         }
     }
 
+    /// Whether this is `null`.
     pub fn is_null(&self) -> bool {
         matches!(self, Json::Null)
     }

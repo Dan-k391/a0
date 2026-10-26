@@ -23,6 +23,8 @@
 //! assert!(module.to_string().contains("fcmp gt"));
 //! ```
 
+#![warn(missing_docs)]
+
 mod builder;
 mod debug;
 mod module;

@@ -86,7 +86,8 @@ layer, decision D17). A new crate goes into the table above and into `[workspace
   exhaustively, which say in their docs that they may grow. Retire things by deprecating them
   (`#[deprecated]`, `A0_DEPRECATED`, `a0._deprecated`) and listing them under **Deprecated** in the
   changelog. Languages use only the covered crates (`a0_driver::backend` for C runtimes); a text
-  format change keeps every version-1 text reading the same.
+  format change keeps every version-1 text reading the same. The covered crates document every
+  public item (`#![warn(missing_docs)]`; CI builds their reference with `-D warnings`).
 - **Report, don't panic.** Libraries return `Diagnostics` (from `a0-diag`) for anything a user can
   cause. Builders record misuse as diagnostics. `panic!`/`unwrap` only for internal invariants.
 - **Diagnostics as good as rustc's.** A problem a program can have gets its own code in

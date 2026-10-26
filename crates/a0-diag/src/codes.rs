@@ -13,9 +13,11 @@
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct CodeInfo {
+    /// The code, as `E2001`.
     pub code: &'static str,
     /// A short description, as in the codes' list.
     pub title: &'static str,
+    /// What the problem is and how to fix it, as `explain` prints it.
     pub explanation: &'static str,
 }
 

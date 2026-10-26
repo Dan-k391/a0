@@ -9,6 +9,8 @@
 //! [`Types`] is the type checker's toolkit: interned types, nominal structs, type variables with
 //! unification, and the standard mismatch diagnostic.
 
+#![warn(missing_docs)]
+
 mod types;
 
 pub use types::{TypeId, TypeTag, Types};
@@ -17,6 +19,7 @@ use std::collections::HashMap;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[repr(transparent)]
+/// A symbol declared in [`Scopes`], by its index.
 pub struct SymbolId(pub u32);
 
 /// What kind of scope this is. Function scopes mark the boundary for closure capture.
@@ -24,7 +27,9 @@ pub struct SymbolId(pub u32);
 #[repr(u8)]
 #[non_exhaustive]
 pub enum ScopeKind {
+    /// A block: names declared in it go out of scope at its end.
     Block,
+    /// A function: uses of names from outside it, from a nested function, are captures.
     Function,
 }
 
@@ -32,6 +37,7 @@ pub enum ScopeKind {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct Resolution {
+    /// The symbol the name refers to.
     pub symbol: SymbolId,
     /// How many scopes up from the innermost one the symbol was found (0 = innermost).
     pub scope_distance: u32,
@@ -62,10 +68,12 @@ pub struct Scopes {
 }
 
 impl Scopes {
+    /// No scopes and no symbols.
     pub fn new() -> Scopes {
         Scopes::default()
     }
 
+    /// Opens a scope of the given kind inside the current one.
     pub fn push(&mut self, kind: ScopeKind) {
         if kind == ScopeKind::Function {
             self.function_level += 1;
@@ -142,6 +150,7 @@ impl Scopes {
         Ok(s)
     }
 
+    /// Whether the symbol's declaration has been completed with `define`.
     pub fn is_defined(&self, s: SymbolId) -> bool {
         self.symbols[s.0 as usize].defined
     }
@@ -191,22 +200,27 @@ impl Scopes {
         self.scopes.last().and_then(|s| s.names.get(name).copied())
     }
 
+    /// The symbol's name.
     pub fn name(&self, s: SymbolId) -> &str {
         &self.symbols[s.0 as usize].name
     }
 
+    /// The number a frontend stored for the symbol (a slot, a local id), 0 until set.
     pub fn data(&self, s: SymbolId) -> u64 {
         self.symbols[s.0 as usize].data
     }
 
+    /// Stores a number of the frontend's for the symbol.
     pub fn set_data(&mut self, s: SymbolId, data: u64) {
         self.symbols[s.0 as usize].data = data;
     }
 
+    /// Whether a closure uses the symbol from outside the function that declares it.
     pub fn is_captured(&self, s: SymbolId) -> bool {
         self.symbols[s.0 as usize].captured
     }
 
+    /// Marks the symbol as used by a closure.
     pub fn mark_captured(&mut self, s: SymbolId) {
         self.symbols[s.0 as usize].captured = true;
     }

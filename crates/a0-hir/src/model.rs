@@ -9,9 +9,13 @@ macro_rules! handle {
         $(#[$doc])*
         #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
         #[repr(transparent)]
-        pub struct $name(pub u32);
+        pub struct $name(
+            /// The index of what it names, in the module's tables.
+            pub u32,
+        );
 
         impl $name {
+            /// The index, for tables indexed by this kind of handle.
             pub fn index(self) -> usize {
                 self.0 as usize
             }
@@ -23,18 +27,42 @@ handle!(
     /// An interned type.
     TypeId
 );
-handle!(StructId);
-handle!(EnumId);
-handle!(InterfaceId);
-handle!(GlobalId);
-handle!(ExternId);
-handle!(FuncId);
+handle!(
+    /// A struct.
+    StructId
+);
+handle!(
+    /// An enum.
+    EnumId
+);
+handle!(
+    /// An interface.
+    InterfaceId
+);
+handle!(
+    /// A global variable.
+    GlobalId
+);
+handle!(
+    /// A function written in C (or in the runtime).
+    ExternId
+);
+handle!(
+    /// A function.
+    FuncId
+);
 handle!(
     /// A function body or a closure body.
     BodyId
 );
-handle!(LocalId);
-handle!(ExprId);
+handle!(
+    /// A local variable or parameter.
+    LocalId
+);
+handle!(
+    /// An expression: a node of a body's tree.
+    ExprId
+);
 handle!(
     /// One arm of a `match`.
     ArmId
@@ -57,11 +85,17 @@ pub(crate) struct ModuleDef {
 }
 
 impl TypeId {
+    /// `unit`.
     pub const UNIT: TypeId = TypeId(0);
+    /// `bool`.
     pub const BOOL: TypeId = TypeId(1);
+    /// `int`: a 64-bit signed integer.
     pub const INT: TypeId = TypeId(2);
+    /// `float`: a 64-bit float.
     pub const FLOAT: TypeId = TypeId(3);
+    /// `string`.
     pub const STRING: TypeId = TypeId(4);
+    /// `any`: a value of any type, tested and unpacked with `is` and `as`.
     pub const ANY: TypeId = TypeId(5);
     /// The type of expressions that never produce a value (`return`, `break`, `panic`, ...).
     pub const NEVER: TypeId = TypeId(6);
@@ -71,13 +105,21 @@ impl TypeId {
     /// A dynamic object: fields of type `any` added by name at run time (D66).
     pub const OBJECT: TypeId = TypeId(8);
     // Sized numbers, for systems languages and C (`int` is `i64`, `float` is `f64`).
+    /// `i8`.
     pub const I8: TypeId = TypeId(9);
+    /// `i16`.
     pub const I16: TypeId = TypeId(10);
+    /// `i32`.
     pub const I32: TypeId = TypeId(11);
+    /// `u8`.
     pub const U8: TypeId = TypeId(12);
+    /// `u16`.
     pub const U16: TypeId = TypeId(13);
+    /// `u32`.
     pub const U32: TypeId = TypeId(14);
+    /// `u64`.
     pub const U64: TypeId = TypeId(15);
+    /// `f32`.
     pub const F32: TypeId = TypeId(16);
 }
 
@@ -132,20 +174,35 @@ pub(crate) enum TypeKind {
 #[repr(u8)]
 #[non_exhaustive]
 pub enum TypeTag {
+    /// `unit`.
     Unit,
+    /// `bool`.
     Bool,
+    /// `int`.
     Int,
+    /// `float`.
     Float,
+    /// `string`.
     String,
+    /// `any`.
     Any,
+    /// The type of expressions that never finish (`return`, `break`, a call of `panic`).
     Never,
+    /// The type of an expression that had an error, already reported.
     Error,
+    /// `array<T>`.
     Array,
+    /// `map<K, V>`.
     Map,
+    /// A struct, possibly with type arguments.
     Struct,
+    /// An enum, possibly with type arguments.
     Enum,
+    /// A function or closure type.
     Fn,
+    /// `T?`.
     Nullable,
+    /// An interface.
     Interface,
     /// A type parameter of a generic item.
     Param,
@@ -155,6 +212,7 @@ pub enum TypeTag {
     Object,
     /// `i8` .. `u64`.
     SizedInt,
+    /// `f32`.
     F32,
     /// `ptr<T>`.
     Ptr,
@@ -166,11 +224,14 @@ pub enum TypeTag {
 #[repr(u8)]
 #[non_exhaustive]
 pub enum Memory {
+    /// The collector frees what nothing refers to.
     Gc,
+    /// The program frees memory itself, and there is no collector.
     Manual,
 }
 
 impl Memory {
+    /// The name in the text format: `gc`, `manual`.
     pub fn name(self) -> &'static str {
         match self {
             Memory::Gc => "gc",
@@ -178,6 +239,7 @@ impl Memory {
         }
     }
 
+    /// The mode named `s` in the text format.
     pub fn from_name(s: &str) -> Option<Memory> {
         [Memory::Gc, Memory::Manual]
             .into_iter()
@@ -188,29 +250,45 @@ impl Memory {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[repr(u8)]
 #[non_exhaustive]
+/// A binary operator (`docs/hir.md`).
 pub enum BinOp {
+    /// `+`: numbers, and strings (concatenation).
     Add,
+    /// `-`.
     Sub,
+    /// `*`.
     Mul,
+    /// `/`: integer division panics on division by zero.
     Div,
+    /// `%`.
     Rem,
+    /// `<`.
     Lt,
+    /// `<=`.
     Le,
+    /// `>`.
     Gt,
+    /// `>=`.
     Ge,
+    /// `==`: by value for numbers, booleans and strings, by identity for references.
     Eq,
+    /// `!=`.
     Ne,
     /// `&`, `|`, `^` on integers (and booleans for `&`, `|` and `^`, without short-circuit).
     BitAnd,
+    /// `|`.
     BitOr,
+    /// `^`.
     BitXor,
     /// `<<` and `>>` (written `shl` and `shr` in the text format): the amount is taken modulo the
     /// width; `>>` is arithmetic for signed integers and logical for unsigned ones.
     Shl,
+    /// `>>`.
     Shr,
 }
 
 impl BinOp {
+    /// The operator as the text format writes it (`+`, `shl`).
     pub fn symbol(self) -> &'static str {
         match self {
             BinOp::Add => "+",
@@ -232,6 +310,7 @@ impl BinOp {
         }
     }
 
+    /// The operator written `s`.
     pub fn from_symbol(s: &str) -> Option<BinOp> {
         use BinOp::*;
         [
@@ -241,6 +320,7 @@ impl BinOp {
         .find(|op| op.symbol() == s)
     }
 
+    /// Whether it is `<`, `<=`, `>` or `>=`.
     pub fn is_comparison(self) -> bool {
         matches!(self, BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge)
     }
@@ -249,8 +329,11 @@ impl BinOp {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[repr(u8)]
 #[non_exhaustive]
+/// A unary operator.
 pub enum UnOp {
+    /// `-`.
     Neg,
+    /// `!` on booleans.
     Not,
     /// `~`: the bits of an integer flipped.
     BitNot,
@@ -263,16 +346,21 @@ macro_rules! builtins {
         #[repr(u8)]
         #[non_exhaustive]
         pub enum Builtin {
-            $($variant,)*
+            $(
+                #[doc = concat!("`", $name, "` (`docs/hir.md`).")]
+                $variant,
+            )*
         }
 
         impl Builtin {
+            /// The name programs call it by.
             pub fn name(self) -> &'static str {
                 match self {
                     $(Builtin::$variant => $name,)*
                 }
             }
 
+            /// The builtin named `s`.
             pub fn from_name(s: &str) -> Option<Builtin> {
                 match s {
                     $($name => Some(Builtin::$variant),)*
@@ -502,6 +590,7 @@ impl Abi {
         }
     }
 
+    /// The ABI named `s` in the text format.
     pub fn from_name(s: &str) -> Option<Abi> {
         match s {
             "C" => Some(Abi::C),
@@ -621,11 +710,17 @@ pub enum Warning {
 /// A minor release may add variants (`docs/compatibility.md`): code outside A0 matches it with
 /// a `_` arm. A0 itself matches it exhaustively, so that nothing misses a new one.
 pub enum Item {
+    /// A struct.
     Struct(StructId),
+    /// An enum.
     Enum(EnumId),
+    /// A global variable.
     Global(GlobalId),
+    /// A function written in C.
     Extern(ExternId),
+    /// A function.
     Func(FuncId),
+    /// An interface.
     Interface(InterfaceId),
 }
 
@@ -779,10 +874,12 @@ impl HirModule {
         &self.warnings
     }
 
+    /// The module's name.
     pub fn name(&self) -> &str {
         &self.name
     }
 
+    /// Its items, in the order they were declared.
     pub fn items(&self) -> &[Item] {
         &self.items
     }
@@ -795,10 +892,12 @@ impl HirModule {
             .unwrap_or((ModuleId(0), true))
     }
 
+    /// The number of modules (the prelude, module 0, included).
     pub fn module_count(&self) -> u32 {
         self.modules.len() as u32
     }
 
+    /// A module's name.
     pub fn module_name(&self, m: ModuleId) -> &str {
         &self.modules[m.index()].name
     }
@@ -808,34 +907,42 @@ impl HirModule {
         self.type_names.get(name).copied()
     }
 
+    /// The function, global or C function named `name` (its full name for another module's).
     pub fn lookup_value(&self, name: &str) -> Option<Item> {
         self.value_names.get(name).copied()
     }
 
+    /// The number of functions.
     pub fn func_count(&self) -> u32 {
         self.funcs.len() as u32
     }
 
+    /// A function's name.
     pub fn func_name(&self, f: FuncId) -> &str {
         &self.funcs[f.index()].name
     }
 
+    /// A function's body.
     pub fn func_body(&self, f: FuncId) -> BodyId {
         self.funcs[f.index()].body
     }
 
+    /// The parameters of a body, in order.
     pub fn body_params(&self, b: BodyId) -> &[LocalId] {
         &self.bodies[b.index()].params
     }
 
+    /// The result type of a body.
     pub fn body_ret(&self, b: BodyId) -> TypeId {
         self.bodies[b.index()].ret
     }
 
+    /// The root of a body's tree, once it is set.
     pub fn body_root(&self, b: BodyId) -> Option<ExprId> {
         self.bodies[b.index()].root
     }
 
+    /// The number of locals.
     pub fn local_count(&self) -> u32 {
         self.locals.len() as u32
     }
@@ -843,38 +950,47 @@ impl HirModule {
     // How many of each handle exist (a handle is valid below its count), for bindings that check
     // handles they did not get from the builder.
 
+    /// The number of types.
     pub fn type_count(&self) -> u32 {
         self.types.len() as u32
     }
 
+    /// The number of structs.
     pub fn struct_count(&self) -> u32 {
         self.structs.len() as u32
     }
 
+    /// The number of enums.
     pub fn enum_count(&self) -> u32 {
         self.enums.len() as u32
     }
 
+    /// The number of interfaces.
     pub fn interface_count(&self) -> u32 {
         self.interfaces.len() as u32
     }
 
+    /// The number of globals.
     pub fn global_count(&self) -> u32 {
         self.globals.len() as u32
     }
 
+    /// The number of C functions.
     pub fn extern_count(&self) -> u32 {
         self.externs.len() as u32
     }
 
+    /// The number of bodies (functions' and closures').
     pub fn body_count(&self) -> u32 {
         self.bodies.len() as u32
     }
 
+    /// The number of expressions.
     pub fn expr_count(&self) -> u32 {
         self.exprs.len() as u32
     }
 
+    /// The number of match arms.
     pub fn arm_count(&self) -> u32 {
         self.arms.len() as u32
     }
@@ -927,6 +1043,7 @@ impl HirModule {
         }
     }
 
+    /// A local's name, as the frontend gave it.
     pub fn local_name(&self, l: LocalId) -> &str {
         &self.locals[l.index()].name
     }
@@ -937,6 +1054,7 @@ impl HirModule {
         &self.locals[l.index()].source_name
     }
 
+    /// A local's type.
     pub fn local_type(&self, l: LocalId) -> TypeId {
         self.locals[l.index()].ty
     }
@@ -946,6 +1064,7 @@ impl HirModule {
         self.locals[l.index()].span
     }
 
+    /// An expression's type.
     pub fn expr_type(&self, e: ExprId) -> TypeId {
         self.exprs[e.index()].ty
     }
@@ -963,18 +1082,22 @@ impl HirModule {
         })
     }
 
+    /// Where an expression is in its source, if known.
     pub fn expr_span(&self, e: ExprId) -> Option<Span> {
         self.exprs[e.index()].span
     }
 
+    /// A struct's name.
     pub fn struct_name(&self, s: StructId) -> &str {
         &self.structs[s.index()].name
     }
 
+    /// The number of fields of a struct.
     pub fn struct_field_count(&self, s: StructId) -> u32 {
         self.structs[s.index()].fields.len() as u32
     }
 
+    /// Field `i` of a struct: its name and type.
     pub fn struct_field(&self, s: StructId, i: u32) -> (&str, TypeId) {
         let (n, t) = &self.structs[s.index()].fields[i as usize];
         (n, *t)
@@ -989,22 +1112,27 @@ impl HirModule {
             .map(|i| i as u32)
     }
 
+    /// An enum's name.
     pub fn enum_name(&self, e: EnumId) -> &str {
         &self.enums[e.index()].name
     }
 
+    /// The number of variants of an enum.
     pub fn variant_count(&self, e: EnumId) -> u32 {
         self.enums[e.index()].variants.len() as u32
     }
 
+    /// The name of variant `v`.
     pub fn variant_name(&self, e: EnumId, v: u32) -> &str {
         &self.enums[e.index()].variants[v as usize].name
     }
 
+    /// The types of variant `v`'s payload.
     pub fn variant_fields(&self, e: EnumId, v: u32) -> &[TypeId] {
         &self.enums[e.index()].variants[v as usize].fields
     }
 
+    /// The index of the variant named `name`.
     pub fn variant_index(&self, e: EnumId, name: &str) -> Option<u32> {
         self.enums[e.index()]
             .variants
@@ -1013,18 +1141,22 @@ impl HirModule {
             .map(|i| i as u32)
     }
 
+    /// A global's name.
     pub fn global_name(&self, g: GlobalId) -> &str {
         &self.globals[g.index()].name
     }
 
+    /// A global's type.
     pub fn global_type(&self, g: GlobalId) -> TypeId {
         self.globals[g.index()].ty
     }
 
+    /// A C function's name.
     pub fn extern_name(&self, x: ExternId) -> &str {
         &self.externs[x.index()].name
     }
 
+    /// How a C function is called: with C's values or A0's.
     pub fn extern_abi(&self, x: ExternId) -> Abi {
         self.externs[x.index()].abi
     }
@@ -1041,6 +1173,7 @@ impl HirModule {
         }
     }
 
+    /// What kind of type `t` is.
     pub fn type_tag(&self, t: TypeId) -> TypeTag {
         match self.kind(t) {
             TypeKind::Unit => TypeTag::Unit,

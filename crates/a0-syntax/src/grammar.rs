@@ -26,6 +26,7 @@ impl KindId {
 pub struct FieldId(pub u32);
 
 impl FieldId {
+    /// No field.
     pub const NONE: FieldId = FieldId(u32::MAX);
 }
 
@@ -36,23 +37,38 @@ impl FieldId {
 /// A minor release may add variants (`docs/compatibility.md`): code outside A0 matches it with
 /// a `_` arm. A0 itself matches it exhaustively, so that nothing misses a new one.
 pub enum SymbolKind {
+    /// A function (`fn f`).
     Function,
+    /// A method.
     Method,
+    /// A class.
     Class,
+    /// A struct.
     Struct,
+    /// An enum.
     Enum,
+    /// An interface.
     Interface,
+    /// A variant of an enum.
     Variant,
+    /// A field of a struct or class.
     Field,
+    /// A variable.
     Variable,
+    /// A constant.
     Constant,
+    /// A parameter of a function.
     Parameter,
+    /// A type parameter.
     TypeParameter,
+    /// Another kind of type.
     Type,
+    /// A module.
     Module,
 }
 
 impl SymbolKind {
+    /// Every kind, in the order `@def` names them.
     pub const ALL: [SymbolKind; 14] = [
         SymbolKind::Function,
         SymbolKind::Method,
@@ -90,6 +106,7 @@ impl SymbolKind {
         }
     }
 
+    /// The kind `@def(name)` names (`function`, `type_parameter`, ...).
     pub fn from_name(name: &str) -> Option<SymbolKind> {
         SymbolKind::ALL.into_iter().find(|k| k.name() == name)
     }
@@ -115,6 +132,7 @@ impl SymbolKind {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct Definition {
+    /// What the rule's nodes declare.
     pub kind: SymbolKind,
     /// The field that holds the name.
     pub field: FieldId,
@@ -246,6 +264,7 @@ impl Grammar {
         Builder::new(source).build(items)
     }
 
+    /// The grammar's name (`grammar lox;`), or empty.
     pub fn name(&self) -> &str {
         &self.name
     }
@@ -261,22 +280,27 @@ impl Grammar {
         self.literal_map.get(text).copied()
     }
 
+    /// The field named `name` in some rule (`name:NAME`).
     pub fn field(&self, name: &str) -> Option<FieldId> {
         self.field_map.get(name).copied()
     }
 
+    /// The name of a node kind: a rule's or a token's.
     pub fn kind_name(&self, kind: KindId) -> &str {
         &self.names.kinds[kind.0 as usize]
     }
 
+    /// The name of a field.
     pub fn field_name(&self, field: FieldId) -> &str {
         &self.names.fields[field.0 as usize]
     }
 
+    /// The number of node kinds (rules and tokens).
     pub fn kind_count(&self) -> u32 {
         self.names.kinds.len() as u32
     }
 
+    /// Whether nodes of this kind are tokens rather than rules.
     pub fn is_token_kind(&self, kind: KindId) -> bool {
         self.names.is_token[kind.0 as usize]
     }

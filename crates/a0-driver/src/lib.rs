@@ -27,6 +27,8 @@
 //! compiler, and highlighting, the outline, go-to-definition and hovers from the grammar's `@def`
 //! and `@scope` annotations (`docs/grammar.md`) and the HIR the compiler builds.
 
+#![warn(missing_docs)]
+
 /// What a language with a runtime of its own in C needs from A0's backends: the library linked
 /// into its executables and the symbols the interpreter calls (`docs/runtime.md`). These are
 /// covered by A0's compatibility promise here, while the backend crates are not (D86).
@@ -73,11 +75,14 @@ pub enum CompileError {
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct Message {
+    /// The message.
     pub text: String,
+    /// Where the error is, for editors.
     pub span: Option<Span>,
 }
 
 impl Message {
+    /// A message saying `text` at `span`.
     pub fn new(text: &str, span: Option<Span>) -> Message {
         Message {
             text: text.to_string(),
@@ -176,6 +181,7 @@ impl Default for ExitCodes {
 }
 
 impl ExitCodes {
+    /// The exit statuses for each kind of failure.
     pub fn new(usage: u8, io: u8, compile: u8, internal: u8) -> ExitCodes {
         ExitCodes {
             usage,
@@ -206,6 +212,7 @@ pub struct Language {
     /// Compiles one source file. `source` is the file's id in the driver's source map; spans in
     /// diagnostics refer to it.
     pub compile: fn(text: &str, source: SourceId) -> Result<Program, CompileError>,
+    /// The exit statuses of the driver's own failures.
     pub exit_codes: ExitCodes,
     /// Whether `lang <file>` means `lang run <file>`.
     pub run_by_default: bool,
@@ -230,7 +237,9 @@ pub struct Language {
 #[derive(Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct Invocation {
+    /// What to do.
     pub command: Command,
+    /// The source file, or what the command takes instead (`explain`'s code); empty in a package.
     pub file: String,
     /// `build -o`
     pub output: Option<String>,
@@ -246,11 +255,17 @@ pub struct Invocation {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]
+/// A command of the driver.
 pub enum Command {
+    /// `run`: compiles the program into memory and runs it (interprets it with `A0_INTERP=1`).
     Run,
+    /// `build`: an executable.
     Build,
+    /// `ir`: prints the core IR.
     Ir,
+    /// `hir`: prints the HIR.
     Hir,
+    /// `lsp`: the language server.
     Lsp,
     /// The Debug Adapter Protocol (`dap.rs`).
     Dap,
@@ -886,6 +901,7 @@ impl Language {
         Some(inv)
     }
 
+    /// The usage text `lang --help` prints.
     pub fn usage(&self) -> String {
         let n = self.name;
         let run = if self.run_by_default {
