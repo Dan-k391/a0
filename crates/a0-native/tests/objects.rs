@@ -46,23 +46,38 @@ fn c_name(t: Target, name: &str) -> String {
     }
 }
 
-/// Targets Cranelift can emit objects for (see `docs/milestones.md`, M2 open questions).
+/// Every target, aarch64-windows included since the COFF relocations it needs were added
+/// (`vendor/README.md`).
 fn emittable_targets() -> Vec<Target> {
-    Target::ALL
-        .into_iter()
-        .filter(|&t| t != Target::AARCH64_WINDOWS)
-        .collect()
+    Target::ALL.to_vec()
 }
 
 #[test]
-fn aarch64_windows_is_reported_not_crashed() {
-    let (_, m) = corpus().remove(0);
-    let err = compile_object(&m, Target::AARCH64_WINDOWS, &CodegenOptions::default()).unwrap_err();
+fn aarch64_windows_objects_have_arm64_relocations() {
+    use object::{Object, ObjectSection};
+    // `hello` takes a string's address: an `adrp`/`add` pair.
+    let (_, m) = corpus()
+        .into_iter()
+        .find(|(name, _)| name.contains("hello"))
+        .unwrap();
+    let bytes = compile_object(&m, Target::AARCH64_WINDOWS, &CodegenOptions::default()).unwrap();
+    let file = object::File::parse(&*bytes).unwrap();
+    assert_eq!(file.architecture(), object::Architecture::Aarch64);
+    let kinds: Vec<object::pe::RelocationType> = file
+        .sections()
+        .flat_map(|s| s.relocations().collect::<Vec<_>>())
+        .filter_map(|(_, r)| match r.flags() {
+            object::RelocationFlags::Coff { typ } => Some(typ),
+            _ => None,
+        })
+        .collect();
     assert!(
-        err.summary()
-            .contains("cannot compile for aarch64-pc-windows-msvc"),
-        "{}",
-        err.summary()
+        kinds.contains(&object::pe::IMAGE_REL_ARM64_PAGEBASE_REL21),
+        "{kinds:?}"
+    );
+    assert!(
+        kinds.contains(&object::pe::IMAGE_REL_ARM64_PAGEOFFSET_12A),
+        "{kinds:?}"
     );
 }
 

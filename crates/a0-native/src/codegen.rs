@@ -93,27 +93,12 @@ fn clif_type(ty: Type, target: Target) -> ir::Type {
     }
 }
 
-/// Targets that Cranelift cannot emit objects for yet, with the reason.
-fn unsupported_reason(target: Target) -> Option<&'static str> {
-    if target == Target::AARCH64_WINDOWS {
-        return Some(
-            "cranelift-object cannot write AArch64 relocations into COFF objects, so aarch64-windows              objects cannot be produced yet",
-        );
-    }
-    None
-}
-
 /// Compiles a verified module into an object file for `target`.
 pub fn compile_object(
     m: &Module,
     target: Target,
     opts: &CodegenOptions,
 ) -> Result<Vec<u8>, Diagnostics> {
-    if let Some(reason) = unsupported_reason(target) {
-        return Err(backend_error(format!(
-            "cannot compile for {target}: {reason}"
-        )));
-    }
     // The module is verified first, so Cranelift should never panic; if it does anyway, report it as
     // a diagnostic rather than taking the caller down.
     match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {

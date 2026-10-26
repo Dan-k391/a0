@@ -139,7 +139,8 @@ layer, decision D17). A new crate goes into the table above and into `[workspace
   listings are `ANCHOR` regions of the code, together they must show all of it, and its commands
   are run. After changing Kaleidoscope, run `A0_BLESS=1 cargo test -p kaleidoscope --test tutorial`
   to rewrite the listings and outputs, then reread the prose around them.
-- Object emission is checked for every supported target except aarch64-windows (out of scope).
+- Object emission is checked for every supported target; aarch64-windows needs the patched
+  `cranelift-object` in `vendor/` (`vendor/README.md`).
 - Runtime or GC changes: run the Lox suite under GC stress, and prove the stress test still fails
   when roots are broken if you touch rooting.
 

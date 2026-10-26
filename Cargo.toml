@@ -46,3 +46,7 @@ opt-level = 1
 
 [profile.dev.package."*"]
 opt-level = 2
+
+# A copy of cranelift-object with the COFF relocations aarch64-windows needs (vendor/README.md).
+[patch.crates-io]
+cranelift-object = { path = "vendor/cranelift-object" }

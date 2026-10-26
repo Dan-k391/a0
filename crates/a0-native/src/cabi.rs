@@ -62,7 +62,8 @@ pub(crate) fn plan(target: Target, m: &Module, f: FuncId, ptr: ir::Type) -> Vec<
         (Arch::Aarch64, _) => (8, 8),
     };
     let mut left = Left { int, float };
-    let windows = target.os() == Os::Windows;
+    // Windows x64 passes every argument in a slot of its own; Windows on AArch64 follows AAPCS64.
+    let windows = target.os() == Os::Windows && target.arch() == Arch::X86_64;
     let aarch64 = target.arch() == Arch::Aarch64;
     let apple = aarch64 && target.os() == Os::MacOs;
     let mut out = Vec::new();

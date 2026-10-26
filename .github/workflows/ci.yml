@@ -1,5 +1,5 @@
 # Builds A0 and runs every test, including native executables linked by the system linker, on each
-# supported host. aarch64-windows is out of scope.
+# supported host.
 name: CI
 
 on:
@@ -17,12 +17,21 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # x86-64 Linux, aarch64 Linux, aarch64 macOS, x86-64 Windows (MSVC).
-        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, windows-latest]
+        # x86-64 Linux, aarch64 Linux, aarch64 macOS, x86-64 Windows (MSVC), aarch64 Windows.
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, windows-latest, windows-11-arm]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
+      - name: Install rustup
+        # Not every image has it (Windows on ARM64).
+        shell: bash
+        run: |
+          if ! command -v rustup; then
+            curl -sSf -o rustup-init.exe https://static.rust-lang.org/rustup/dist/aarch64-pc-windows-msvc/rustup-init.exe
+            ./rustup-init.exe -y --profile minimal --default-toolchain none
+            echo "$USERPROFILE/.cargo/bin" >> "$GITHUB_PATH"
+          fi
       - name: Install Rust
         run: rustup toolchain install stable --profile minimal && rustup default stable
       - uses: actions/cache@v4
