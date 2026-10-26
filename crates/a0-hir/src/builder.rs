@@ -10,7 +10,7 @@
 use std::collections::{HashMap, HashSet};
 
 use a0_diag::codes as code;
-use a0_diag::{Diagnostic, Diagnostics, Span};
+use a0_diag::{Diagnostic, Diagnostics, SourceMap, Span};
 use a0_sema::Scopes;
 
 use crate::check::check;
@@ -355,7 +355,14 @@ impl HirBuilder {
                 }
             }
         }
-        out
+        // Warnings are about the program, not the standard library it uses.
+        let mut program = Diagnostics::new();
+        for d in out.as_slice() {
+            if !d.span.is_some_and(|s| SourceMap::is_builtin(s.source)) {
+                program.push(d.clone());
+            }
+        }
+        program
     }
 
     /// Locals whose value nothing reads; parameters and names starting with `_` are left alone.

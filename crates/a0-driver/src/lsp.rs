@@ -1040,7 +1040,12 @@ impl Server<'_> {
         if locations.is_empty()
             && let Some(m) = &doc.hir
             && let Some(span) = referenced_item_span(m, doc.source, offset)
-            && let Some((_, file)) = doc.files.iter().find(|(id, _)| *id == span.source)
+            && let Some(file) = doc
+                .files
+                .iter()
+                .find(|(id, _)| *id == span.source)
+                .map(|(_, f)| f.clone())
+                .or_else(|| builtin_file_uri(&doc.sources, span.source))
         {
             let text = doc.sources.text(span.source);
             let range = Lines::new(text).range(text, span.start, span.end);
@@ -1131,6 +1136,30 @@ fn referenced_item(m: &HirModule, source: SourceId, offset: u32) -> Option<Item>
 
 /// The file a `file:` URI names (`file:///D:/a0/x.mn` is `D:/a0/x.mn`, `file:///home/x.mn` is
 /// `/home/x.mn`), percent-escapes decoded.
+/// A built-in source (a module of the standard library, `<std>/fs.hir`) as a file an editor can
+/// open: written, the first time it is needed, to a directory of this version of A0 in the system's
+/// temporary directory.
+fn builtin_file_uri(sources: &SourceMap, id: SourceId) -> Option<String> {
+    builtin_file(sources, id).map(|p| path_to_uri(&p))
+}
+
+/// The file [`builtin_file_uri`] names, written if need be (the debugger shows it too).
+pub(crate) fn builtin_file(sources: &SourceMap, id: SourceId) -> Option<PathBuf> {
+    if !SourceMap::is_builtin(id) {
+        return None;
+    }
+    let name = sources.name(id).replace(['<', '>'], "");
+    let path = std::env::temp_dir()
+        .join(format!("a0-{}", env!("CARGO_PKG_VERSION")))
+        .join(name);
+    let text = sources.text(id);
+    if std::fs::read_to_string(&path).ok().as_deref() != Some(text) {
+        std::fs::create_dir_all(path.parent()?).ok()?;
+        std::fs::write(&path, text).ok()?;
+    }
+    Some(path)
+}
+
 pub fn uri_to_path(uri: &str) -> Option<PathBuf> {
     let rest = uri.strip_prefix("file://")?;
     let mut bytes = Vec::new();

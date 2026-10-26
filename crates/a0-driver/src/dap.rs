@@ -475,9 +475,15 @@ fn stack_frame(interp: &Interpreter, i: usize) -> Json {
                 .file_name()
                 .map(|n| n.to_string_lossy().into_owned())
                 .unwrap_or_default();
-            let path = std::path::absolute(&l.file)
-                .map(|p| p.to_string_lossy().into_owned())
-                .unwrap_or_else(|_| l.file.clone());
+            // The standard library's code is shown from a copy the editor can open.
+            let builtin = SourceMap::builtin_named(&l.file)
+                .and_then(|id| crate::lsp::builtin_file(&SourceMap::new(), id));
+            let path = match builtin {
+                Some(p) => p.to_string_lossy().into_owned(),
+                None => std::path::absolute(&l.file)
+                    .map(|p| p.to_string_lossy().into_owned())
+                    .unwrap_or_else(|_| l.file.clone()),
+            };
             frame.push((
                 "source",
                 Json::object([("name", name.into()), ("path", path.into())]),

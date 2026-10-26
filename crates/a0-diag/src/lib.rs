@@ -10,6 +10,7 @@ mod render;
 mod similar;
 
 use std::fmt::Write as _;
+use std::sync::RwLock;
 
 pub use render::RenderOptions;
 pub use similar::similar_name;
@@ -58,7 +59,51 @@ struct SourceFile {
     line_starts: Vec<u32>,
 }
 
-/// Owns the text of every source that spans can point into.
+impl SourceFile {
+    fn new(name: &str, text: &str) -> SourceFile {
+        let mut line_starts = vec![0];
+        for (i, b) in text.bytes().enumerate() {
+            if b == b'\n' {
+                line_starts.push(i as u32 + 1);
+            }
+        }
+        SourceFile {
+            name: name.to_string(),
+            text: text.to_string(),
+            line_starts,
+        }
+    }
+}
+
+/// The first id of the sources built into the tools rather than read from files (the standard
+/// library's modules, `a0-hir`): every [`SourceMap`] knows them, from [`register_builtin_source`].
+pub const BUILTIN_SOURCES: u32 = 0xf000_0000;
+
+static BUILTINS: RwLock<Vec<Option<&'static SourceFile>>> = RwLock::new(Vec::new());
+
+/// Registers the built-in source number `index` (its id is `BUILTIN_SOURCES + index`), unless it
+/// is registered already, and returns its id. Built-in sources are the same for the whole process,
+/// so they are kept once, outside any map.
+pub fn register_builtin_source(index: u32, name: &str, text: &str) -> SourceId {
+    let id = SourceId(BUILTIN_SOURCES + index);
+    let mut builtins = BUILTINS.write().unwrap_or_else(|e| e.into_inner());
+    let i = index as usize;
+    if builtins.len() <= i {
+        builtins.resize(i + 1, None);
+    }
+    if builtins[i].is_none() {
+        builtins[i] = Some(Box::leak(Box::new(SourceFile::new(name, text))));
+    }
+    id
+}
+
+fn builtin(id: SourceId) -> Option<&'static SourceFile> {
+    let index = id.0.checked_sub(BUILTIN_SOURCES)? as usize;
+    let builtins = BUILTINS.read().unwrap_or_else(|e| e.into_inner());
+    builtins.get(index).copied().flatten()
+}
+
+/// Owns the text of every source that spans can point into, besides the built-in ones.
 #[derive(Clone, Default)]
 pub struct SourceMap {
     files: Vec<SourceFile>,
@@ -71,22 +116,39 @@ impl SourceMap {
 
     /// Registers a source and returns its id. `name` is used in rendered diagnostics.
     pub fn add(&mut self, name: &str, text: &str) -> SourceId {
-        let mut line_starts = vec![0];
-        for (i, b) in text.bytes().enumerate() {
-            if b == b'\n' {
-                line_starts.push(i as u32 + 1);
-            }
-        }
-        self.files.push(SourceFile {
-            name: name.to_string(),
-            text: text.to_string(),
-            line_starts,
-        });
+        self.files.push(SourceFile::new(name, text));
         SourceId(self.files.len() as u32 - 1)
     }
 
+    /// The number of sources added to this map (the built-in ones not counted).
     pub fn len(&self) -> u32 {
         self.files.len() as u32
+    }
+
+    /// Whether spans in `id` can be shown: a source of this map or a built-in one.
+    pub fn contains(&self, id: SourceId) -> bool {
+        id.0 < self.len() || builtin(id).is_some()
+    }
+
+    /// Whether `id` is a built-in source ([`register_builtin_source`]).
+    pub fn is_builtin(id: SourceId) -> bool {
+        builtin(id).is_some()
+    }
+
+    /// The built-in source named `name`, if one is registered.
+    pub fn builtin_named(name: &str) -> Option<SourceId> {
+        let builtins = BUILTINS.read().unwrap_or_else(|e| e.into_inner());
+        let index = builtins
+            .iter()
+            .position(|f| f.is_some_and(|f| f.name == name))?;
+        Some(SourceId(BUILTIN_SOURCES + index as u32))
+    }
+
+    pub(crate) fn file(&self, id: SourceId) -> &SourceFile {
+        match self.files.get(id.0 as usize) {
+            Some(f) => f,
+            None => builtin(id).unwrap_or_else(|| panic!("no source {}", id.0)),
+        }
     }
 
     pub fn is_empty(&self) -> bool {
@@ -94,11 +156,11 @@ impl SourceMap {
     }
 
     pub fn name(&self, id: SourceId) -> &str {
-        &self.files[id.0 as usize].name
+        &self.file(id).name
     }
 
     pub fn text(&self, id: SourceId) -> &str {
-        &self.files[id.0 as usize].text
+        &self.file(id).text
     }
 
     /// The text covered by `span`.
@@ -108,7 +170,7 @@ impl SourceMap {
 
     /// 1-based line number of a byte offset.
     pub fn line(&self, id: SourceId, offset: u32) -> u32 {
-        let starts = &self.files[id.0 as usize].line_starts;
+        let starts = &self.file(id).line_starts;
         match starts.binary_search(&offset) {
             Ok(i) => i as u32 + 1,
             Err(i) => i as u32,
@@ -118,18 +180,18 @@ impl SourceMap {
     /// 1-based line and column (counted in characters) of a byte offset.
     pub fn line_col(&self, id: SourceId, offset: u32) -> (u32, u32) {
         let line = self.line(id, offset);
-        let start = self.files[id.0 as usize].line_starts[line as usize - 1];
+        let start = self.file(id).line_starts[line as usize - 1];
         let text = &self.text(id)[start as usize..offset as usize];
         (line, text.chars().count() as u32 + 1)
     }
 
     pub fn line_count(&self, id: SourceId) -> u32 {
-        self.files[id.0 as usize].line_starts.len() as u32
+        self.file(id).line_starts.len() as u32
     }
 
     /// The text of a 1-based line, without its line terminator.
     pub fn line_text(&self, id: SourceId, line: u32) -> &str {
-        let file = &self.files[id.0 as usize];
+        let file = self.file(id);
         let start = file.line_starts[line as usize - 1] as usize;
         let end = file
             .line_starts

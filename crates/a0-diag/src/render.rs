@@ -216,7 +216,7 @@ fn display_col(line: &str, offset: usize) -> usize {
 /// Line number and display column of a byte offset.
 fn position(sources: &SourceMap, id: SourceId, offset: u32) -> (u32, usize) {
     let line = sources.line(id, offset);
-    let start = sources.files[id.0 as usize].line_starts[line as usize - 1];
+    let start = sources.file(id).line_starts[line as usize - 1];
     let text = sources.line_text(id, line);
     (line, display_col(text, (offset - start) as usize))
 }
@@ -547,7 +547,7 @@ fn fixed_lines(sources: &SourceMap, fix: &Fix) -> Option<FixedLines> {
     let mut out = Vec::new();
     for (line, mut edits) in by_line {
         edits.sort_by_key(|e| e.span.start);
-        let start = sources.files[id.0 as usize].line_starts[line as usize - 1] as usize;
+        let start = sources.file(id).line_starts[line as usize - 1] as usize;
         let text = sources.line_text(id, line);
         let mut fixed = String::new();
         let mut marks = Vec::new();
@@ -600,7 +600,7 @@ pub(crate) fn render(d: &Diagnostic, sources: &SourceMap, opts: &RenderOptions) 
     out.put(Style::Message, &format!(": {}", d.message));
     out.line();
 
-    let valid = |s: &Span| s.source.0 < sources.len();
+    let valid = |s: &Span| sources.contains(s.source);
     let inline = inline_fix(d);
     // Every annotation, grouped by file, the primary's file first.
     let mut files: Vec<(SourceId, Vec<Ann>)> = Vec::new();
@@ -629,7 +629,7 @@ pub(crate) fn render(d: &Diagnostic, sources: &SourceMap, opts: &RenderOptions) 
         .map(|f| {
             (
                 f,
-                fixed_lines(sources, f).filter(|(id, _)| id.0 < sources.len()),
+                fixed_lines(sources, f).filter(|(id, _)| sources.contains(*id)),
             )
         })
         .collect();

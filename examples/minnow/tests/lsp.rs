@@ -254,7 +254,6 @@ fn the_standard_library_is_known_to_the_server() {
         .collect();
     assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
     assert!(diagnostics[0].starts_with("module `std.str` has no public `nope`"));
-    // The library's functions have types but no place in a file to go to.
     let hover = result(&messages, 1).get("contents").get("value");
     assert!(
         hover
@@ -263,7 +262,16 @@ fn the_standard_library_is_known_to_the_server() {
             .contains("fn std.str.find(s: string, part: string) -> int"),
         "{hover:?}"
     );
-    assert!(result(&messages, 2).as_array().is_empty(), "{messages:?}");
+    // The library's source is written where the editor can open it.
+    let target = &result(&messages, 2).as_array()[0];
+    let file = target.get("uri").as_str().unwrap();
+    assert!(file.ends_with("/std/str.hir"), "{target}");
+    let line = start(target).0 as usize;
+    let text = std::fs::read_to_string(a0_driver::lsp::uri_to_path(file).unwrap()).unwrap();
+    assert!(
+        text.lines().nth(line).unwrap().starts_with("fn find("),
+        "{target}"
+    );
 }
 
 const UTIL: &str = "pub struct Point { x: int, y: int }

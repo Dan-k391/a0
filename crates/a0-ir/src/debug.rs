@@ -84,7 +84,7 @@ struct TableBuilder<'a> {
 impl TableBuilder<'_> {
     fn intern(&mut self, func: String, span: Option<Span>, parent: u32) -> u32 {
         let (file, line, col) = match (span, self.m.sources()) {
-            (Some(s), Some(sources)) if s.source.0 < sources.len() => {
+            (Some(s), Some(sources)) if sources.contains(s.source) => {
                 let (line, col) = sources.line_col(s.source, s.start);
                 (sources.name(s.source).to_string(), line, col)
             }

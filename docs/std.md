@@ -112,8 +112,12 @@ directly (`docs/hir.md`, "Module").
 
 In a module's text, a C function whose name starts with `a0_` is private to the module and
 everything else is public; other modules' items are written by their full names
-(`` `std.Result` ``). The library's code has no spans: diagnostics never point into it, and stack
-traces name its functions (`at std.str.split`) without a file.
+(`` `std.Result` ``). The library's modules are built-in sources (`a0_diag::register_builtin_source`)
+named `<std>/str.hir` and so on, which every `SourceMap` knows, so the library's code has spans like
+a program's: a diagnostic points at the parameter a call does not fit, a stack trace shows
+`at std.str.split (<std>/str.hir:65:5)`, the language server's go-to-definition and the debugger
+open a copy of the module written to the system's temporary directory, and warnings are left out
+of it.
 
 To add a function: write it in the module's `.hir` file, in HIR when it can be (`is_digit`), or
 over a new C function in `std.c` (declared in `a0rt.h`, added to `symbols.c`), then use it from a

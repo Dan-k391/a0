@@ -46,5 +46,5 @@ pub use model::{
     InterfaceId, Item, LocalId, ModuleId, StructId, Term, TypeId, TypeTag, UnOp, Warning,
 };
 pub use print::print_module;
-pub use stdlib::{is_std_module, std_module_text, std_modules};
+pub use stdlib::{is_std_module, std_module_text, std_modules, std_source};
 pub use text::parse;

@@ -847,3 +847,18 @@ lang.py run -` by the process's own arguments. The layer rule changes: the C API
 `a0-driver`, which is the library languages build on, not a tool. `Language::run_status` returns the
 exit status as a number for it. Not covered: programs of several files (`Modules` takes Rust
 functions).
+
+## D68. The standard library's modules are built-in sources
+
+v0.5 asks that the standard library have source spans; it had none because its text is compiled
+into the tools and is in no driver's `SourceMap`. Drivers could have added the library's texts to
+every map they make (many places, and every new tool would have to remember), or the HIR could
+have rewritten the library's spans after the fact. Instead `a0-diag` keeps built-in sources: texts
+registered once per process at ids from `BUILTIN_SOURCES` up, which every `SourceMap` resolves as
+if they were its own (`contains`, `name`, `text`, lines). The HIR registers each module of the
+library when a program first imports it, as `<std>/fs.hir`, and parses it with spans there. A
+process-wide table is justified here because the texts are constants of the binary, the same for
+every map. Diagnostics then point into the library (the parameter declared there), stack traces
+give its locations, and the language server and the debugger open a copy written to a directory
+of this version of A0 under the system's temporary directory, since editors open files. Warnings
+leave the library out.

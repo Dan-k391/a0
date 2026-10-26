@@ -1,0 +1,10 @@
+// A runtime error inside the standard library: the trace shows where, in the library's source.
+import std.str as s;
+
+fn columns(line: string) -> int {
+  return len(s.split(line, ""));
+}
+
+fn main() {
+  print(columns("a,b"));
+}
