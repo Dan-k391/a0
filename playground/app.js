@@ -28,7 +28,8 @@ function startWorker() {
       }
     } else if (data.kind === 'exit') {
       const code = data.code === null ? 'failed' : `exit ${data.code}`;
-      status.textContent = `${code} · ${Math.round(data.ms)} ms`;
+      const how = data.compiled ? ' · compiled' : '';
+      status.textContent = `${code} · ${Math.round(data.ms)} ms${how}`;
       running(false);
     }
   };
@@ -51,7 +52,9 @@ function start(mode) {
   output.textContent = '';
   status.textContent = 'running…';
   running(true);
-  worker.postMessage({ mode, grammar: grammar.value, program: program.value });
+  // Programs run compiled to WebAssembly, unless asked to run in the interpreter.
+  const interpret = $('interpret').checked;
+  worker.postMessage({ mode, grammar: grammar.value, program: program.value, interpret });
 }
 
 async function load(example) {

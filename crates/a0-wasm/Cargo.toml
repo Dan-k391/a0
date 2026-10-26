@@ -1,0 +1,16 @@
+[package]
+name = "a0-wasm"
+description = "WebAssembly from A0's core IR: modules that link against A0's runtime instance"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+a0-diag.workspace = true
+a0-ir.workspace = true
+a0-runtime.workspace = true
+wasm-encoder = "0.262"
+
+[dev-dependencies]
+wasmparser = "0.262"
+a0-hir.workspace = true

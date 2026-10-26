@@ -214,7 +214,8 @@ allocation.
 | `examples/calc`, `examples/lispy` | Languages defined by their grammars alone, run by `a0 lang` |
 | `crates/a0-playground`, `playground` | The browser playground: its engine (built for WebAssembly) and its page |
 | `editors/vscode` | A VS Code extension that starts each language's server |
-| `tests/programs`, `tests/hir` | Core IR and HIR programs with expected output, run by both backends |
+| `crates/a0-wasm` | WebAssembly from the core IR, for the playground (programs link against its runtime) |
+| `tests/programs`, `tests/hir` | Core IR and HIR programs with expected output, run by every backend |
 
 ## Building and testing
 

@@ -2,6 +2,7 @@
 #define _GNU_SOURCE /* RTLD_DEFAULT */
 #include "a0rt.h"
 
+#include <ctype.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -9,7 +10,7 @@
 
 #ifdef _MSC_VER
 /* With optimization these are intrinsics, and an intrinsic's address is not a constant initializer. */
-#pragma function(floor, ceil, log2)
+#pragma function(floor, ceil, log2, abs)
 #endif
 
 #ifdef __wasm__
@@ -200,6 +201,12 @@ const A0Symbol a0_rt_symbols[] = {
     SYM(memset),
     SYM(memcmp),
     SYM(strlen),
+    SYM(strcmp),
+    SYM(strstr),
+    SYM(getenv),
+    SYM(abs),
+    SYM(toupper),
+    SYM(tolower),
     SYM(abort),
     SYM(exit),
     {NULL, NULL},

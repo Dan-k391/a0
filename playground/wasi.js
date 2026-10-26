@@ -20,11 +20,30 @@ export class Exit extends Error {
  * Runs a compiled WASI command module to completion and returns its exit status. `stdout` and
  * `stderr` receive the bytes the program writes (Uint8Arrays).
  */
-export async function runWasi(module, { args, env = {}, stdout, stderr }) {
+export async function runWasi(module, options) {
+  let memory;
+  const imports = wasiImports(options, () => memory);
+  const instance = await WebAssembly.instantiate(module, { wasi_snapshot_preview1: imports });
+  memory = instance.exports.memory;
+  try {
+    instance.exports._start();
+    return 0;
+  } catch (e) {
+    if (e instanceof Exit) return e.code;
+    throw e;
+  }
+}
+
+/** The WASI calls, for an instance whose memory `memoryOf()` returns once it exists. */
+export function wasiImports({ args, env = {}, stdout, stderr }, memoryOf) {
   const encoder = new TextEncoder();
   const argv = args.map((a) => encoder.encode(`${a}\0`));
   const envs = Object.entries(env).map(([k, v]) => encoder.encode(`${k}=${v}\0`));
-  let memory;
+  const memory = {
+    get buffer() {
+      return memoryOf().buffer;
+    },
+  };
   const view = () => new DataView(memory.buffer);
   const bytes = () => new Uint8Array(memory.buffer);
 
@@ -101,14 +120,5 @@ export async function runWasi(module, { args, env = {}, stdout, stderr }) {
     },
     sched_yield: () => SUCCESS,
   };
-  const imports = new Proxy(calls, { get: (target, name) => target[name] ?? (() => ENOSYS) });
-  const instance = await WebAssembly.instantiate(module, { wasi_snapshot_preview1: imports });
-  memory = instance.exports.memory;
-  try {
-    instance.exports._start();
-    return 0;
-  } catch (e) {
-    if (e instanceof Exit) return e.code;
-    throw e;
-  }
+  return new Proxy(calls, { get: (target, name) => target[name] ?? (() => ENOSYS) });
 }

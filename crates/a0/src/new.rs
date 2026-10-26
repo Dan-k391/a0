@@ -83,6 +83,26 @@ impl Names {
             .replace("{{Name}}", &self.capitalized)
             .replace("{{crate}}", &self.krate)
             .replace("{{ext}}", &self.ext);
+        // A crate A0 vendors: from the checkout, or found in A0's repository by its name.
+        while let Some(start) = out.find("{{a0-vendor:") {
+            let end = start + out[start..].find("}}").expect("an unclosed placeholder") + 2;
+            let krate = &out[start + 12..end - 2];
+            let dependency = match &self.a0 {
+                Some(root) => format!(
+                    "{{ path = {:?} }}",
+                    root.join("vendor")
+                        .join(krate)
+                        .display()
+                        .to_string()
+                        .replace('\\', "/")
+                ),
+                None => format!(
+                    "{{ git = \"https://github.com/Dan-k391/a0\", tag = \"v{}\" }}",
+                    env!("CARGO_PKG_VERSION")
+                ),
+            };
+            out.replace_range(start..end, &dependency);
+        }
         while let Some(start) = out.find("{{a0:") {
             let end = start + out[start..].find("}}").expect("an unclosed placeholder") + 2;
             let krate = &out[start + 5..end - 2];

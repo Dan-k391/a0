@@ -1059,3 +1059,29 @@ module for this one target, or to carry the two-line fix. A0 carries it: a copy 
 `vendor/` with the mapping (marked `A0:`), used through `[patch.crates-io]`, listed with its reason
 in `vendor/README.md`, to be dropped when a release has the fix. CI builds and tests A0 natively on
 GitHub's Windows ARM64 runners, so the target is checked like the others, the JIT included.
+
+## D78. A WebAssembly backend: the core IR translated directly
+
+v0.8 asks for a WebAssembly target for compiled languages, so that the playground runs compiled
+programs. Cranelift has no WebAssembly backend, and A0's rule is that Cranelift is its one code
+generator. The choices were to keep interpreting in the browser (which misses the goal), to compile
+Cranelift's IR to WebAssembly (a project far larger than A0's backends), or to translate A0's own
+core IR. The core IR is structured (`if`, `loop`, `break n`, `continue n`, no gotos), as WebAssembly
+is, so the translation is direct: one local per IR value and variable, a block around a loop for
+`break`, the IR's integer and float semantics written out op by op (canonical narrow integers,
+saturating conversions, traps through the runtime). It optimizes nothing: the HIR optimizer runs
+before it and the WebAssembly engine compiles what it gets. So `crates/a0-wasm` is the one
+exception to the rule, a translation beside the interpreter rather than a second optimizing
+compiler.
+
+The module does not carry its own runtime or C library: it links, at instantiation, against an
+instance of A0's runtime built for WebAssembly (the playground's engine), importing its functions,
+memory and function table, plus the places of its own data and table entries (`__memory_base`,
+`__table_base`, sizes in the custom section `a0.layout`). Linking a single file with `wasm-ld`
+would need relocatable objects and a runtime library for every language; importing from an
+instance needs neither, and is what a browser can do with no linker. Pointers are 32 bits in locals
+and 64-bit words in memory, as A0's runtime lays objects out on every target. Stack traces come from
+a stack of call locations the generated code keeps (a store per call), read by the runtime through
+the hook the interpreter uses, so failures print what they print natively. The playground compiles
+by default, and `playground/test.mjs` runs the whole IR and HIR corpus compiled in CI. Threads, C
+structs by value and C functions whose C types are narrower on wasm32 are not supported.

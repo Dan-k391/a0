@@ -10,6 +10,10 @@ a0-syntax = {{a0:a0-syntax}}
 a0-hir = {{a0:a0-hir}}
 a0-driver = {{a0:a0-driver}}
 
+# A0 builds a patched crate of Cranelift's from its own repository (A0's vendor/README.md).
+[patch.crates-io]
+cranelift-object = {{a0-vendor:cranelift-object}}
+
 # Debug builds are optimized a little, and A0 itself more, so programs compile and run quickly.
 [profile.dev]
 opt-level = 1

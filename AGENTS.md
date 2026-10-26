@@ -12,7 +12,8 @@ cargo test -p a0-ir                 # one crate
 cargo test -p lox --test suite      # the official Lox suite only
 cargo test -p a0-capi --test python # the Python bindings and Pebble (needs Python 3)
 WASI_SDK=/path/to/wasi-sdk sh playground/build.sh && node playground/test.mjs target/playground
-                                    # the playground, built for WebAssembly (Linux, macOS)
+                                    # the playground, built for WebAssembly (Linux, macOS), and the
+                                    # IR and HIR corpus compiled to WebAssembly and run there
 python3 bench/run.py                # the benchmark (docs/benchmarks.md; Linux, macOS; not in CI)
 cargo clippy --workspace --all-targets   # must report no warnings
 cargo fmt --all                     # run before committing
@@ -45,7 +46,7 @@ the debugger (`docs/debugging.md`); the VS Code extension in `editors/vscode` st
 | high-level IR | `a0-hir` (typed tree, builder with inference, checker, text, monomorphization, optimizer, lowering) | `a0-ir`, `a0-syntax`, `a0-sema`, `a0-diag` |
 | targets | `a0-target` | nothing |
 | runtime | `a0-runtime` (C in `include/`, `c/`; Rust glue) | nothing |
-| backends | `a0-interp`, `a0-native` | `a0-ir`, `a0-runtime`, `a0-target`, `a0-diag` |
+| backends | `a0-interp`, `a0-native`, `a0-wasm` (WebAssembly modules that link against a runtime instance, D78) | `a0-ir`, `a0-runtime`, `a0-target`, `a0-diag` |
 | tools | `a0` (CLI), `a0-build` (build-script helper), `a0-driver` (language drivers), `a0-playground` (the playground's engine; no native backend, builds for wasm32-wasip1) | anything |
 | C API | `a0-capi` (`include/a0.h`) | library crates and `a0-driver` (D67), not the other tools |
 | examples | `examples/*` | anything |
@@ -80,7 +81,7 @@ layer, decision D17). A new crate goes into the table above and into `[workspace
   the stack trace from the program's location table; runtime functions that can fail take the
   location and frame pointer (`REPORTS_LOCATION`, `docs/ir.md`).
 - No new dependencies without a reason recorded in `docs/decisions.md`. Never a code generator other
-  than Cranelift and never our own linker. The one optimizer of our own is the HIR optimizer (D27):
+  than Cranelift (and the direct translation to WebAssembly, D78) and never our own linker. The one optimizer of our own is the HIR optimizer (D27):
   keep it small, on by default, behavior-preserving, and leave per-function optimization to
   Cranelift.
 - Every target-dependent choice goes through `a0_target::Target`; never `cfg!` in codegen.

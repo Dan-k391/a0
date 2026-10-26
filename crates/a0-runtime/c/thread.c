@@ -185,7 +185,9 @@ typedef struct ThreadState {
 
 /* Running threads, whose handles stay alive until they end even if the program drops them. */
 static ThreadState *running;
+#if !defined(A0_NO_THREADS)
 static int64_t next_id = 2;
+#endif
 static A0_THREAD_LOCAL ThreadState *self;
 
 void a0_threads_mark(void) {
@@ -199,6 +201,9 @@ size_t a0_thread_spawn_frames(const uint32_t **ids, int64_t *id) {
     return self->spawned_count;
 }
 
+#if defined(A0_NO_THREADS)
+void a0_rt_set_thread_starter(A0ThreadStarter s) { (void)s; }
+#else
 static uint64_t call_closure(void *closure) {
     typedef uint64_t (*Code)(void *);
     Code code = (Code)(uintptr_t)(*(uint64_t *)closure);
@@ -208,11 +213,15 @@ static uint64_t call_closure(void *closure) {
 static A0ThreadStarter starter = call_closure;
 
 void a0_rt_set_thread_starter(A0ThreadStarter s) { starter = s != NULL ? s : call_closure; }
+#endif
 
 /* The shadow stack of a spawned thread, in words (the main thread's is larger). */
 #define THREAD_SHADOW (1024 * 1024)
 /* The native stack of a spawned thread: an executable's main thread's, unless the interpreter, whose
  * calls take more of it, says otherwise. */
+#if defined(A0_NO_THREADS)
+void a0_rt_set_thread_stack(uint64_t bytes) { (void)bytes; }
+#else
 static size_t thread_stack = (size_t)8 * 1024 * 1024;
 
 void a0_rt_set_thread_stack(uint64_t bytes) { thread_stack = (size_t)bytes; }
@@ -256,6 +265,7 @@ static void *thread_main(void *arg) {
     return NULL;
 }
 #endif
+#endif /* !A0_NO_THREADS */
 
 /* Defined in trace.c: the locations of the active frames. */
 size_t a0_rt_frames(uint64_t loc, void *frame, uint32_t *out, size_t max);

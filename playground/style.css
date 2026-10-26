@@ -100,7 +100,15 @@ code {
 .actions {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   gap: 6px;
+}
+
+label.check {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
 }
 
 select,

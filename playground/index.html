@@ -14,7 +14,8 @@
     <p class="intro">
       A grammar defines a language: each rule says what its nodes mean with an <code>@hir</code> form
       (<a href="https://github.com/Dan-k391/a0/blob/main/docs/grammar.md#languages-without-host-code-hir">the forms</a>).
-      A0 itself, compiled to WebAssembly, parses the program, checks it, and runs it in your browser.
+      A0 itself, compiled to WebAssembly, parses the program, checks it, compiles it to WebAssembly
+      and runs it in your browser.
     </p>
   </header>
   <div class="toolbar">
@@ -27,6 +28,9 @@
       <button id="hir" title="The high-level IR the grammar's forms build">HIR</button>
       <button id="ir" title="The core IR the HIR lowers to">IR</button>
       <button id="share" title="Copy a link to this grammar and program">Copy link</button>
+      <label class="check" title="Run in A0's interpreter instead of compiling to WebAssembly">
+        <input type="checkbox" id="interpret"> Interpret
+      </label>
     </div>
   </div>
   <main>
@@ -45,8 +49,8 @@
   </main>
   <footer>
     <a href="https://github.com/Dan-k391/a0">A0</a> builds languages: a grammar, a typed IR, an interpreter
-    and native code, a collector and a language server. Here it runs as WebAssembly, with no native
-    backend.
+    and native code, a collector and a language server. Here it runs as WebAssembly, and compiles
+    programs to WebAssembly too.
   </footer>
 </body>
 </html>
