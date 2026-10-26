@@ -373,16 +373,16 @@ static void seed(int64_t value) {
 }
 
 void a0_std_seed(int64_t value) {
-    a0_table_lock();
+    A0_TABLE_LOCK();
     seed(value);
-    a0_table_unlock();
+    A0_TABLE_UNLOCK();
 }
 
 static uint64_t rotl(uint64_t x, int k) { return (x << k) | (x >> (64 - k)); }
 
 static uint64_t next_random(void) {
     /* Unseeded programs get the same numbers every run, so that they are reproducible. */
-    a0_table_lock();
+    A0_TABLE_LOCK();
     if (!rng_seeded) seed(0);
     uint64_t result = rotl(rng[1] * 5, 7) * 9;
     uint64_t t = rng[1] << 17;
@@ -392,7 +392,7 @@ static uint64_t next_random(void) {
     rng[0] ^= rng[3];
     rng[2] ^= t;
     rng[3] = rotl(rng[3], 45);
-    a0_table_unlock();
+    A0_TABLE_UNLOCK();
     return result;
 }
 

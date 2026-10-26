@@ -279,6 +279,23 @@ def main():
         w(f"| {prog} | {ms(b_tin)} | {ms(r_tin)} | {ms(r_tin0)} | {ms(r_jit)} | {ms(r_c0)} | {ms(r_c2)} |")
     w("")
 
+    # Threads: the same work split among more threads.
+    w("## Threads\n")
+    w(f"`parallel` counts the primes below 5,000,000 on several threads ({os.cpu_count()} processors).\n")
+    w("| Threads | Minnow native | speedup | Minnow JIT (`run`) | speedup |")
+    w("|---|---|---|---|---|")
+    par = BENCH / "minnow" / "parallel.mn"
+    par_exe = str(WORK / "mn-parallel")
+    sh([minnow, "build", str(par), "-o", par_exe])
+    base = None
+    for n in [1, 2, 4, 8]:
+        r_native, out = timed([par_exe, str(n), "5000000"], runs)
+        r_jit, _ = timed([minnow, "run", str(par), str(n), "5000000"], runs)
+        if base is None:
+            base = (r_native, r_jit)
+        w(f"| {n} | {ms(r_native)} | {base[0] / r_native:.1f}x | {ms(r_jit)} | {base[1] / r_jit:.1f}x |")
+    w("")
+
     # Where a build's time goes. Each of A0's steps includes the ones before it (the object file
     # from the IR text); A0 links with `cc`, or `$CC`, like the C programs' links beside it.
     cc = os.path.realpath(shutil.which(os.environ.get("CC", "cc")))

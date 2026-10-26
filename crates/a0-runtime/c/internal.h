@@ -86,6 +86,9 @@ size_t a0_any_describe(uint64_t value, char *buf, size_t cap);
 #define A0_NO_THREADS 1
 #endif
 
+/* Thread-locals are for threaded programs' slow paths: a library loaded at run time (the C API, from
+ * Python) reaches them through __tls_get_addr, and cannot use the faster initial-exec model. What a
+ * single-threaded program reads on every call lives in plain globals (gc.c, `main_mutator`). */
 #if defined(A0_NO_THREADS)
 #define A0_THREAD_LOCAL
 #elif defined(_MSC_VER)
@@ -94,13 +97,36 @@ size_t a0_any_describe(uint64_t value, char *buf, size_t cap);
 #define A0_THREAD_LOCAL _Thread_local
 #endif
 
-/* Sequentially consistent operations on 64-bit words shared between threads. */
-int64_t a0_atomic_load(volatile int64_t *p);
-void a0_atomic_store(volatile int64_t *p, int64_t v);
-int64_t a0_atomic_add(volatile int64_t *p, int64_t delta); /* returns the new value */
+/* Sequentially consistent operations on 64-bit words shared between threads (inline: the
+ * collector reads its counters on every allocation). */
+#if defined(_MSC_VER)
+#include <intrin.h>
+static __inline int64_t a0_atomic_load(volatile int64_t *p) {
+    return _InterlockedCompareExchange64(p, 0, 0);
+}
+static __inline void a0_atomic_store(volatile int64_t *p, int64_t v) { _InterlockedExchange64(p, v); }
+static __inline int64_t a0_atomic_add(volatile int64_t *p, int64_t delta) {
+    return _InterlockedExchangeAdd64(p, delta) + delta;
+}
+#else
+static inline int64_t a0_atomic_load(volatile int64_t *p) {
+    return __atomic_load_n(p, __ATOMIC_SEQ_CST);
+}
+static inline void a0_atomic_store(volatile int64_t *p, int64_t v) {
+    __atomic_store_n(p, v, __ATOMIC_SEQ_CST);
+}
+static inline int64_t a0_atomic_add(volatile int64_t *p, int64_t delta) {
+    return __atomic_add_fetch(p, delta, __ATOMIC_SEQ_CST);
+}
+#endif
 
 /* Set (to 1, for good) before the program's second thread starts; until then nothing locks. */
+#if defined(__GNUC__) && defined(__ELF__)
+/* Read on every frame: not through the GOT. */
+extern int a0_threads_active __attribute__((visibility("hidden")));
+#else
 extern int a0_threads_active;
+#endif
 /* Set while a collection waits for the other threads to stop; generated code polls it. */
 extern volatile int64_t a0_gc_stop_requested;
 
@@ -110,6 +136,9 @@ extern volatile int64_t a0_gc_stop_requested;
 void a0_heap_enter(void);
 void a0_heap_enter_unattached(void);
 void a0_heap_leave(void);
+/* What single-threaded programs run: a check, and no call. */
+#define A0_HEAP_ENTER()                             do {                                                if (a0_threads_active) a0_heap_enter();     } while (0)
+#define A0_HEAP_LEAVE()                             do {                                                if (a0_threads_active) a0_heap_leave();     } while (0)
 /* The collector's count of threads changed (gc.c), or starts over (a0_rt_init). */
 void a0_threads_attached(int64_t delta);
 void a0_threads_reset(void);
@@ -118,6 +147,8 @@ void a0_gc_safepoint(void);
  * held where a collection could start, so waiting for it does not count as stopped. */
 void a0_table_lock(void);
 void a0_table_unlock(void);
+#define A0_TABLE_LOCK()                             do {                                                if (a0_threads_active) a0_table_lock();     } while (0)
+#define A0_TABLE_UNLOCK()                             do {                                                  if (a0_threads_active) a0_table_unlock();     } while (0)
 /* A region where the thread waits (for a channel, a thread, time, input) and touches no object:
  * a collection may run meanwhile. Leaving waits for a collection in progress to end. */
 void a0_safe_begin(void);

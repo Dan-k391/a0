@@ -15,23 +15,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* ---- Atomics ---------------------------------------------------------------------------------- */
-
-#if defined(_MSC_VER)
-#include <intrin.h>
-int64_t a0_atomic_load(volatile int64_t *p) { return _InterlockedCompareExchange64(p, 0, 0); }
-void a0_atomic_store(volatile int64_t *p, int64_t v) { _InterlockedExchange64(p, v); }
-int64_t a0_atomic_add(volatile int64_t *p, int64_t delta) {
-    return _InterlockedExchangeAdd64(p, delta) + delta;
-}
-#else
-int64_t a0_atomic_load(volatile int64_t *p) { return __atomic_load_n(p, __ATOMIC_SEQ_CST); }
-void a0_atomic_store(volatile int64_t *p, int64_t v) { __atomic_store_n(p, v, __ATOMIC_SEQ_CST); }
-int64_t a0_atomic_add(volatile int64_t *p, int64_t delta) {
-    return __atomic_add_fetch(p, delta, __ATOMIC_SEQ_CST);
-}
-#endif
-
 /* ---- Locks and threads of the platform -------------------------------------------------------- */
 
 #if defined(A0_NO_THREADS)

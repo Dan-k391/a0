@@ -56,6 +56,7 @@ static A0String *intern(A0String *s) {
 A0String *a0_intern(A0String *s) {
     if (s == NULL) a0_panic_null();
     if (HEADER(s)->flags & A0_FLAG_INTERNED) return s;
+    if (!a0_threads_active) return intern(s);
     /* The hash is computed (and stored) before the lock, so that the table's work is short. */
     a0_string_hash(s);
     a0_table_lock();
@@ -95,6 +96,7 @@ static const A0Shape *shape_add_locked(const A0Shape *shape, A0String *name) {
 }
 
 static const A0Shape *shape_add(const A0Shape *shape, A0String *name) {
+    if (!a0_threads_active) return shape_add_locked(shape, name);
     a0_table_lock();
     const A0Shape *r = shape_add_locked(shape, name);
     a0_table_unlock();
@@ -115,19 +117,22 @@ static const A0Shape *table_shapes[TABLE_SIZE];
 static const A0String *table_names[TABLE_SIZE];
 static int64_t table_slots[TABLE_SIZE];
 
-static int64_t find(const A0Shape *shape, const A0String *name) {
+static int64_t find_unlocked(const A0Shape *shape, const A0String *name) {
     uintptr_t h = (uintptr_t)shape * 31u + (uintptr_t)name;
     size_t at = (size_t)((h ^ (h >> 11)) >> 4) & (TABLE_SIZE - 1);
+    if (table_shapes[at] == shape && table_names[at] == name) return table_slots[at];
+    int64_t index = shape_find(shape, name);
+    table_shapes[at] = shape;
+    table_names[at] = name;
+    table_slots[at] = index;
+    return index;
+}
+
+/* Lookups are hot in dynamic languages: a program with one thread takes no lock. */
+static int64_t find(const A0Shape *shape, const A0String *name) {
+    if (!a0_threads_active) return find_unlocked(shape, name);
     a0_table_lock();
-    int64_t index;
-    if (table_shapes[at] == shape && table_names[at] == name) {
-        index = table_slots[at];
-    } else {
-        index = shape_find(shape, name);
-        table_shapes[at] = shape;
-        table_names[at] = name;
-        table_slots[at] = index;
-    }
+    int64_t index = find_unlocked(shape, name);
     a0_table_unlock();
     return index;
 }

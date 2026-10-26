@@ -56,6 +56,10 @@ typedef struct Mutator {
     struct Mutator *next;
 } Mutator;
 static Mutator *mutators;
+/* The main thread's, kept where code reaches it without a thread-local lookup: while the program
+ * has one thread (when every thread uses it, as one did before threads), frames cost what they
+ * did. Spawned threads, and the main one once there are others, find theirs through `me`. */
+static Mutator main_mutator;
 static A0_THREAD_LOCAL Mutator *me;
 
 typedef struct {
@@ -112,7 +116,7 @@ static void maybe_collect(size_t incoming) {
         stress = enabled("A0_GC_STRESS");
         if (enabled("A0_GC_STATS")) atexit(print_stats);
     }
-    size_t bytes = (size_t)a0_atomic_load(&bytes_allocated);
+    size_t bytes = (size_t)(a0_threads_active ? a0_atomic_load(&bytes_allocated) : bytes_allocated);
     if (bytes > peak_bytes) peak_bytes = bytes;
     if (manual) return;
     if (stress || bytes + incoming > next_gc) a0_gc_collect();
@@ -200,7 +204,7 @@ static size_t rounded(size_t size) { return (size + GRANULE - 1) / GRANULE * GRA
 
 void *a0_gc_alloc(const A0Type *type, size_t payload_size) {
     size_t size = (sizeof(Header) + payload_size + GRANULE - 1) / GRANULE * GRANULE;
-    a0_heap_enter();
+    A0_HEAP_ENTER();
     maybe_collect(size);
     Header *h;
     if (size <= SMALL_LIMIT) {
@@ -217,7 +221,7 @@ void *a0_gc_alloc(const A0Type *type, size_t payload_size) {
     }
     h->type = type;
     ADD_BYTES(size);
-    a0_heap_leave();
+    A0_HEAP_LEAVE();
     return PAYLOAD(h);
 }
 
@@ -229,9 +233,9 @@ void *a0_gc_buffer_alloc(size_t size) {
     size_t r = rounded(size > 0 ? size : 1);
     void *p;
     if (r <= SMALL_LIMIT) {
-        a0_table_lock();
+        A0_TABLE_LOCK();
         p = small_alloc(buffer_cells, r, 0);
-        a0_table_unlock();
+        A0_TABLE_UNLOCK();
     } else {
         p = calloc(1, r);
     }
@@ -260,9 +264,9 @@ void a0_gc_buffer_free(void *buffer, size_t size) {
     if (buffer == NULL) return;
     size_t r = rounded(size > 0 ? size : 1);
     if (r <= SMALL_LIMIT) {
-        a0_table_lock();
+        A0_TABLE_LOCK();
         small_free(buffer_cells, buffer, r);
-        a0_table_unlock();
+        A0_TABLE_UNLOCK();
     } else {
         free(buffer);
     }
@@ -270,6 +274,30 @@ void a0_gc_buffer_free(void *buffer, size_t size) {
 }
 
 /* ---- Roots ------------------------------------------------------------------------------------ */
+
+/* The main thread's mutator, given its shadow stack and made known to the collector the first time. */
+static Mutator *main_thread(void) {
+    Mutator *m = &main_mutator;
+    if (m->shadow == NULL) {
+        m->shadow = (uint64_t *)calloc(SHADOW_CAPACITY, sizeof(uint64_t));
+        if (m->shadow == NULL) a0_panic("out of memory");
+        m->capacity = SHADOW_CAPACITY;
+        m->next = mutators;
+        mutators = m;
+        a0_threads_attached(1);
+    }
+    me = m;
+    return m;
+}
+
+/* The current thread's mutator. */
+static Mutator *current(void) {
+    if (!a0_threads_active) {
+        return main_mutator.shadow != NULL ? &main_mutator : main_thread();
+    }
+    if (me == NULL) a0_gc_attach(SHADOW_CAPACITY);
+    return me;
+}
 
 void a0_gc_attach(int64_t capacity) {
     if (me != NULL) return;
@@ -281,14 +309,14 @@ void a0_gc_attach(int64_t capacity) {
     m->next = mutators;
     mutators = m;
     a0_threads_attached(1);
-    a0_heap_leave();
+    A0_HEAP_LEAVE();
     me = m;
 }
 
 void a0_gc_detach(void) {
     Mutator *m = me;
     if (m == NULL) return;
-    a0_heap_enter();
+    A0_HEAP_ENTER();
     for (Mutator **link = &mutators; *link != NULL; link = &(*link)->next) {
         if (*link == m) {
             *link = m->next;
@@ -296,7 +324,7 @@ void a0_gc_detach(void) {
         }
     }
     a0_threads_attached(-1);
-    a0_heap_leave();
+    A0_HEAP_LEAVE();
     me = NULL;
     free(m->shadow);
     free(m);
@@ -306,44 +334,57 @@ void a0_gc_detach(void) {
  * gone. */
 void a0_gc_restart(void) {
     mutators = NULL;
-    me = NULL;
     a0_threads_reset();
-    a0_gc_attach(SHADOW_CAPACITY);
+    main_mutator.next = NULL;
+    main_mutator.top = 0;
+    main_mutator.exception[0] = 0;
+    main_mutator.exception[1] = 0;
+    if (main_mutator.shadow != NULL) {
+        mutators = &main_mutator;
+        a0_threads_attached(1);
+    }
+    main_thread();
 }
 
-uint64_t *a0_gc_exception_slots(void) {
-    if (me == NULL) a0_gc_attach(SHADOW_CAPACITY);
-    return me->exception;
-}
+uint64_t *a0_gc_exception_slots(void) { return current()->exception; }
 
 uint64_t *a0_rt_exception_slots(void) { return a0_gc_exception_slots(); }
 
-uint64_t *a0_gc_frame_push(int64_t slots) {
-    Mutator *m = me;
-    if (m == NULL) {
-        a0_gc_attach(SHADOW_CAPACITY);
-        m = me;
-    }
+/* Everything but the single-threaded program's common case, out of line so that the case every call
+ * takes is a few instructions. */
+A0_COLD static uint64_t *frame_push_slow(int64_t slots) {
+    Mutator *m = current();
     if (m->top + slots > m->capacity) a0_rt_trap(A0_TRAP_STACK_OVERFLOW, 0, NULL);
-    /* Every word above the top is zero (the float 0.0 in the `any` encoding, not a reference), since
-     * frames are cleared before they are popped: the new frame needs no clearing. */
     uint64_t *frame = &m->shadow[m->top];
     m->top += slots;
     return frame;
 }
 
-void a0_gc_frame_pop(int64_t slots) {
-    Mutator *m = me;
-    m->top -= slots;
-    if (stress == 1) {
-        for (int64_t i = 0; i < slots; i++) {
-            if (m->shadow[m->top + i] != 0) a0_panic("a shadow stack frame was popped uncleared");
-        }
+uint64_t *a0_gc_frame_push(int64_t slots) {
+    /* Every word above the top is zero (the float 0.0 in the `any` encoding, not a reference), since
+     * frames are cleared before they are popped: the new frame needs no clearing. */
+    int64_t top = main_mutator.top;
+    if (!a0_threads_active && main_mutator.shadow != NULL && top + slots <= main_mutator.capacity) {
+        main_mutator.top = top + slots;
+        return main_mutator.shadow + top;
+    }
+    return frame_push_slow(slots);
+}
+
+A0_COLD static void frame_pop_checked(Mutator *m, int64_t slots) {
+    for (int64_t i = 0; i < slots; i++) {
+        if (m->shadow[m->top + i] != 0) a0_panic("a shadow stack frame was popped uncleared");
     }
 }
 
+void a0_gc_frame_pop(int64_t slots) {
+    Mutator *m = a0_threads_active ? me : &main_mutator;
+    m->top -= slots;
+    if (stress == 1) frame_pop_checked(m, slots);
+}
+
 void a0_gc_add_root(void *address, int64_t word_kind) {
-    a0_heap_enter();
+    A0_HEAP_ENTER();
     if (root_count == root_capacity) {
         root_capacity = root_capacity < 16 ? 16 : root_capacity * 2;
         roots = (Root *)realloc(roots, sizeof(Root) * (size_t)root_capacity);
@@ -352,7 +393,7 @@ void a0_gc_add_root(void *address, int64_t word_kind) {
     roots[root_count].address = address;
     roots[root_count].kind = word_kind;
     root_count++;
-    a0_heap_leave();
+    A0_HEAP_LEAVE();
 }
 
 /* ---- Marking ---------------------------------------------------------------------------------- */
@@ -434,7 +475,7 @@ static void finalize(void *object) {
 }
 
 void a0_gc_collect(void) {
-    a0_heap_enter();
+    A0_HEAP_ENTER();
     a0_stop_world();
     double start = a0_clock();
     for (Mutator *m = mutators; m != NULL; m = m->next) {
@@ -491,24 +532,24 @@ void a0_gc_collect(void) {
     size_t want = (size_t)a0_atomic_load(&bytes_allocated) * GROWTH;
     next_gc = want < MIN_HEAP ? MIN_HEAP : want;
     a0_start_world();
-    a0_heap_leave();
+    A0_HEAP_LEAVE();
 }
 
 void a0_gc_set_manual(void) { manual = 1; }
 
 void a0_gc_free(void *object, uint64_t loc, void *frame) {
     if (object == NULL) return;
-    a0_heap_enter();
+    A0_HEAP_ENTER();
     Header *h = HEADER(object);
     if (h->type == NULL) {
-        a0_heap_leave();
+        A0_HEAP_LEAVE();
         a0_rt_fail("freed twice", loc, frame);
     }
     finalize(object);
     if (h->size != 0) {
         SUB_BYTES(h->size);
         object_cell_free(h, h->size);
-        a0_heap_leave();
+        A0_HEAP_LEAVE();
         return;
     }
     BigObject *big = (BigObject *)h - 1;
@@ -521,7 +562,7 @@ void a0_gc_free(void *object, uint64_t loc, void *frame) {
     SUB_BYTES(big->size);
     h->type = NULL;
     free(big);
-    a0_heap_leave();
+    A0_HEAP_LEAVE();
 }
 
 int64_t a0_gc_collections(void) { return collections; }
