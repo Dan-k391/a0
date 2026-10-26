@@ -266,8 +266,12 @@ pub(crate) fn emit(
         gimli::DW_AT_comp_dir,
         AttributeValue::String(dir.as_bytes().to_vec()),
     );
-    // A language code of the user range (DW_LANG_lo_user): the languages are A0's.
-    unit.set(gimli::DW_AT_language, AttributeValue::Udata(0x8000));
+    // C: the types are C's (base types, structures, pointers), and lldb shows no variables of a
+    // language it does not know (gdb falls back to C).
+    unit.set(
+        gimli::DW_AT_language,
+        AttributeValue::Language(gimli::DW_LANG_C99),
+    );
     unit.set(
         gimli::DW_AT_low_pc,
         AttributeValue::Address(Address::Constant(0)),
