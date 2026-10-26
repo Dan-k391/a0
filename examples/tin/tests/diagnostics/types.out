@@ -1,0 +1,29 @@
+$ tin run types.tin
+--- stderr
+error[E2001]: mismatched types
+ --> types.tin:7:17
+  |
+7 |   var q: *i32 = p;
+  |       -         ^ expected `*i32`, found `*i64`
+  |       |
+  |       expected due to this
+
+error[E1003]: `Vec2` has no field `z`
+ --> types.tin:8:11
+  |
+2 | struct Vec2 { x: f64, y: f64 }
+  |        ---- `Vec2` declared here
+...
+8 |   var v = (Vec2){ .x = 1.0, .z = 2.0 };
+  |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ unknown field
+  |
+  = help: a field with a similar name exists: `x`
+
+error[E2001]: mismatched types
+ --> types.tin:9:16
+  |
+9 |   var n: i32 = takes(v);
+  |       -        ^^^^^^^^ expected `i32`, found `f64`
+  |       |
+  |       expected due to this
+--- exit 1

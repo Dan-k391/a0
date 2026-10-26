@@ -1,0 +1,6 @@
+$ tin run runtime.tin
+--- stderr
+panic: freed twice
+    at release (runtime.tin:3:3)
+    at main (runtime.tin:9:3)
+--- exit 101

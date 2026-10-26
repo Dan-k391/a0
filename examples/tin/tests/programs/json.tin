@@ -1,0 +1,75 @@
+// A real C library: cJSON (runtime/cjson), through its own header's declarations. The struct
+// `cJSON` is declared with C's layout, so its fields are read through pointers as C reads them.
+// expect: cJSON 1.7.18
+// expect: name: Tin
+// expect: version: 0.6
+// expect: tags: 3 [c, systems, small]
+// expect: nested.ok: true
+// expect: built: {"language":"Tin","features":["structs","pointers"],"lines":42}
+// expect: bad input at: oops]
+struct cJSON {
+  next: *cJSON,
+  prev: *cJSON,
+  child: *cJSON,
+  type: i32,
+  valuestring: *u8,
+  valueint: i32,
+  valuedouble: f64,
+  string: *u8,
+}
+
+extern fn cJSON_Version() -> *u8;
+extern fn cJSON_Parse(text: *u8) -> *cJSON;
+extern fn cJSON_PrintUnformatted(item: *cJSON) -> *u8;
+extern fn cJSON_Delete(item: *cJSON);
+extern fn cJSON_GetObjectItemCaseSensitive(object: *cJSON, name: *u8) -> *cJSON;
+extern fn cJSON_GetArraySize(array: *cJSON) -> i32;
+extern fn cJSON_IsTrue(item: *cJSON) -> i32;
+extern fn cJSON_GetErrorPtr() -> *u8;
+extern fn cJSON_CreateObject() -> *cJSON;
+extern fn cJSON_CreateArray() -> *cJSON;
+extern fn cJSON_CreateString(text: *u8) -> *cJSON;
+extern fn cJSON_AddItemToArray(array: *cJSON, item: *cJSON) -> i32;
+extern fn cJSON_AddItemToObject(object: *cJSON, name: *u8, item: *cJSON) -> i32;
+extern fn cJSON_AddStringToObject(object: *cJSON, name: *u8, text: *u8) -> *cJSON;
+extern fn cJSON_AddNumberToObject(object: *cJSON, name: *u8, n: f64) -> *cJSON;
+extern fn cJSON_free(p: *u8);
+
+fn main() -> i32 {
+  println("cJSON ", cJSON_Version());
+  var doc = cJSON_Parse("{\"name\": \"Tin\", \"version\": 0.6, \"tags\": [\"c\", \"systems\", \"small\"], \"nested\": {\"ok\": true}}");
+  var name = cJSON_GetObjectItemCaseSensitive(doc, "name");
+  println("name: ", name->valuestring);
+  println("version: ", cJSON_GetObjectItemCaseSensitive(doc, "version")->valuedouble);
+  var tags = cJSON_GetObjectItemCaseSensitive(doc, "tags");
+  print("tags: ", cJSON_GetArraySize(tags), " [");
+  // The items of an array are a list through `child` and `next`.
+  var tag = tags->child;
+  while (tag != null) {
+    print(tag->valuestring);
+    if (tag->next != null) { print(", "); }
+    tag = tag->next;
+  }
+  println("]");
+  var nested = cJSON_GetObjectItemCaseSensitive(doc, "nested");
+  println("nested.ok: ", cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(nested, "ok")) != 0);
+  cJSON_Delete(doc);
+
+  var made = cJSON_CreateObject();
+  cJSON_AddStringToObject(made, "language", "Tin");
+  var features = cJSON_CreateArray();
+  cJSON_AddItemToArray(features, cJSON_CreateString("structs"));
+  cJSON_AddItemToArray(features, cJSON_CreateString("pointers"));
+  cJSON_AddItemToObject(made, "features", features);
+  cJSON_AddNumberToObject(made, "lines", 42.0);
+  var text = cJSON_PrintUnformatted(made);
+  println("built: ", text);
+  cJSON_free(text);
+  cJSON_Delete(made);
+
+  var bad = cJSON_Parse("[1, 2, oops]");
+  if (bad == null) {
+    println("bad input at: ", cJSON_GetErrorPtr());
+  }
+  return 0;
+}

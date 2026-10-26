@@ -36,12 +36,19 @@
         "aliases": ["Kaleidoscope"],
         "extensions": [".k"],
         "configuration": "./hash-comments.json"
+      },
+      {
+        "id": "tin",
+        "aliases": ["Tin"],
+        "extensions": [".tin"],
+        "configuration": "./slash-comments.json"
       }
     ],
     "breakpoints": [
       { "language": "lox" },
       { "language": "minnow" },
-      { "language": "kaleidoscope" }
+      { "language": "kaleidoscope" },
+      { "language": "tin" }
     ],
     "debuggers": [
       {
@@ -72,7 +79,8 @@
       { "scopes": { "keyword": ["keyword.control"], "comment": ["comment"], "string": ["string"], "number": ["constant.numeric"], "operator": ["keyword.operator"] } },
       { "language": "lox", "scopes": { "keyword": ["keyword.control"], "comment": ["comment"], "string": ["string"], "number": ["constant.numeric"], "operator": ["keyword.operator"] } },
       { "language": "minnow", "scopes": { "keyword": ["keyword.control"], "comment": ["comment"], "string": ["string"], "number": ["constant.numeric"], "operator": ["keyword.operator"] } },
-      { "language": "kaleidoscope", "scopes": { "keyword": ["keyword.control"], "comment": ["comment"], "string": ["string"], "number": ["constant.numeric"], "operator": ["keyword.operator"] } }
+      { "language": "kaleidoscope", "scopes": { "keyword": ["keyword.control"], "comment": ["comment"], "string": ["string"], "number": ["constant.numeric"], "operator": ["keyword.operator"] } },
+      { "language": "tin", "scopes": { "keyword": ["keyword.control"], "comment": ["comment"], "string": ["string"], "number": ["constant.numeric"], "operator": ["keyword.operator"] } }
     ],
     "configuration": {
       "title": "A0 languages",
@@ -93,7 +101,8 @@
           "default": [
             { "language": "lox", "extensions": [".lox"], "command": "lox" },
             { "language": "minnow", "extensions": [".mn"], "command": "minnow" },
-            { "language": "kaleidoscope", "extensions": [".k"], "command": "kaleidoscope" }
+            { "language": "kaleidoscope", "extensions": [".k"], "command": "kaleidoscope" },
+            { "language": "tin", "extensions": [".tin"], "command": "tin" }
           ]
         }
       }

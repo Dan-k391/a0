@@ -25,7 +25,7 @@ it green; a test that only passes on one OS is a bug.
 Needs a C compiler: MSVC on Windows (found automatically), `cc` on Linux/macOS. Useful while
 debugging: `a0 run|build|fmt|check file.a0ir|file.hir`, `a0 lower file.hir` (the core IR a HIR
 module becomes), `a0 parse lang.a0g input`, `a0 lang calc.a0g hir|ir|run file` (a language
-defined by its grammar alone), `lox hir|ir file.lox`, `minnow hir|ir file.mn`, `kaleidoscope hir|ir file.k`, and
+defined by its grammar alone), `lox hir|ir file.lox`, `minnow hir|ir file.mn`, `kaleidoscope hir|ir file.k`, `tin hir|ir file.tin`, and
 `A0_INTERP=1` (`run` interprets instead of compiling into memory with the JIT),
 `A0_GC_STRESS=1` (the collector runs on every allocation), `A0_GC_STATS=1` (what the collector did,
 printed at exit), `A0_OPT=0` (no HIR optimizer),

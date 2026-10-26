@@ -1,0 +1,27 @@
+// C's numbers: sized integers that wrap, bit operations, characters, hex, and floats of both sizes.
+// expect: wrap 255 0 -128
+// expect: bits 6 7 1 -8 40 5
+// expect: hex 255 -1
+// expect: char 97 b
+// expect: f32 0.5 f64 0.1
+// expect: casts 3 -3 255 65
+fn main() -> i32 {
+  var b: u8 = 255;
+  var c: u8 = b + 1 as u8;
+  var d: i8 = 127;
+  d += 1;
+  println("wrap ", b, " ", c, " ", d);
+  var x = 6;
+  println("bits ", x & 7, " ", x | 1, " ", x ^ 7, " ", ~7, " ", 5 << 3, " ", 40 >> 3);
+  println("hex ", 0xff, " ", 0xffffffffffffffff);
+  var ch = 'a';
+  var next = ch + 1 as u8;
+  var word = alloc(2);
+  word[0] = next;
+  println("char ", ch, " ", word);
+  free(word);
+  var half: f32 = 0.5;
+  println("f32 ", half, " f64 ", 0.1);
+  println("casts ", 3.7 as i64, " ", -3.7 as i32, " ", -1 as u8, " ", 65 as u8);
+  return 0;
+}

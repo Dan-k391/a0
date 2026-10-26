@@ -1,0 +1,11 @@
+// Runtime errors: an array freed twice stops the program, with where it happened.
+fn release(xs: []i64) {
+  free(xs);
+}
+
+fn main() -> i32 {
+  var xs: []i64 = [1, 2, 3];
+  release(xs);
+  release(xs);
+  return 0;
+}

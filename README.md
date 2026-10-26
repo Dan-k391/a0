@@ -50,7 +50,10 @@ closures and nullable references, is about 1000, and [`json`](examples/minnow/js
 written in it, about 480; [Lox](examples/lox), from *Crafting Interpreters*, passes all 241 tests
 of the official suite (and has exceptions as an extension), and its native programs run faster
 than clox, the book's own bytecode virtual machine, on all of the book's benchmarks
-([docs/benchmarks.md](docs/benchmarks.md)).
+([docs/benchmarks.md](docs/benchmarks.md)); and [Tin](examples/tin), a C-like systems language
+(structs as values, raw pointers, memory it frees itself, C functions called directly, structs
+passed to them by value), is about 850 lines including its grammar and calls cJSON, a C
+library, as C would.
 
 ```
 // examples/minnow/tests/programs/closures.mn
@@ -89,7 +92,8 @@ Then:
   Its listings are cut from the example's code and its commands are run by a test, so what you read
   is what runs.
 - **[Minnow](examples/minnow)** is the model for a typed language, **[Lox](examples/lox)** for a
-  dynamically typed one, on the high-level IR.
+  dynamically typed one, **[Tin](examples/tin)** for a systems language without a collector, on
+  the high-level IR.
 - **[docs/editors.md](docs/editors.md)** sets up the language server in VS Code, Neovim or Helix.
 
 ## Writing a language
@@ -203,7 +207,7 @@ allocation.
 | `crates/a0-capi` | The C API: a static and a shared library, and `include/a0.h` |
 | `bindings/python` | The Python package `a0` over the C API, and Pebble, a language in Python |
 | `crates/a0` | The `a0` command-line tool |
-| `examples/kaleidoscope`, `examples/lox`, `examples/minnow` | The example languages |
+| `examples/kaleidoscope`, `examples/lox`, `examples/minnow`, `examples/tin` | The example languages |
 | `examples/calc`, `examples/lispy` | Languages defined by their grammars alone, run by `a0 lang` |
 | `crates/a0-playground`, `playground` | The browser playground: its engine (built for WebAssembly) and its page |
 | `editors/vscode` | A VS Code extension that starts each language's server |
@@ -216,7 +220,7 @@ cargo build
 cargo test
 ```
 
-`cargo test` runs everything: every IR, HIR, Kaleidoscope and Minnow program and the Lox suite
+`cargo test` runs everything: every IR, HIR, Kaleidoscope, Minnow and Tin program and the Lox suite
 through both backends and under GC stress, optimized and not; generated random programs, which must
 agree in all those modes; snapshots of each language's rendered diagnostics and runtime errors; the
 language servers; the C API from a C program; and the tutorial's listings and commands. CI runs the same on

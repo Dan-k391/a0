@@ -1,0 +1,61 @@
+// Structs passed to and returned from C functions by value (runtime/abi.c), in every shape the C
+// ABIs treat differently: integers, floats and doubles in registers, mixed fields, odd sizes,
+// structs too large for registers, and structs past the argument registers.
+// expect: pair 2 1
+// expect: vec2f 3 -1.5
+// expect: vec2 4 6
+// expect: dot 32, cross -3 6 -3
+// expect: mixed 2 6 1.25
+// expect: rgb 150 100 50
+// expect: quad 4321 7 10
+// expect: float int 4.5 42
+// expect: div 3 2, lldiv 142857142857 1
+struct Pair { a: i32, b: i32 }
+struct Vec2f { x: f32, y: f32 }
+struct Vec2 { x: f64, y: f64 }
+struct Vec3 { x: f64, y: f64, z: f64 }
+struct Mixed { tag: i8, count: i32, value: f64 }
+struct Rgb { r: u8, g: u8, b: u8 }
+struct Quad { a: i64, b: i64, c: i64, d: i64 }
+struct FloatInt { x: f32, n: i32 }
+struct Div { quot: i32, rem: i32 }
+struct LLDiv { quot: i64, rem: i64 }
+
+extern fn tin_pair_swap(p: Pair) -> Pair;
+extern fn tin_vec2f_scale(v: Vec2f, k: f32) -> Vec2f;
+extern fn tin_vec2_add(a: Vec2, b: Vec2) -> Vec2;
+extern fn tin_vec3_dot(a: Vec3, b: Vec3) -> f64;
+extern fn tin_vec3_cross(a: Vec3, b: Vec3) -> Vec3;
+extern fn tin_mixed_bump(m: Mixed) -> Mixed;
+extern fn tin_rgb_mix(a: Rgb, b: Rgb) -> Rgb;
+extern fn tin_quad_sum(q: Quad) -> i64;
+extern fn tin_quad_make(n: i64) -> Quad;
+extern fn tin_float_int(f: FloatInt, shift: Vec2, a: i32, b: i32, c: i32, d: i32, e: i32, g: i32, last: Rgb) -> FloatInt;
+// The C library's own.
+extern fn div(n: i32, d: i32) -> Div;
+extern fn lldiv(n: i64, d: i64) -> LLDiv;
+
+fn main() -> i32 {
+  var p = tin_pair_swap((Pair){ .a = 1, .b = 2 });
+  println("pair ", p.a, " ", p.b);
+  var f = tin_vec2f_scale((Vec2f){ .x = 2.0, .y = -1.0 }, 1.5);
+  println("vec2f ", f.x, " ", f.y);
+  var v = tin_vec2_add((Vec2){ .x = 1.0, .y = 2.0 }, (Vec2){ .x = 3.0, .y = 4.0 });
+  println("vec2 ", v.x, " ", v.y);
+  var a = (Vec3){ .x = 1.0, .y = 2.0, .z = 3.0 };
+  var b = (Vec3){ .x = 4.0, .y = 5.0, .z = 6.0 };
+  var c = tin_vec3_cross(a, b);
+  println("dot ", tin_vec3_dot(a, b), ", cross ", c.x, " ", c.y, " ", c.z);
+  var m = tin_mixed_bump((Mixed){ .tag = 1, .count = 3, .value = 2.5 });
+  println("mixed ", m.tag, " ", m.count, " ", m.value);
+  var rgb = tin_rgb_mix((Rgb){ .r = 200, .g = 100, .b = 0 }, (Rgb){ .r = 100, .g = 100, .b = 100 });
+  println("rgb ", rgb.r, " ", rgb.g, " ", rgb.b);
+  var q = tin_quad_make(7);
+  println("quad ", tin_quad_sum((Quad){ .a = 1, .b = 2, .c = 3, .d = 4 }), " ", q.a, " ", q.d);
+  var fi = tin_float_int((FloatInt){ .x = 1.0, .n = 10 }, (Vec2){ .x = 1.5, .y = 2.0 }, 1, 2, 3, 4, 5, 6, (Rgb){ .r = 11 });
+  println("float int ", fi.x, " ", fi.n);
+  var d = div(17, 5);
+  var ll = lldiv(1000000000000, 7);
+  println("div ", d.quot, " ", d.rem, ", lldiv ", ll.quot, " ", ll.rem);
+  return 0;
+}

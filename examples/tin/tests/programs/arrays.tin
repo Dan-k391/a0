@@ -1,0 +1,37 @@
+// Arrays are the checked way: they grow, and an index out of bounds stops the program, where a
+// pointer into the same elements is not checked.
+// expect: 1 2 3 4, len 4
+// expect: popped 4, len 3
+// expect: sum 6
+// expect: unchecked 2
+// expect-stderr: panic: index out of bounds: the length is 3 but the index is 5
+// expect-stderr:     at main (arrays.tin:35:11)
+// expect-exit: 101
+fn sum(xs: []i64) -> i64 {
+  var total = 0;
+  for (var i = 0; i < len(xs); i += 1) {
+    total += xs[i];
+  }
+  return total;
+}
+
+fn main() -> i32 {
+  var xs: []i64 = [1, 2, 3];
+  push(xs, 4);
+  for (var i = 0; i < len(xs); i += 1) {
+    if (i > 0) { print(" "); }
+    print(xs[i]);
+  }
+  println(", len ", len(xs));
+  var last = pop(xs);
+  println("popped ", last, ", len ", len(xs));
+  println("sum ", sum(xs));
+  var p = &xs[0];
+  println("unchecked ", p[1]);
+  var i = 5;
+  var copy = xs;
+  free(copy);
+  xs = [1, 2, 3];
+  println(xs[i]);
+  return 0;
+}

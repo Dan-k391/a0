@@ -1,0 +1,47 @@
+// Structs are values: copied when assigned, passed and returned, laid out as C lays them out.
+// expect: copy 1 2, original 10 2
+// expect: callee 99, caller 1
+// expect: sum 4 6
+// expect: nested 1 2 3, size 24
+// expect: zeroed 0 0 false
+// expect: through a pointer 5 6
+// expect: field address 7
+struct Vec2 { x: i64, y: i64 }
+struct Box { min: Vec2, depth: i64 }
+struct Flags { a: u8, b: i32, on: bool }
+
+fn bump(v: Vec2) -> i64 {
+  v.x = 99;
+  return v.x;
+}
+
+fn add(a: Vec2, b: Vec2) -> Vec2 {
+  return (Vec2){ .x = a.x + b.x, .y = a.y + b.y };
+}
+
+fn set(p: *Vec2, x: i64, y: i64) {
+  p->x = x;
+  (*p).y = y;
+}
+
+fn main() -> i32 {
+  var a = (Vec2){ .x = 1, .y = 2 };
+  var b = a;
+  a.x = 10;
+  println("copy ", b.x, " ", b.y, ", original ", a.x, " ", a.y);
+  var c = (Vec2){ .x = 1, .y = 0 };
+  var r = bump(c);
+  println("callee ", r, ", caller ", c.x);
+  var s = add((Vec2){ .x = 1, .y = 2 }, (Vec2){ .x = 3, .y = 4 });
+  println("sum ", s.x, " ", s.y);
+  var box = (Box){ .min = (Vec2){ .x = 1, .y = 2 }, .depth = 3 };
+  println("nested ", box.min.x, " ", box.min.y, " ", box.depth, ", size ", sizeof(Box));
+  var f = (Flags){};
+  println("zeroed ", f.a, " ", f.b, " ", f.on);
+  set(&c, 5, 6);
+  println("through a pointer ", c.x, " ", c.y);
+  var px = &box.min.x;
+  *px = 7;
+  println("field address ", box.min.x);
+  return 0;
+}

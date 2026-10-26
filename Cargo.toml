@@ -17,6 +17,7 @@ members = [
     "examples/kaleidoscope",
     "examples/lox",
     "examples/minnow",
+    "examples/tin",
     "crates/a0",
 ]
 

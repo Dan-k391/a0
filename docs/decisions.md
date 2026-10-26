@@ -975,3 +975,24 @@ playground (WebAssembly, no native code) reports such functions as calls it cann
 In the HIR, an `extern fn` takes and returns inline structs (D70) of numbers, booleans, pointers and
 such structs, whose layout is already C's. The test of shapes calls Rust `extern "C"` functions
 (which follow the platform's C ABI) from the JIT and the interpreter, on every CI platform.
+
+## D74. Tin, the systems example, and a vendored C library
+
+v0.6 asks for a C-like example language that proves the systems features, including a program that
+uses a real C library. Tin (`examples/tin`) is C's model with A0's checked parts where C has none:
+every struct is an inline value (D70), pointers are `ptr<T>` (D71), every program is
+`memory manual` (D72), C functions take and return structs by value (D73), and arrays stay checked.
+Its syntax is C's where that costs nothing (compound literals, `->`, `*p`, `&x`, `for (;;)`) and
+Minnow's where C's would need a parser of its own (declarations read `name: type`, so the grammar
+has no typedef ambiguity).
+
+The C library is cJSON (MIT), vendored in `examples/tin/runtime/cjson` and compiled into Tin's
+runtime library by its build script. The alternatives were a library found on the system (zlib,
+SQLite), which Windows does not have and CI would have to install on four platforms, or the C
+library alone, whose interesting functions (`qsort` and its callbacks) need C to call back into the
+interpreter, which it cannot. cJSON is one C file that every C compiler builds, a real API with
+structs read through pointers, allocation on both sides and error reporting, and is small enough to
+keep in the repository with its license. It is an example's dependency, not the framework's.
+`runtime/abi.c` beside it has functions of structs by value in every shape the C ABIs treat
+differently, so that native code is checked against the platform's C compiler on every CI
+platform, not only against Rust's `extern "C"` (D73).

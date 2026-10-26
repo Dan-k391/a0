@@ -1,0 +1,6 @@
+// A syntax error, and the parser carrying on after it.
+fn main() -> i32 {
+  var x = (1 + ;
+  if x > 1 { }
+  return 0;
+}

@@ -1,0 +1,14 @@
+$ tin run syntax.tin
+--- stderr
+error[E0001]: expected an expression
+ --> syntax.tin:3:16
+  |
+3 |   var x = (1 + ;
+  |                ^
+
+error[E0001]: expected '('
+ --> syntax.tin:4:6
+  |
+4 |   if x > 1 { }
+  |      ^
+--- exit 1

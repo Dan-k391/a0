@@ -709,6 +709,20 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "adb6935a6f5c20170eeceb1a3835a49e12e19d792f6dd344ccc76a985ca5a6ca"
 
 [[package]]
+name = "tin"
+version = "0.5.0"
+dependencies = [
+ "a0-build",
+ "a0-diag",
+ "a0-driver",
+ "a0-hir",
+ "a0-interp",
+ "a0-native",
+ "a0-runtime",
+ "a0-syntax",
+]
+
+[[package]]
 name = "twox-hash"
 version = "2.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"

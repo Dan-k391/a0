@@ -1,0 +1,51 @@
+// Pointers are raw: memory from `alloc`, given back with `free`, indexed and moved without checks.
+// expect: squares 0 1 4 9 16
+// expect: moved 9 16, back 4
+// expect: list 3 2 1, length 3
+// expect: bytes 72 105 0
+// expect: null true false
+struct Node { value: i64, next: *Node }
+
+fn push_front(head: *Node, value: i64) -> *Node {
+  var n = alloc(sizeof(Node)) as *Node;
+  n->value = value;
+  n->next = head;
+  return n;
+}
+
+fn main() -> i32 {
+  var xs = alloc(sizeof(i64) * 5) as *i64;
+  for (var i = 0; i < 5; i += 1) {
+    xs[i] = i * i;
+  }
+  print("squares");
+  for (var i = 0; i < 5; i += 1) {
+    print(" ", xs[i]);
+  }
+  println();
+  var p = xs + 3;
+  println("moved ", *p, " ", p[1], ", back ", *(p - 1));
+  free(xs);
+
+  var head: *Node = null;
+  for (var i = 1; i <= 3; i += 1) {
+    head = push_front(head, i);
+  }
+  print("list");
+  var count = 0;
+  var n = head;
+  while (n != null) {
+    print(" ", n->value);
+    count += 1;
+    var next = n->next;
+    free(n);
+    n = next;
+  }
+  println(", length ", count);
+
+  var text = "Hi";
+  println("bytes ", text[0], " ", text[1], " ", text[2]);
+  var none: *i32 = null;
+  println("null ", none == null, " ", text == null);
+  return 0;
+}

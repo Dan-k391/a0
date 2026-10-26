@@ -1,0 +1,11 @@
+// Type errors in Tin's words: pointers, structs and C functions.
+struct Vec2 { x: f64, y: f64 }
+extern fn takes(v: Vec2) -> f64;
+
+fn main() -> i32 {
+  var p: *i64 = null;
+  var q: *i32 = p;
+  var v = (Vec2){ .x = 1.0, .z = 2.0 };
+  var n: i32 = takes(v);
+  return 0;
+}

@@ -1,0 +1,111 @@
+// Tin: a small C-like systems language. Structs are values laid out as C lays them out, pointers
+// are raw, memory is the program's to allocate and free, and C functions are called directly.
+grammar tin;
+
+skip /[ \t\r\n]+/;
+skip /\/\/[^\n]*/;
+skip /\/\*([^*]|\*+[^*\/])*\*+\//;
+token FLOAT /[0-9]+\.[0-9]+([eE][+-]?[0-9]+)?/;
+token HEX /0x[0-9A-Fa-f]+/;
+token INT /[0-9]+/;
+token CHAR /'([^'\\\n]|\\.)*'/;
+token STRING /"([^"\\\n]|\\.)*"/;
+token NAME /[A-Za-z_][A-Za-z0-9_]*/;
+error "unterminated string" /"([^"\\\n]|\\.)*/;
+unknown "unexpected character";
+
+program = (!EOF item)* EOF;
+
+item @inline @recover(before "struct" "fn" "extern" "var")
+    = struct_decl | extern_decl | global_decl | fn_decl;
+
+struct_decl @def(struct)
+    = "struct" name:NAME ~ "expected a struct name" "{" ~ "expected '{'"
+      (field ("," field)* ","?)? "}" ~ "expected '}'";
+field @def(field)
+    = name:NAME ~ "expected a field name" ":" ~ "expected ':'" type:type ~ "expected a type";
+
+// `extern fn sqrt(x: f64) -> f64;`: a C function, called as C calls it.
+extern_decl @def(function) @scope
+    = "extern" "fn" ~ "expected 'fn'" name:NAME ~ "expected a function name" "(" ~ "expected '('"
+      (param ("," param)*)? ")" ~ "expected ')'" ("->" ret:type ~ "expected a type")?
+      ";" ~ "expected ';'";
+
+// `var count: i64;`: a global, zero to start with.
+global_decl @def(variable)
+    = "var" name:NAME ~ "expected a variable name" ":" ~ "expected ':'" type:type ~ "expected a type"
+      ";" ~ "expected ';'";
+
+fn_decl @def(function) @scope
+    = "fn" name:NAME ~ "expected a function name" "(" ~ "expected '('"
+      (param ("," param)*)? ")" ~ "expected ')'" ("->" ret:type ~ "expected a type")?
+      body:block ~ "expected '{'";
+param @def(parameter)
+    = name:NAME ~ "expected a parameter name" ":" ~ "expected ':'" type:type ~ "expected a type";
+
+// `*T` a pointer, `[]T` an array (checked, growable), or a number type, `bool` or a struct.
+type @inline = ptr_type | array_type | named_type;
+ptr_type = "*" elem:type ~ "expected a type";
+array_type = "[" "]" ~ "expected ']'" elem:type ~ "expected a type";
+named_type = name:NAME;
+
+block @scope = "{" (!"}" !EOF stmt)* "}" ~ "expected '}'";
+
+stmt @inline @recover(after ";" before "var" "if" "while" "for" "return" "break" "continue")
+    = var_stmt | if_stmt | while_stmt | for_stmt | return_stmt | break_stmt | continue_stmt
+    | block | expr_stmt;
+
+var_stmt @def(variable)
+    = "var" name:NAME ~ "expected a variable name" (":" type:type ~ "expected a type")?
+      "=" ~ "expected '='" value:expr ~ "expected an expression" ";" ~ "expected ';'";
+if_stmt = "if" "(" ~ "expected '('" cond:expr ~ "expected a condition" ")" ~ "expected ')'"
+          then:block ~ "expected '{'" ("else" (else:if_stmt | else:block) ~ "expected '{' or 'if'")?;
+while_stmt = "while" "(" ~ "expected '('" cond:expr ~ "expected a condition" ")" ~ "expected ')'"
+             body:block ~ "expected '{'";
+// `for (var i = 0; i < n; i += 1) { ... }`, each of the three parts optional.
+for_stmt @scope
+    = "for" "(" ~ "expected '('" init:for_init? ";" ~ "expected ';'" cond:expr? ";" ~ "expected ';'"
+      step:simple? ")" ~ "expected ')'" body:block ~ "expected '{'";
+for_init @inline = for_var | simple;
+for_var @def(variable)
+    = "var" name:NAME ~ "expected a variable name" (":" type:type ~ "expected a type")?
+      "=" ~ "expected '='" value:expr ~ "expected an expression";
+return_stmt = "return" value:expr? ";" ~ "expected ';'";
+break_stmt = "break" ";" ~ "expected ';'";
+continue_stmt = "continue" ";" ~ "expected ';'";
+expr_stmt = stmt:simple ";" ~ "expected ';'";
+// An expression, or an assignment to a place: `x = e`, `p->f += e`, `*p = e`, `a[i] -= e`.
+simple = target:expr (op:assign_op value:expr ~ "expected an expression")?;
+assign_op = "=" | "+=" | "-=" | "*=" | "/=" | "%=" | "&=" | "|=" | "^=" | "<<=" | ">>=";
+
+expr @inline = @prec primary ~ "expected an expression" {
+    left "||" => logical;
+    left "&&" => logical;
+    left "|" => binary;
+    left "^" => binary;
+    left "&" => binary;
+    left "==" "!=" => binary;
+    left "<" "<=" ">" ">=" => binary;
+    left "<<" ">>" => binary;
+    left "+" "-" => binary;
+    left "*" "/" "%" => binary;
+    postfix "as" type:type ~ "expected a type" => cast;
+    prefix "-" "!" "~" "*" "&" => unary;
+    postfix "(" args:args? ")" ~ "expected ')'" => call;
+    postfix "." name:NAME ~ "expected a field name" => get;
+    postfix "->" name:NAME ~ "expected a field name" => arrow;
+    postfix "[" index:expr ~ "expected an index" "]" ~ "expected ']'" => index;
+};
+
+args = arg:expr ("," arg:expr)*;
+
+primary = literal | sizeof | compound | array_lit | paren | name_expr;
+literal = "true" | "false" | "null" | FLOAT | HEX | INT | CHAR | STRING;
+sizeof = "sizeof" "(" ~ "expected '('" type:type ~ "expected a type" ")" ~ "expected ')'";
+// `(Vec2){ .x = 1.0, .y = 2.0 }`: a struct value, as C99 writes it.
+compound = "(" name:NAME ")" "{" (field_init ("," field_init)* ","?)? "}" ~ "expected '}'";
+field_init = "." ~ "expected '.'" name:NAME ~ "expected a field name" "=" ~ "expected '='"
+             value:expr ~ "expected an expression";
+array_lit = "[" args:args? "]" ~ "expected ']'";
+paren = "(" inner:expr ")" ~ "expected ')'";
+name_expr = NAME;
