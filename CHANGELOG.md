@@ -6,6 +6,38 @@ APIs. `docs/milestones.md` has the details of each step, with measurements.
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-10-26
+
+Concurrency: threads that run at the same time and share memory, channels between them, and a
+collector, runtime, debugger and stack traces that understand them. Milestone M25 in
+`docs/milestones.md`.
+
+### Added
+
+- **Threads and channels** (D75): `std.thread` with `spawn`, `join`, `parallelism`, `channel`,
+  `send`, `receive` and `close`, over the runtime's `a0_thread_*` and `a0_chan_*`. Threads are the
+  operating system's; they run in the interpreter, the JIT and native code alike. A panic on any
+  thread ends the program; a single-threaded program that waits on a channel fails with
+  "deadlock".
+- **A collector for threads** (D76): a shadow stack per thread and collections that stop the world
+  at safe points (allocations, polls at loop heads and function entries, waits in the runtime).
+  Programs without threads take no locks and poll nowhere.
+- **Stack traces and the debugger across threads**: a spawned thread's trace ends with where it was
+  spawned; `lang dap` lists threads, stops them all when one stops, and shows every paused thread's
+  stack and locals.
+- A cast from `any` to a type parameter, for generic code that keeps values in `any`.
+- Minnow's `parallel.mn` and `tests/parallel.rs`, which require real speedup in every mode, and a
+  threads table in the benchmark.
+
+### Changed
+
+- The runtime's tables (interned names, shapes, buffers, random numbers) are locked, and its error
+  text, exception in flight and thrown traces are per thread. Threaded programs keep their exception
+  in per-thread slots and do not use per-site field caches.
+- `a0_runtime::set_thread_starter`, `thread_started`, `thread_id`, `panic`; `Interpreter::debug_thread`
+  and two new `DebugEvent`s; the interpreter shares one compiled program between threads.
+- Native executables link with `-lpthread` on Linux.
+
 ## [0.6.0] - 2026-10-26
 
 Systems languages: values in place, raw pointers, memory without a collector, and C structs across
@@ -273,7 +305,8 @@ three example languages, editor support and a C API.
   IR, the HIR, editors and the C API; design decisions and milestone summaries.
 - **CI** on x86-64 and aarch64 Linux, aarch64 macOS and x86-64 Windows, with rustfmt and clippy.
 
-[Unreleased]: https://github.com/Dan-k391/a0/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/Dan-k391/a0/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/Dan-k391/a0/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/Dan-k391/a0/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/Dan-k391/a0/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/Dan-k391/a0/compare/v0.3.0...v0.4.0

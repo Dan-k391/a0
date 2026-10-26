@@ -1000,6 +1000,65 @@ Nothing in A0 changed for the benchmark. What it found along the way:
   allocator, would close it.
 - The playground cannot call C functions of structs (no native backend for thunks in WebAssembly).
 
+## M25. v0.7: concurrency
+
+**Done**
+
+- A concurrency model, recorded (D75): operating-system threads that share the heap, with
+  channels to pass values. Green threads, async and actors with separate heaps were weighed and
+  left: they need stack switching Cranelift does not have, a scheduler every blocking call goes
+  through, or copies of every message. A thread runs a closure; `join` returns its result; a
+  channel passes values in order through a fixed buffer and can be closed.
+- The collector works with threads (D76): a shadow stack per thread, a heap lock once a second
+  thread exists, and collections that stop the world at safe points: allocations, polls that
+  threaded programs make at loop heads and function entries, and waits in the runtime (channels,
+  joins, sleeping, reading input). Single-threaded programs take no locks and emit no polls, and
+  run as fast as in v0.6: the benchmark first showed Lox's method calls up to 15% slower (frames
+  through a thread-local, lookups through lock checks, an atomic call per allocation), so the
+  main thread's frames live in a static struct and the single-threaded paths are v0.6's
+  (`docs/benchmarks.md`).
+- The runtime and the standard library are thread-safe: interned names, shapes, buffers' free
+  lists and the random generator take a table lock never held where a collection could start;
+  `std`'s last error, the exception in flight and the trace of a thrown exception are per thread;
+  one failing thread reports, the others wait for the end. Per-site field caches are not used in
+  threaded programs.
+- Communication: `std.thread` (`spawn`, `join`, `parallelism`, `channel`, `send`, `receive`,
+  `close`), HIR over `a0_thread_*` and `a0_chan_*`, generic over the values' type through a new cast
+  from `any` to a type parameter. A single-threaded program that waits on a channel fails with
+  "deadlock" instead of hanging.
+- An example with real speedup: Minnow's `parallel.mn` counts primes on several threads, and
+  `tests/parallel.rs` requires more threads to run clearly faster interpreted, in the JIT and
+  natively (here 3.3, 2.5 and 3.4 times with four threads); `threads.mn` allocates on four threads
+  at once and runs a pipeline of channels, in all eight modes. The interpreter runs threads too:
+  each with its own state over one shared compiled program.
+- Stack traces and the debugger understand threads: a panic on a spawned thread ends the program
+  with that thread's trace and then where it was spawned (`in thread 2, spawned`), the same in
+  every mode; `lang dap` lists threads, announces them, stops them all when one stops, shows each
+  paused thread's stack and locals, and keeps steps to the thread that stopped.
+- Tests: `tests/hir/threads.hir` (per-thread exceptions, objects without caches, collections while
+  threads allocate, an uncaught exception on a thread), one random program in three runs calls on
+  threads, a Minnow debugging session across threads, and a snapshot of a thread's panic. A race CI
+  found (a new thread's handle unrooted while its spawner waited for the heap) is fixed, and the
+  way to look for such races (`A0_GC_STRESS=1`, pinned to few processors) is in AGENTS.md.
+
+**Changed**
+
+- `HostSymbols` and `a0_runtime` gain the thread starter and stack (`set_thread_starter`); the JIT
+  keeps a program's code when threads it started may still run; native executables link with
+  `-lpthread` on Linux.
+- `std`'s error text, the exception in flight and thrown traces are per thread. `Interpreter::debug_thread`,
+  `DebugEvent::ThreadStarted`/`ThreadEnded`; `Client::threads`/`stack_of` in the DAP test client.
+
+**Open questions**
+
+- Allocation-heavy threads contend for the heap lock; per-thread allocation buffers would remove
+  most of it.
+- Locks and atomics for programs are not offered; races on shared arrays, maps and objects are the
+  program's to avoid (channels are the way). A race detector would make them findable.
+- Debugging threads in native code: `lang build -g` describes threads as gdb and lldb see them,
+  but `lang dap` debugs in the interpreter only.
+- The playground has no threads (WebAssembly in the browser would need shared memory and workers).
+
 ## Overall open questions
 
 None at the moment.

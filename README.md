@@ -24,13 +24,16 @@ grammar ──a0-syntax──▶ syntax tree ──your compiler──▶ HIR �
 - **Programs of several files**: imports found through the grammar, modules with their own names
   and visibility, supported by the driver, the language server and diagnostics.
 - **A standard library** every language can offer: files, standard input, arguments, the
-  environment, time, mathematics and strings. Calling C functions that take strings and arrays
+  environment, time, mathematics, strings, and threads with channels. Calling C functions that take strings and arrays
   takes only their declaration.
 - **Backends that agree**: native code through Cranelift, run at once from memory (a JIT) or
   linked into executables by the system linker, and an interpreter, the reference, on Linux
   (x86-64, aarch64), macOS (aarch64, x86-64) and Windows (x86-64). Same output, errors and exit
   codes, checked on every test program.
-- **A precise garbage collector** and an **optimizer**, on by default, with no work in the frontend.
+- **A precise garbage collector**, which threads share (or none, for a language that manages its
+  memory itself), and an **optimizer**, on by default, with no work in the frontend.
+- **Systems features** when a language wants them: sized numbers, structs as values laid out as C
+  lays them out, raw pointers, and C functions that take and return structs by value.
 - **Diagnostics as good as rustc's**, from the builder: codes with explanations, related locations
   (where an expected type comes from, the earlier declaration), "did you mean" fixes, warnings, in
   the language's words; and runtime errors with the values involved and a stack trace of source
@@ -228,7 +231,7 @@ x86-64 and aarch64 Linux, aarch64 macOS and x86-64 Windows.
 
 ## Status
 
-Version 0.6.0 (`CHANGELOG.md`). Not yet: cross-compiled executables (object files for other
+Version 0.7.0 (`CHANGELOG.md`). Not yet: cross-compiled executables (object files for other
 targets work), compiling languages to WebAssembly (A0 itself runs there, in the playground),
 variables in native debug information and PDB for Windows' debuggers (`lang dap` covers both),
 aarch64 Windows. A0 is MIT-licensed.

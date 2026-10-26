@@ -4,45 +4,43 @@ A small, honest picture of where A0 stands against established tools: how long i
 to compile, how fast what they compile runs, and how fast `lang run` runs a program at once. It is
 not a CI check and nothing was tuned for it: the programs are the obvious ones, written the same
 way in each language. `bench/run.py` reproduces everything here (`bench/README.md`); the tables
-below are its output for v0.6.0, with v0.5.0's beside them.
+below are its output for v0.7.0, with v0.6.0's beside them.
 
 ## In short
 
-- **Garbage-collected languages are unaffected by v0.6.** Its systems features (sized numbers,
-  inline structs, pointers, manual memory, C structs) change nothing for programs that do not use
-  them: Minnow, Lox and Kaleidoscope run as before, and their collectors do the same work, to the
-  collection. This run's machine was about 15% faster than v0.5.0's (clox's `fib` 554 → 478 ms,
-  clang -O0's `fib` 32 → 27 ms), and A0's times moved with it.
+- **Threads run at the same time (v0.7).** Counting the primes below 5,000,000 takes 856 ms on one
+  thread and 433, 236 and 123 ms on 2, 4 and 8 (2.0, 3.6 and 7.0 times faster), natively and in the
+  JIT alike.
+- **Programs without threads are unaffected.** Threads changed the collector (a shadow stack per
+  thread), the runtime's tables (locks) and lowering (polls), but a program with one thread takes
+  none of the new paths: v0.6.0's and v0.7.0's executables of the same Lox programs, run in
+  alternation on one machine, take the same time (below). This run's machine was noisier than
+  v0.6.0's (clox's `binary_trees` 1879 → 2676 ms), so its own columns moved more than A0 did.
 - **Tin, the systems language, runs at C's speed.** Without a collector, with C's allocator and
-  pointers, Tin's `binarytrees` takes 143 ms against clang -O0's 138 (Minnow, with its collector:
-  204), and its `nbody`, structs in place reached through pointers, 48 ms against clang -O0's 75
-  and Minnow's 70. clang -O2 is still 1.4–2.3 times faster (Cranelift is not -O2).
-- **Running at once.** `lang run` compiles into memory (D63): Kaleidoscope's `mandel` takes 200 ms
-  with `kaleidoscope run`, as fast as its executable. The interpreter (`A0_INTERP=1`) stays the
-  reference and the debugger's engine, 14–50 times slower than clox.
-- **Compiling.** A0's own work, from source to object file, is 2–6 ms; the rest of a build is the
-  system linker: 145–170 ms with gcc's `cc`, which takes 153 ms to link even a plain C object, and
+  pointers, Tin's `binarytrees` takes 145 ms against clang -O0's 138 (Minnow, with its collector:
+  224), and its `nbody` 47 ms against clang -O0's 78. clang -O2 is still 1.3–2 times faster.
+- **Running at once.** `lang run` compiles into memory (D63): Kaleidoscope's `mandel` takes 198 ms
+  with `kaleidoscope run`. The interpreter (`A0_INTERP=1`) stays the reference and the debugger's
+  engine, 14–50 times slower than clox.
+- **Compiling.** A0's own work, from source to object file, is 1–5 ms; the rest of a build is the
+  system linker: 160–190 ms with gcc's `cc`, which takes 157 ms to link even a plain C object, and
   95–102 ms with `CC=clang`.
 - **Typed code (Minnow) against C and Go.** On calls, arrays and floating point A0 runs at clang
   -O0's speed and close to Go, half as fast as clang -O2. On allocation it is 1.5 times slower
-  than malloc and free and 1.7 times faster than Go.
-- **Kaleidoscope against LLVM.**
-  - Size: A0's Kaleidoscope is 502 lines against the tutorial's 901. Besides, A0's driver gives it
-    a JIT, an interpreter, native executables, a language server, a debugger and a REPL.
-  - Against the tutorial's passes, A0's code is 1.6 times faster on `mandel`, thanks to the HIR
-    optimizer's inlining; `fib` is a few milliseconds either way.
-  - Against LLVM's standard -O2 pipeline on the whole program, A0 is 2.2 times slower on `mandel`:
-    -O2 inlines, unrolls and vectorizes, which Cranelift does not.
+  than malloc and free and 1.6 times faster than Go.
+- **Kaleidoscope against LLVM.** A0's Kaleidoscope is 502 lines against the tutorial's 901, and runs
+  `mandel` 2.2 times faster than the tutorial's passes (the HIR optimizer's inlining) and 1.6 times
+  slower than LLVM's whole -O2 pipeline.
 - **Lox against clox.** Compiled with A0, Lox is faster than clox on five of the six benchmarks:
-  2.6 times on `fib`, 4.3 times on `binary_trees`, 1.5 times on `method_call` and `zoo`, and even
-  with it on `invocation` (157 against 148 ms).
+  2.7 times on `fib`, 5 times on `binary_trees`, 1.5 times on `method_call` and `zoo`, and even
+  with it on `invocation` (159 against 156 ms).
 
 ## Tools
 
 - Machine: x86_64, Linux-6.6.114.1-microsoft-standard-WSL2-x86_64-with-glibc2.39, 32 threads
   (WSL 2 on Windows 11)
 - CPU: AMD Ryzen 9 9955HX3D 16-Core Processor
-- A0: v0.6.0, rustc 1.99.1 (58cf8f9c3 2026-10-13), Cranelift 0.137, release build
+- A0: v0.7.0, rustc 1.99.1 (58cf8f9c3 2026-10-13), Cranelift 0.137, release build
 - Ubuntu clang version 18.1.3 (1ubuntu1)
 - `cc`, which A0 links with: cc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0
 - LLVM 18.1.3: the Kaleidoscope tutorial, chapter 7, built with `clang++ -O2`; and the same with
@@ -70,8 +68,8 @@ Lines of code (without blank lines and comments):
 
 | Program | A0 build | no HIR optimizer | A0 native run | no HIR optimizer | A0 JIT (`run`) | A0 interpreted | LLVM JIT: startup and compile | LLVM JIT: run | LLVM -O2: startup and compile | LLVM -O2: run |
 |---|---|---|---|---|---|---|---|---|---|---|
-| fib | 159 ms | 160 ms | 6 ms | 6 ms | 8 ms | 203 ms | 13 ms | 4 ms | 13 ms | 4 ms |
-| mandel | 168 ms | 160 ms | 235 ms | 404 ms | 200 ms | 7908 ms | 22 ms | 380 ms | 21 ms | 107 ms |
+| fib | 180 ms | 168 ms | 6 ms | 6 ms | 8 ms | 208 ms | 12 ms | 5 ms | 12 ms | 4 ms |
+| mandel | 169 ms | 183 ms | 173 ms | 408 ms | 198 ms | 7777 ms | 22 ms | 378 ms | 20 ms | 107 ms |
 
 `fib` is naive recursive Fibonacci (`fib(32)`). `mandel` is the tutorial's own Mandelbrot iteration
 over a 1000 × 1000 grid, summed. It uses the operators `|` and `>` that the program defines itself,
@@ -86,10 +84,10 @@ callee from the inliner; `bench/run.py` patches `toy.cpp` (`TOY_O2`).
 
 | Program | Minnow build | no HIR optimizer | clang -O0 | clang -O2 | go build | Minnow run | no HIR optimizer | Minnow JIT (`run`) | clang -O0 | clang -O2 | Go |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| fib | 148 ms | 147 ms | 106 ms | 111 ms | 188 ms | 31 ms | 30 ms | 29 ms | 27 ms | 15 ms | 26 ms |
-| sieve | 152 ms | 144 ms | 111 ms | 109 ms | 192 ms | 41 ms | 38 ms | 44 ms | 43 ms | 26 ms | 32 ms |
-| nbody | 168 ms | 167 ms | 119 ms | 139 ms | 193 ms | 70 ms | 70 ms | 79 ms | 79 ms | 36 ms | 52 ms |
-| binarytrees | 157 ms | 161 ms | 122 ms | 124 ms | 177 ms | 204 ms | 203 ms | 195 ms | 140 ms | 123 ms | 353 ms |
+| fib | 172 ms | 163 ms | 127 ms | 145 ms | 230 ms | 35 ms | 34 ms | 34 ms | 31 ms | 17 ms | 29 ms |
+| sieve | 190 ms | 176 ms | 125 ms | 136 ms | 202 ms | 44 ms | 40 ms | 44 ms | 43 ms | 26 ms | 33 ms |
+| nbody | 179 ms | 177 ms | 119 ms | 141 ms | 176 ms | 72 ms | 69 ms | 76 ms | 79 ms | 37 ms | 51 ms |
+| binarytrees | 190 ms | 171 ms | 115 ms | 134 ms | 198 ms | 224 ms | 224 ms | 203 ms | 146 ms | 125 ms | 360 ms |
 
 The programs:
 - `fib` is calls (`fib(35)`).
@@ -98,8 +96,8 @@ The programs:
 - `binarytrees` is allocation: the Benchmarks Game's binary-trees at depth 16. The C version uses
   malloc and free.
 
-A0's collector in `binarytrees` (`A0_GC_STATS=1`): 56 collections, 72.9 ms (53.8 marking), peak
-22.4 MB, 240329 objects live after the last (v0.5.0: the same collections, 65.1 ms).
+A0's collector in `binarytrees` (`A0_GC_STATS=1`): 56 collections, 55.2 ms (40.7 marking), peak
+22.4 MB, 240329 objects live after the last (v0.6.0: the same collections).
 
 ## Tin against C
 
@@ -110,67 +108,84 @@ memory reached through pointers (`bench/tin`).
 
 | Program | Tin build | Tin run | no HIR optimizer | Tin JIT (`run`) | clang -O0 | clang -O2 |
 |---|---|---|---|---|---|---|
-| fib | 145 ms | 35 ms | 35 ms | 31 ms | 27 ms | 15 ms |
-| sieve | 153 ms | 35 ms | 37 ms | 38 ms | 42 ms | 25 ms |
-| nbody | 163 ms | 48 ms | 48 ms | 53 ms | 75 ms | 34 ms |
-| binarytrees | 169 ms | 143 ms | 143 ms | 320 ms | 138 ms | 122 ms |
+| fib | 159 ms | 29 ms | 30 ms | 31 ms | 28 ms | 15 ms |
+| sieve | 161 ms | 36 ms | 40 ms | 38 ms | 42 ms | 25 ms |
+| nbody | 169 ms | 47 ms | 47 ms | 51 ms | 78 ms | 35 ms |
+| binarytrees | 166 ms | 145 ms | 146 ms | 321 ms | 138 ms | 119 ms |
+
+## Threads
+
+`parallel` (`bench/minnow/parallel.mn`) counts the primes below 5,000,000, each of `n` threads
+testing every `n`-th odd number, on a machine with 32 processors (16 cores):
+
+| Threads | Minnow native | speedup | Minnow JIT (`run`) | speedup |
+|---|---|---|---|---|
+| 1 | 856 ms | 1.0x | 863 ms | 1.0x |
+| 2 | 433 ms | 2.0x | 443 ms | 1.9x |
+| 4 | 236 ms | 3.6x | 227 ms | 3.8x |
+| 8 | 123 ms | 7.0x | 122 ms | 7.1x |
+
+The threads share nothing but the counts they return, so the speedup is the processors'. Threads
+that allocate share the heap lock and collections stop them all (D76): allocation-heavy work
+speeds up less.
 
 Where Minnow's build time goes (`cc` is x86_64-linux-gnu-gcc-13). Each of A0's steps includes the
 ones before it; the object file is made from the IR text with `a0 obj`.
 
 | Program | to HIR | to IR | object file | executable | executable, `CC=clang` | cc linking a C object | clang linking it |
 |---|---|---|---|---|---|---|---|
-| fib | 2 ms | 1 ms | 2 ms | 153 ms | 95 ms | 154 ms | 92 ms |
-| nbody | 4 ms | 6 ms | 5 ms | 162 ms | 102 ms | 153 ms | 92 ms |
+| fib | 1 ms | 1 ms | 1 ms | 158 ms | 95 ms | 157 ms | 96 ms |
+| nbody | 4 ms | 5 ms | 5 ms | 165 ms | 102 ms | 160 ms | 96 ms |
 
 ## Lox: A0 against clox
 
 | Program | A0 build | no HIR optimizer | A0 native run | no HIR optimizer | A0 JIT (`lox file`) | A0 interpreted | clox |
 |---|---|---|---|---|---|---|---|
-| fib | 169 ms | 166 ms | 184 ms | 800 ms | 189 ms | 12.6 s | 478 ms |
-| binary_trees | 202 ms | 174 ms | 439 ms | 1053 ms | 489 ms | 21.7 s | 1879 ms |
-| method_call | 223 ms | 179 ms | 69 ms | 161 ms | 135 ms | 4270 ms | 107 ms |
-| invocation | 216 ms | 171 ms | 157 ms | 307 ms | 225 ms | 6967 ms | 148 ms |
-| equality | 182 ms | 177 ms | 61 ms | 318 ms | 83 ms | 2237 ms | 2346 ms |
-| zoo | 183 ms | 170 ms | 99 ms | 294 ms | 136 ms | 6958 ms | 146 ms |
+| fib | 170 ms | 177 ms | 182 ms | 842 ms | 207 ms | 12.7 s | 490 ms |
+| binary_trees | 206 ms | 184 ms | 509 ms | 1225 ms | 552 ms | 22.8 s | 2676 ms |
+| method_call | 243 ms | 205 ms | 73 ms | 170 ms | 145 ms | 4472 ms | 109 ms |
+| invocation | 249 ms | 200 ms | 159 ms | 306 ms | 237 ms | 7495 ms | 156 ms |
+| equality | 188 ms | 179 ms | 64 ms | 344 ms | 80 ms | 2215 ms | 2403 ms |
+| zoo | 209 ms | 188 ms | 99 ms | 323 ms | 138 ms | 7446 ms | 155 ms |
 
 The programs are the benchmarks of Crafting Interpreters' own test suite, with two left out:
 - `string_equality`: clox rejects it, because it needs more than 256 constants in one chunk.
 - `zoo_batch`: it runs for ten seconds rather than doing a fixed amount of work.
 
-A0's collector in `binary_trees` (`A0_GC_STATS=1`): 144 collections, 138.0 ms (97.2 marking), peak
-20.9 MB, 96759 objects live after the last (v0.5.0: the same collections, 138.5 ms).
+A0's collector in `binary_trees` (`A0_GC_STATS=1`): 144 collections, 174.2 ms (122.2 marking), peak
+20.9 MB, 96759 objects live after the last (v0.6.0: the same collections, 138.0 ms on its quieter
+run).
 
-## From v0.5.0 to v0.6.0
+## From v0.6.0 to v0.7.0
 
-v0.6 added what systems languages need and left the rest alone, which is what this table checks.
-This run's machine was faster than v0.5.0's: the references (clox, C, Go) took 10–20% less time,
-and so did A0. Native run times:
+Threads touched what every program runs: the collector's frames, the runtime's tables, the
+allocator. A first run of this benchmark found Lox's method calls 6–15% slower than v0.6.0's
+(frames through a thread-local, field lookups through lock checks that were calls, an atomic call
+per allocation), and the single-threaded paths were made v0.6.0's again (a program's main thread
+keeps its frames in a static struct; locks are taken only once a second thread exists). To compare
+without the noise of two runs, v0.6.0's and v0.7.0's executables of the same programs ran in
+alternation, best of seven, three rounds, on one machine:
 
-| Program | v0.5.0 | v0.6.0 | References, v0.5.0 → v0.6.0 |
-|---|---|---|---|
-| Minnow `fib` | 39 ms | 31 ms | clang -O0 32 → 27 ms |
-| Minnow `nbody` | 79 ms | 70 ms | clang -O0 88 → 79 ms |
-| Minnow `binarytrees` | 224 ms | 204 ms | malloc and free (clang -O0) 156 → 140 ms |
-| Lox `fib` | 204 ms | 184 ms | clox 554 → 478 ms |
-| Lox `binary_trees` | 480 ms | 439 ms | clox 1673 → 1879 ms |
-| Lox `zoo` | 110 ms | 99 ms | clox 163 → 146 ms |
-| Kaleidoscope `mandel` | 265 ms | 235 ms | LLVM's tutorial 415 → 380 ms |
+| Program (native) | v0.6.0 | v0.7.0 |
+|---|---|---|
+| Lox `fib` | 180 ms | 184 ms |
+| Lox `method_call` | 70 ms | 70 ms |
+| Lox `invocation` | 153 ms | 154 ms |
+| Lox `zoo` | 102 ms | 100 ms |
 
-The collectors did exactly the same work (the same collections, peak and live objects). New in
-v0.6.0 is the Tin table above.
+The collectors did the same work in both (the same collections, peak and live objects).
 
 ## Why
 
 ### Compile time is the linker's
 
-A0 compiles these programs to an object file in 2–6 ms: parsing, building and checking the HIR,
+A0 compiles these programs to an object file in 1–5 ms: parsing, building and checking the HIR,
 optimizing, lowering and Cranelift together. The rest of a build is linking: A0 runs the platform's
 C compiler driver (`cc`) on the object file and the runtime library, and the driver accounts for
-most of it. In this run gcc's driver took 153 ms to link a plain C object and clang 92 ms; A0's
-builds took about as long as linking with each (`CC=clang`: 95–102 ms). Against clang -O0,
+most of it. In this run gcc's driver took 157–160 ms to link a plain C object and clang 96 ms;
+A0's builds took about as long as linking with each (`CC=clang`: 95–102 ms). Against clang -O0,
 which compiles C in about 20 ms and links with its own driver, an A0 build costs little more.
-`go build` takes 177–193 ms even with Go's standard library cached.
+`go build` takes 176–230 ms even with Go's standard library cached.
 
 For running a program at once, A0 no longer links: `lang run` compiles into memory, so
 Kaleidoscope's `fib` runs in 8 ms all told and Minnow's programs as fast as their executables. A
@@ -180,7 +195,7 @@ executable.
 ### Minnow: Cranelift is clang -O0, not -O2
 
 A0 hands per-function optimization to Cranelift (D27). Cranelift's code runs at about clang -O0's
-speed: 31 ms against 27 ms on `fib`, 70 ms against 79 ms on `nbody`, and 41 ms against 43 ms on
+speed: 35 ms against 31 ms on `fib`, 72 ms against 79 ms on `nbody`, and 44 ms against 43 ms on
 `sieve`. clang -O2 is about twice as fast. -O2 runs LLVM's whole pipeline (inlining, loop and vector
 optimizations), which Cranelift does not attempt; on `fib`, for example, it turns one of the two
 recursive calls into a loop.
@@ -188,17 +203,17 @@ recursive calls into a loop.
 The HIR optimizer changes nothing on these programs (the "no HIR optimizer" column). They have no
 small functions to inline and no dynamic types to fold.
 
-- **sieve** (41 ms against 26 ms for C at -O2 and 32 ms for Go). The array is allocated at its
+- **sieve** (44 ms against 26 ms for C at -O2 and 33 ms for Go). The array is allocated at its
   size and holds a byte per boolean, as in C; what remains is Cranelift's code and the bounds
-  check on every index, which Go has too (Tin, without the check, takes 35 ms).
-- **nbody** (70 ms against 36 ms at -O2 and 52 ms for Go).
+  check on every index, which Go has too (Tin, without the check, takes 36 ms).
+- **nbody** (72 ms against 37 ms at -O2 and 51 ms for Go).
   - The bodies are structs on the heap, reached through a bounds-checked array of references.
   - `math.sqrt` is a call to C's `sqrt` instead of an instruction.
-- **binarytrees** (204 ms against 123–140 ms for malloc and free). A third of A0's time is
-  collection: 73 ms over 56 collections, 54 ms of it marking. The collector is a non-moving mark and sweep, so it
+- **binarytrees** (224 ms against 125–146 ms for malloc and free). A quarter of A0's time is
+  collection: 55 ms over 56 collections, 41 ms of it marking. The collector is a non-moving mark and sweep, so it
   marks every live object at every collection, the long-lived tree included; v0.5.0 made each
   collection rarer and cheaper (D64), and a generational collector would avoid most of what is
-  left. Go is slower still on this program, at 353 ms. Its collector is built for short pauses
+  left. Go is slower still on this program, at 360 ms. Its collector is built for short pauses
   beside a running program, not for the throughput of a small single-threaded one.
 
 ### Tin: what a language without a collector gets
@@ -206,14 +221,14 @@ small functions to inline and no dynamic types to fold.
 Tin's programs are Minnow's written as C: the same compiler, optimizer and code generator, without
 the collector, bounds checks and references.
 
-- **binarytrees** (143 ms, clang -O0's 138, Minnow's 204). Tin allocates with C's `calloc` and
-  frees each tree as C does, so it does what the C program does; the collector's 73 ms is gone. In
-  the JIT it takes 320 ms: `lang run` runs `main` on a thread of its own, and glibc's allocator is
+- **binarytrees** (145 ms, clang -O0's 138, Minnow's 224). Tin allocates with C's `calloc` and
+  frees each tree as C does, so it does what the C program does; the collector's 55 ms is gone. In
+  the JIT it takes 321 ms: `lang run` runs `main` on a thread of its own, and glibc's allocator is
   slower on a thread's arena than on the main one for this pattern of allocating and freeing.
-- **nbody** (48 ms against 75 at clang -O0 and Minnow's 70). The bodies are five structs in one
+- **nbody** (47 ms against 78 at clang -O0 and Minnow's 72). The bodies are five structs in one
   block of memory, reached through pointers; Minnow reaches objects through a checked array of
   references. Cranelift keeps the fields in registers where clang -O0 reloads them from memory.
-- **sieve** (35 ms): bytes from `alloc` indexed without checks, between clang -O0 and -O2.
+- **sieve** (36 ms): bytes from `alloc` indexed without checks, between clang -O0 and -O2.
 - **fib** is calls and the same as Minnow's.
 
 ### Kaleidoscope: A0's optimizer against LLVM's passes
@@ -225,12 +240,12 @@ a stack slot. As a result, `mandel`'s inner loop calls the user-defined `|` and 
 every iteration and recurses for every step.
 
 A0's HIR optimizer inlines small functions like those operators. That makes `mandel` 1.6 times
-faster than the tutorial's code (235 against 380 ms); without it, A0 is slower (404 ms). On `fib`
+faster than the tutorial's code (173 against 378 ms in this run); without it, A0 is slower (408 ms). On `fib`
 there is nothing to inline, and both run in 4–6 ms.
 
 LLVM's standard -O2 pipeline, given the whole program, does everything: it inlines the operators
 and `mandelconverge`, turns the recursion into loops, promotes every variable to a register and
-vectorizes. It runs `mandel` in 107 ms, 2.2 times faster than A0, which
+vectorizes. It runs `mandel` in 107 ms, 1.6 times faster than A0, which
 shows what a full optimizing pipeline buys over Cranelift's per-function optimization and A0's
 inlining. Its compile time is the same as the tutorial's on these small programs, about 20 ms.
 
@@ -242,22 +257,22 @@ time is therefore measured as the same program with the last line's calls doing 
 
 A0's Lox compiles every Lox value to `any`. Lox's semantics (calls, classes, properties) are HIR
 functions in its prelude, which the optimizer inlines and specializes. The optimizer matters more
-here than anywhere else: without it, `fib` takes 800 ms and is slower than clox.
+here than anywhere else: without it, `fib` takes 842 ms and is slower than clox.
 
-- **`fib`** (184 ms against 478 ms). Once the prelude's call functions are inlined, arithmetic and
+- **`fib`** (182 ms against 490 ms). Once the prelude's call functions are inlined, arithmetic and
   comparisons are native code, and a call is a few type tests and an indirect call; clox dispatches
   bytecode for every operation.
 - **Fields and methods** are HIR dynamic objects (D66): an instance's fields and a class's methods
   are slots found through the object's shape, and every place in the program that names a field
   keeps a cache of the shape it saw last, so a property access is a comparison and a load. clox
   hashes the name, which it interns, into each instance's table. `zoo` (property access) runs in
-  99 ms against 146 ms, `method_call` in 69 against 107.
+  99 ms against 155 ms, `method_call` in 73 against 109.
 - **Method calls** look the method up first and call it on the object, allocating no bound method,
-  as clox's `OP_INVOKE` does: `invocation` is about even with clox (157 against 148 ms).
-- **`binary_trees`** (439 ms against 1879 ms). An instance is its struct and one object of slots;
-  the collector takes 138 ms of it.
+  as clox's `OP_INVOKE` does: `invocation` is about even with clox (159 against 156 ms).
+- **`binary_trees`** (509 ms against 2676 ms on this noisy run). An instance is its struct and one
+  object of slots; the collector takes 174 ms of it.
 - **`equality`** compares constants and throws the results away. A0's optimizer removes the
-  comparisons, so its 61 ms is the loop alone.
+  comparisons, so its 64 ms is the loop alone.
 - **Interpreted**, A0 is 14–50 times slower than clox. A0's interpreter runs the core IR and is
   not tuned for speed; it is the reference every test checks the native code against and the
   debugger's engine. `lox file` now uses the JIT.
