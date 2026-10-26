@@ -1,0 +1,15 @@
+import std.str as s;
+
+fn number(x: int) -> int {
+  return x?;
+}
+
+fn length(text: string?) -> int {
+  return len(text?);
+}
+
+fn parse(text: string) -> int {
+  return s.parse_int(text)?;
+}
+
+fn main() {}

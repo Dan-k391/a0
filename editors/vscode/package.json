@@ -20,6 +20,12 @@
   "contributes": {
     "languages": [
       {
+        "id": "b0",
+        "aliases": ["B0"],
+        "extensions": [".b0"],
+        "configuration": "./slash-comments.json"
+      },
+      {
         "id": "lox",
         "aliases": ["Lox"],
         "extensions": [".lox"],
@@ -45,6 +51,7 @@
       }
     ],
     "breakpoints": [
+      { "language": "b0" },
       { "language": "lox" },
       { "language": "minnow" },
       { "language": "kaleidoscope" },
@@ -77,6 +84,7 @@
     ],
     "semanticTokenScopes": [
       { "scopes": { "keyword": ["keyword.control"], "comment": ["comment"], "string": ["string"], "number": ["constant.numeric"], "operator": ["keyword.operator"] } },
+      { "language": "b0", "scopes": { "keyword": ["keyword.control"], "comment": ["comment"], "string": ["string"], "number": ["constant.numeric"], "operator": ["keyword.operator"] } },
       { "language": "lox", "scopes": { "keyword": ["keyword.control"], "comment": ["comment"], "string": ["string"], "number": ["constant.numeric"], "operator": ["keyword.operator"] } },
       { "language": "minnow", "scopes": { "keyword": ["keyword.control"], "comment": ["comment"], "string": ["string"], "number": ["constant.numeric"], "operator": ["keyword.operator"] } },
       { "language": "kaleidoscope", "scopes": { "keyword": ["keyword.control"], "comment": ["comment"], "string": ["string"], "number": ["constant.numeric"], "operator": ["keyword.operator"] } },
@@ -99,6 +107,7 @@
             "required": ["command"]
           },
           "default": [
+            { "language": "b0", "extensions": [".b0"], "command": "b0" },
             { "language": "lox", "extensions": [".lox"], "command": "lox" },
             { "language": "minnow", "extensions": [".mn"], "command": "minnow" },
             { "language": "kaleidoscope", "extensions": [".k"], "command": "kaleidoscope" },

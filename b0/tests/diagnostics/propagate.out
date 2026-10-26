@@ -1,0 +1,24 @@
+$ b0 run propagate.b0
+--- stderr
+error[E2020]: `?` needs a nullable value or a result, found `int`
+ --> propagate.b0:4:10
+  |
+4 |   return x?;
+  |          ^^ this is `int`
+
+error[E2020]: `?` passes `null` on, but the function returns `int`
+ --> propagate.b0:8:14
+  |
+7 | fn length(text: string?) -> int {
+  |    ------ the result type is declared here
+8 |   return len(text?);
+  |              ^^^^^ this may be null
+
+error[E2020]: `?` passes the failure on, but the function returns `int`
+  --> propagate.b0:12:10
+   |
+11 | fn parse(text: string) -> int {
+   |    ----- the result type is declared here
+12 |   return s.parse_int(text)?;
+   |          ^^^^^^^^^^^^^^^^^^ this may hold a failure, as `std.Result<int, string>`
+--- exit 1

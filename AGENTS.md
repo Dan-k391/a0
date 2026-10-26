@@ -33,7 +33,7 @@ passes on one OS is a bug.
 Needs a C compiler: MSVC on Windows (found automatically), `cc` on Linux/macOS. Useful while
 debugging: `a0 run|build|fmt|check file.a0ir|file.hir`, `a0 lower file.hir` (the core IR a HIR
 module becomes), `a0 parse lang.a0g input`, `a0 lang calc.a0g hir|ir|run file` (a language
-defined by its grammar alone), `lox hir|ir file.lox`, `minnow hir|ir file.mn`, `kaleidoscope hir|ir file.k`, `tin hir|ir file.tin`, and
+defined by its grammar alone), `lox hir|ir file.lox`, `b0 hir|ir file.b0`, `minnow hir|ir file.mn`, `kaleidoscope hir|ir file.k`, `tin hir|ir file.tin`, and
 `A0_INTERP=1` (`run` interprets instead of compiling into memory with the JIT), `A0_TIME=1` (how
 long each stage of compiling takes), `A0_CODEGEN_UNITS=n` (compile into `n` objects, as large
 programs are),
@@ -58,6 +58,7 @@ the debugger (`docs/debugging.md`); the VS Code extension in `editors/vscode` st
 | backends | `a0-interp`, `a0-native`, `a0-wasm` (WebAssembly modules that link against a runtime instance, D78) | `a0-ir`, `a0-runtime`, `a0-target`, `a0-diag` |
 | tools | `a0` (CLI), `a0-build` (build-script helper), `a0-driver` (language drivers), `a0-playground` (the playground's engine; no native backend, builds for wasm32-wasip1) | anything |
 | C API | `a0-capi` (`include/a0.h`) | library crates and `a0-driver` (D67), not the other tools |
+| flagship | `b0` (B0, D87) | only the crates `docs/compatibility.md` covers (`b0/tests/public_api.rs`) |
 | examples | `examples/*` | anything |
 | editors | `editors/vscode` (an extension that starts `lang lsp`; JavaScript) | nothing in Rust |
 | bindings | `bindings/python` (the package `a0`, ctypes over the C API's shared library) | the C API |
@@ -150,6 +151,8 @@ layer, decision D17). A new crate goes into the table above and into `[workspace
   panic, a hang or an internal error is a bug. After changing a parser, the verifier, lowering or
   the C API, fuzz longer (`A0_FUZZ_ITERATIONS`, `A0_FUZZ_SEED`), and give what it finds a
   regression test where the bug is.
+- B0 (`b0/`) is tested like an example language, and its features each have a program in
+  `b0/tests/programs`; a change to A0 that B0 needs must not need anything outside the covered API.
 - Example languages test interpreted, JIT and native output (`examples/*/tests`), and the JIT
   under GC stress, optimized and not. The Lox suite must stay at all 241 passing in all eight modes, and the tests of A0's extensions to
   Lox (`examples/lox/tests/a0`) with it.

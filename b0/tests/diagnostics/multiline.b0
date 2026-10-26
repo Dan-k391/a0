@@ -1,0 +1,10 @@
+// A struct value over several lines that misses a field.
+struct Config { name: string, size: int, debug: bool }
+
+fn main() {
+  let c = new Config {
+    name: "demo",
+    size: 3,
+  };
+  print(c.size);
+}

@@ -1,0 +1,70 @@
+// Counting words: a text is split into lines, the lines into chunks counted on threads of their
+// own, and the counts merged.
+import std.str;
+import std.thread;
+
+// What was counted, kept in place where it is used.
+pub inline struct Totals { lines: int, words: int, bytes: int }
+
+// The words of a line, lowercased, without punctuation around them.
+fn words_of(line: string) -> [string] {
+  let out: [string] = [];
+  for w in str.words(line) {
+    let start = 0;
+    let end = len(w);
+    while start < end && !str.is_alnum(byte_at(w, start)) { start += 1; }
+    while end > start && !str.is_alnum(byte_at(w, end - 1)) { end -= 1; }
+    if end > start {
+      push(out, str.lower(str.slice(w, start, end)));
+    }
+  }
+  return out;
+}
+
+fn count_lines(lines: [string]) -> {string: int} {
+  let counts: {string: int} = {};
+  for line in lines {
+    for w in words_of(line) {
+      if has(counts, w) {
+        counts[w] += 1;
+      } else {
+        counts[w] = 1;
+      }
+    }
+  }
+  return counts;
+}
+
+// The counts of the words in `text`, on `workers` threads.
+pub fn count(text: string, workers: int) -> {string: int} {
+  let lines = str.lines(text);
+  let size = (len(lines) + workers - 1) / workers;
+  let jobs: [thread.Thread<{string: int}>] = [];
+  for k in 0..workers {
+    let chunk: [string] = [];
+    for i in k * size..k * size + size {
+      if i < len(lines) { push(chunk, lines[i]); }
+    }
+    push(jobs, thread.spawn(fn() -> {string: int} { return count_lines(chunk); }));
+  }
+  let total: {string: int} = {};
+  for job in jobs {
+    let part = thread.join(job);
+    for w in part {
+      if has(total, w) {
+        total[w] += part[w];
+      } else {
+        total[w] = part[w];
+      }
+    }
+  }
+  return total;
+}
+
+pub fn totals(text: string, counts: {string: int}) -> Totals {
+  let words = 0;
+  for w in counts {
+    words += counts[w];
+  }
+  return new Totals { lines: len(str.lines(text)), words: words, bytes: len(text) };
+}

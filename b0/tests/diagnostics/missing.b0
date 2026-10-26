@@ -1,0 +1,4 @@
+// An import needs a file for its module, next to the program's main file.
+import lib.nothing;
+
+fn main() {}

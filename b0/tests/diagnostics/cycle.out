@@ -1,0 +1,13 @@
+$ b0 run cycle.b0
+--- stderr
+error[E1012]: import cycle: cycle -> lib.back -> cycle
+ --> lib/back.b0:1:8
+  |
+1 | import cycle;
+  |        ^^^^^ this import closes the cycle
+  |
+ ::: cycle.b0:2:8
+  |
+2 | import lib.back;
+  |        -------- imported here
+--- exit 1

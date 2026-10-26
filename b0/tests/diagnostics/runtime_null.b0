@@ -1,0 +1,12 @@
+// Unwrapping a null value stops the program, through the closure that did it.
+struct Node { value: int, next: Node? }
+
+fn each(n: Node, f: fn(Node) -> int) -> int {
+  return f(n);
+}
+
+fn main() {
+  let n = new Node { value: 1, next: null };
+  print(each(n, fn(m: Node) -> int { return m.value; }));
+  print(each(n, fn(m: Node) -> int { return m.next!.value; }));
+}

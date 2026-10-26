@@ -1,0 +1,10 @@
+$ b0 run generic.b0
+--- stderr
+error[E2004]: operator `+` cannot be applied to `T`
+ --> generic.b0:3:10
+  |
+3 |   return a + b;
+  |          ^ this is `T`
+  |
+  = note: `T` is a type parameter, so it may be any type
+--- exit 1

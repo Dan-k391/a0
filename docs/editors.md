@@ -35,7 +35,7 @@ requires. Tests drive it with `a0_driver::lsp::session` and `session_requests` (
 ## VS Code
 
 `editors/vscode` is a small extension that starts `<command> lsp` for every entry of the
-`a0.languages` setting. It declares Lox (`.lox`), Minnow (`.mn`) and Kaleidoscope (`.k`):
+`a0.languages` setting. It declares B0 (`.b0`), Lox (`.lox`), Minnow (`.mn`), Kaleidoscope (`.k`) and Tin (`.tin`):
 
 ```
 cargo install --path examples/lox        # or set the command to target/release/lox

@@ -1,0 +1,7 @@
+pub fn next(n: int) -> int {
+  return n + step();
+}
+
+fn step() -> int {
+  return 1;
+}

@@ -1,0 +1,11 @@
+// Warnings do not stop the program.
+fn check(n: int) -> int {
+  let doubled = n * 2;
+  return n;
+  print("never");
+}
+
+fn main() {
+  let _ignored = check(1);
+  print(check(21) * 2);
+}

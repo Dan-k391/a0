@@ -1,0 +1,14 @@
+// A match must cover every variant.
+enum Light { Red, Yellow, Green }
+
+fn next(l: Light) -> Light {
+  return match l {
+    Red => Light::Green,
+    Green => Light::Yellow,
+  };
+}
+
+fn main() {
+  let l = Light::Blue;
+  print(1);
+}

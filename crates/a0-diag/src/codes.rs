@@ -125,6 +125,9 @@ codes! {
     MANUAL_ONLY = "E2026", "only without the collector",
         "Freeing memory is for programs that manage it themselves (`memory manual`): with the collector, an object lives as long as something refers to it, and freeing it would leave those references pointing at nothing.";
 
+    NEEDS_UNSAFE = "E2027", "needs `unsafe`",
+        "Raw pointers are unchecked: reading or writing through one, or taking or moving an address, can touch memory that is not what the program thinks it is. A language that offers them (B0) allows them only inside an `unsafe` block, which marks the code to check by hand. Move the operation into `unsafe { ... }`, or use arrays, which are checked.";
+
     OUTSIDE_LOOP = "E3001", "outside a loop",
         "Leaving or continuing a loop is only possible inside a loop.";
 

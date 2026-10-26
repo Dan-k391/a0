@@ -1,0 +1,108 @@
+// Threads (std.thread): workers that allocate at the same time, so that collections stop them all,
+// a pipeline of channels, and results joined in order.
+// expect: workers: 1990000 3980000 5970000 7960000
+// expect: pipeline: 0 1 4 9 16 25 36 49 64 81
+// expect: closed: the channel is closed
+// expect: strings: 7600
+import std.thread;
+
+struct Node { value: int, next: Node? }
+
+fn build(n: int, k: int) -> Node? {
+  let head: Node? = null;
+  let i = 0;
+  while i < n {
+    head = new Node { value: i * k, next: head };
+    i = i + 1;
+  }
+  return head;
+}
+
+fn total(list: Node?) -> int {
+  let sum = 0;
+  let n = list;
+  while let node = n {
+    sum = sum + node.value;
+    n = node.next;
+  }
+  return sum;
+}
+
+fn main() {
+  let workers: [thread.Thread<int>] = [];
+  for k in [1, 2, 3, 4] {
+    push(workers, thread.spawn(fn() -> int {
+      let sum = 0;
+      let round = 0;
+      while round < 100 {
+        sum = sum + total(build(200, k));
+        round = round + 1;
+      }
+      return sum;
+    }));
+  }
+  let line = "workers:";
+  for w in workers {
+    line = line + " " + str(thread.join(w));
+  }
+  print(line);
+
+  // numbers -> squares -> here, each stage a thread of its own.
+  let numbers: thread.Channel<int> = thread.channel(2);
+  let squares: thread.Channel<int> = thread.channel(2);
+  let source = thread.spawn(fn() {
+    for n in [0, 1, 2, 3, 4, 5, 6, 7, 8, 9] {
+      thread.send(numbers, n);
+    }
+    thread.close(numbers);
+  });
+  let squarer = thread.spawn(fn() {
+    let done = false;
+    while !done {
+      match thread.receive(numbers) {
+        Ok(n) => thread.send(squares, n * n),
+        Err(e) => { done = len(e) > 0; }
+      }
+    }
+    thread.close(squares);
+  });
+  let out = "pipeline:";
+  let more = true;
+  while more {
+    match thread.receive(squares) {
+      Ok(s) => { out = out + " " + str(s); }
+      Err(e) => {
+        print(out);
+        print("closed: " + e);
+        more = false;
+      }
+    }
+  }
+  thread.join(source);
+  thread.join(squarer);
+
+  // Strings made on two threads meet in one channel.
+  let texts: thread.Channel<string> = thread.channel(8);
+  let a = thread.spawn(fn() {
+    for i in [0, 1, 2, 3, 4, 5, 6, 7, 8, 9] {
+      thread.send(texts, "a" + str(i * 100));
+    }
+  });
+  let b = thread.spawn(fn() {
+    for i in [0, 1, 2, 3, 4, 5, 6, 7, 8, 9] {
+      thread.send(texts, "b" + str(i * 100));
+    }
+  });
+  let length = 0;
+  let got = 0;
+  while got < 20 {
+    match thread.receive(texts) {
+      Ok(t) => { length = length + len(t) * 100; }
+      Err(e) => { got = 20 + len(e); }
+    }
+    got = got + 1;
+  }
+  thread.join(a);
+  thread.join(b);
+  print("strings: " + str(length));
+}

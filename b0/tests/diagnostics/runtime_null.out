@@ -1,0 +1,9 @@
+$ b0 run runtime_null.b0
+--- stdout
+1
+--- stderr
+panic: unwrapped a `null` value with `!`
+    at main::{closure} (runtime_null.b0:11:45)
+    at each (runtime_null.b0:5:10)
+    at main (runtime_null.b0:11:9)
+--- exit 101

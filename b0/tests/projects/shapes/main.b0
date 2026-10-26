@@ -1,0 +1,17 @@
+// A program of three files: `text/util.b0` is imported by this file and by `shapes.b0`, which is
+// imported under another name. Only `pub` items are visible outside their module.
+import text.util;
+import shapes as sh;
+
+fn main() {
+  print(util.twice(21));
+  let p = new sh.Point { x: 3, y: 4 };
+  print(sh.area(p));
+  let s: sh.Shape = sh.Shape::Square(2);
+  print(sh.describe(s));
+  print(sh.describe(sh.Shape::Dot));
+}
+// expect: 42
+// expect: 12
+// expect: square 2
+// expect: dot

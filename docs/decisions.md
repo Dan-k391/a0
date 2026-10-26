@@ -1305,3 +1305,37 @@ optional and 1 when absent, so every file written before 1.0 is version 1 as it 
 newer major version is refused with a code (`E0004`) rather than misread. Deprecation is the
 usual one: marked in a minor release in each language's own way, kept working for the rest of the
 major version, removed only in the next.
+
+## D87. B0: Minnow's compiler grown into the flagship, on the covered API, with a prelude in B0
+
+v1.0 asks for a flagship language, B0, that shows everything A0 can do, built only on public
+APIs. The choices were to design a new language from scratch or to grow one of the examples.
+Minnow already had what most languages need (modules, generics, interfaces, closures, nullable
+references, the standard library, packages), compiled in one walk with no checker of its own, so
+B0 starts from its compiler and adds what A0 offers that no single example used: inline structs,
+sized numbers and `f32`, maps with literals, exceptions, dynamic objects, threads, manual memory,
+raw pointers, C functions, bitwise operators and compound assignment. It is a crate at the top of
+the repository (`b0/`), not under `examples/`, because it is meant to be started from.
+
+- **Only the covered API.** B0 depends on `a0-diag`, `a0-syntax`, `a0-hir` and `a0-driver`; a test
+  reads its manifest and sources and fails on anything else. Building it needed no change to A0's
+  public API, which is the evidence that the API is enough for a full language.
+- **A prelude written in B0.** `map`, `filter`, `fold`, `each`, `any_of`, `range` and `sort` are B0
+  source compiled into a module of its own (`b0.prelude`), from which every file imports the
+  functions it does not declare itself. A0's prelude module (module 0) would have been simpler,
+  but the root module's items are not qualified, so a program's own `map` collided with the
+  prelude's; importing by name lets a program's functions take the prelude's place, as in Rust.
+  Inlining of known closures (D84) makes these functions as fast as loops written out.
+- **`unsafe` is B0's rule, not A0's.** A0 offers raw pointers to any language that asks (D71); B0
+  allows them only inside `unsafe { ... }`. It checks what it can see while building: the pointer
+  builtins by name, and indexing an expression whose type is already a pointer. A pointer whose
+  type is only inferred later is indexed unchecked by this rule, which the documentation says.
+  The code `E2027` is A0's, for any language with the same rule.
+- **Syntax where the HIR has a concept.** `inline struct` (HIR's term; `value` would have taken a
+  common variable name, since grammar keywords are reserved), `memory manual;`, `{K: V}` and
+  `{k: v}`, `for i in a..b`, `try`/`catch`/`throw`, `x is T`, `sizeof(T)`. Dynamic objects use
+  field syntax (`o.name`), which B0 turns into A0's `field` and `set_field` builtins when the
+  receiver is known to be an `object`.
+
+What B0 does not have is what the HIR does not have yet: generic interfaces, methods on arrays,
+type tests of arrays inside `any`, and `finally`.

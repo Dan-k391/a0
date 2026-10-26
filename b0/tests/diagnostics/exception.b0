@@ -1,0 +1,11 @@
+// An exception nobody catches, thrown in a closure.
+fn main() {
+  let check = fn(n: int) {
+    if n > 2 {
+      throw "too big: " + str(n);
+    }
+  };
+  for i in 0..5 {
+    check(i);
+  }
+}

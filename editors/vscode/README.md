@@ -10,4 +10,4 @@ code --extensionDevelopmentPath=. path/to/folder
 ```
 
 The `a0.languages` setting lists the languages: `command` is the language's driver, `extensions` and
-`language` select its files. The defaults expect `lox`, `minnow` and `kaleidoscope` on the `PATH`.
+`language` select its files. The defaults expect `b0`, `lox`, `minnow`, `kaleidoscope` and `tin` on the `PATH`.

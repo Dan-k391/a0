@@ -1,0 +1,6 @@
+$ b0 run exception.b0
+--- stderr
+panic: uncaught exception: too big: 3
+    at main::{closure} (exception.b0:5:7)
+    at main (exception.b0:9:5)
+--- exit 101

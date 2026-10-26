@@ -1,0 +1,47 @@
+$ b0 run interfaces.b0
+--- stderr
+error[E1013]: no method `aera` on `Circle`
+  --> interfaces.b0:18:9
+   |
+18 |   print(c.aera());
+   |         ^^^^^^^^
+help: a method with a similar name exists
+   |
+18 |   print(c.area());
+   |           ~~~~
+
+error[E2001]: mismatched types
+  --> interfaces.b0:20:18
+   |
+20 |   let s: Shape = "not a shape";
+   |       -          ^^^^^^^^^^^^^ expected `Shape`, found `string`
+   |       |
+   |       expected due to this
+
+error[E2021]: the method `area` of `Circle` does not match `Shape`
+ --> interfaces.b0:9:6
+  |
+2 |   fn area(self) -> float;
+  |      ---- required here
+...
+9 |   fn area(self) -> int { return 3; }
+  |      ^^^^ expected `fn() -> float`, found `fn() -> int`
+
+error[E2021]: `Circle` does not have the method `name` that `Shape` requires
+ --> interfaces.b0:8:16
+  |
+3 |   fn name(self) -> string;
+  |      ---- required here
+...
+8 | impl Shape for Circle {
+  |                ^^^^^^ `name` is missing
+
+error[E2021]: `int` does not implement `Shape`
+  --> interfaces.b0:19:9
+   |
+12 | fn describe<T: Shape>(x: T) -> string {
+   |    -------- `describe` declared here
+...
+19 |   print(describe(42));
+   |         ^^^^^^^^^^^^ `describe` requires it of `T`
+--- exit 1

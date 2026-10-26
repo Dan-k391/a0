@@ -1,0 +1,7 @@
+$ b0 run runtime_std.b0
+--- stderr
+panic: std.str.split: the separator is empty
+    at std.str.split (<std>/str.hir:65:5)
+    at columns (runtime_std.b0:5:14)
+    at main (runtime_std.b0:9:9)
+--- exit 101

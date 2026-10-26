@@ -1,0 +1,174 @@
+// B0, A0's flagship language: static types with inference, structs and inline structs, enums,
+// generics, interfaces, closures, nullable references, maps, exceptions, dynamic objects, raw
+// pointers in `unsafe`, manual memory, C functions, modules and packages (README.md).
+grammar b0 version 1;
+
+skip /[ \t\r\n]+/;
+skip /\/\/[^\n]*/;
+skip /\/\*([^*]|\*+[^*\/])*\*+\//;
+token FLOAT /[0-9][0-9_]*\.[0-9][0-9_]*([eE][+-]?[0-9]+)?|[0-9][0-9_]*[eE][+-]?[0-9]+/;
+token HEX /0x[0-9A-Fa-f_]+/;
+token INT /[0-9][0-9_]*/;
+token STRING /"([^"\\\n]|\\.)*"/;
+token NAME /[A-Za-z_][A-Za-z0-9_]*/;
+error "unterminated string" /"([^"\\\n]|\\.)*/;
+unknown "unexpected character";
+
+// `memory manual;` first: the program frees its memory itself, and has no collector.
+program = memory:memory_decl? (!EOF item)* EOF;
+memory_decl = "memory" mode:NAME ~ "expected `gc` or `manual`" ";" ~ "expected ';'";
+
+item @inline @recover(before "import" "pub" "struct" "inline" "enum" "interface" "impl" "fn" "extern")
+    = import_decl | struct_decl | enum_decl | interface_decl | impl_decl | extern_decl | fn_decl;
+
+// `import geometry.shapes;` (the file `geometry/shapes.b0` of the package) makes the module's
+// public items `shapes.item`; `import geometry.shapes as s;` makes them `s.item`.
+import_decl @import
+    = "import" path:module_path ~ "expected a module name" ("as" alias:NAME ~ "expected a name")?
+      ";" ~ "expected ';'";
+module_path = NAME ("." NAME)*;
+
+// A struct is a reference to an object the collector manages; an inline struct is its fields,
+// copied when assigned (numbers, booleans, pointers and other inline structs only).
+struct_decl @def(struct)
+    = pub:"pub"? inline:"inline"? "struct" name:NAME ~ "expected a struct name"
+      type_params? "{" ~ "expected '{'" (field ("," field)* ","?)? "}" ~ "expected '}'";
+field @def(field)
+    = name:NAME ~ "expected a field name" ":" ~ "expected ':'" type:type ~ "expected a type";
+
+enum_decl @def(enum)
+    = pub:"pub"? "enum" name:NAME ~ "expected an enum name" type_params? "{" ~ "expected '{'"
+      (variant ("," variant)* ","?)? "}" ~ "expected '}'";
+variant @def(variant)
+    = name:NAME ~ "expected a variant name" ("(" type:type ("," type:type)* ")" ~ "expected ')'")?;
+
+// A function of the C library, or of a library linked into the program.
+extern_decl @def(function) @scope
+    = pub:"pub"? "extern" "fn" ~ "expected 'fn'" name:NAME ~ "expected a function name"
+      "(" ~ "expected '('" (param ("," param)*)? ")" ~ "expected ')'"
+      ("->" ret:type ~ "expected a type")? ";" ~ "expected ';'";
+
+fn_decl @def(function) @scope
+    = pub:"pub"? "fn" name:NAME ~ "expected a function name" type_params? "(" ~ "expected '('"
+      (param ("," param)*)? ")" ~ "expected ')'" ("->" ret:type ~ "expected a type")?
+      body:block ~ "expected '{'";
+param @def(parameter)
+    = name:NAME ~ "expected a parameter name" ":" ~ "expected ':'" type:type ~ "expected a type";
+
+// An interface: methods that the types implementing it have.
+interface_decl @def(interface)
+    = pub:"pub"? "interface" name:NAME ~ "expected an interface name" "{" ~ "expected '{'"
+      (!"}" !EOF method:method_sig)* "}" ~ "expected '}'";
+method_sig @def(method) @scope
+    = "fn" name:NAME ~ "expected a method name" "(" ~ "expected '('" receiver:NAME ~ "expected 'self'"
+      ("," param)* ")" ~ "expected ')'" ("->" ret:type ~ "expected a type")? ";" ~ "expected ';'";
+
+// Methods of a type, `impl Point { ... }`, or the methods of an interface it implements,
+// `impl Shape for Circle { ... }`. A method's first parameter, `self`, is the value it is called on.
+impl_decl @scope
+    = "impl" type_params? (iface:named_type "for")? owner:named_type ~ "expected a type"
+      "{" ~ "expected '{'" (!"}" !EOF method:method_decl)* "}" ~ "expected '}'";
+method_decl @def(method) @scope
+    = "fn" name:NAME ~ "expected a method name" type_params? "(" ~ "expected '('"
+      receiver:NAME ~ "expected 'self'" ("," param)* ")" ~ "expected ')'"
+      ("->" ret:type ~ "expected a type")? body:block ~ "expected '{'";
+
+type_params = "<" type_param ~ "expected a type parameter" ("," type_param ~ "expected a type parameter")*
+              ">" ~ "expected '>'";
+// `T: Shape + Named`: values of `T` have the interfaces' methods.
+type_param @def(type_parameter)
+    = name:NAME (":" bound:named_type ~ "expected an interface" ("+" bound:named_type ~ "expected an interface")*)?;
+
+type = base:base_type nullable:"?"?;
+base_type @inline = array_type | map_type | fn_type | named_type;
+array_type = "[" elem:type ~ "expected a type" "]" ~ "expected ']'";
+// `{string: int}`: a map from strings to ints.
+map_type = "{" key:type ~ "expected a type" ":" ~ "expected ':'" value:type ~ "expected a type"
+           "}" ~ "expected '}'";
+fn_type = "fn" "(" ~ "expected '('" (param_type:type ("," param_type:type)*)? ")" ~ "expected ')'"
+          ("->" ret:type ~ "expected a type")?;
+named_type = (module:NAME ".")? name:NAME ("<" targ:type ~ "expected a type" ("," targ:type)* ">" ~ "expected '>'")?;
+
+block @scope = "{" (!"}" !EOF stmt)* "}" ~ "expected '}'";
+
+stmt @inline @recover(after ";" before "let" "if" "while" "for" "return" "break" "continue" "throw" "try" "unsafe")
+    = let_stmt | if_stmt | while_stmt | for_stmt | return_stmt | break_stmt | continue_stmt
+    | throw_stmt | try_stmt | unsafe_stmt | block | match_stmt | expr_stmt;
+
+let_stmt @def(variable)
+    = "let" name:NAME ~ "expected a variable name" (":" type:type ~ "expected a type")?
+      "=" ~ "expected '='" value:expr ~ "expected an expression" ";" ~ "expected ';'";
+if_stmt @def(variable: name) @scope
+    = "if" (narrow | cond:expr) ~ "expected a condition" then:block ~ "expected '{'"
+      ("else" (else:if_stmt | else:block) ~ "expected '{' or 'if'")?;
+while_stmt @def(variable: name) @scope
+    = "while" (narrow | cond:expr) ~ "expected a condition" body:block ~ "expected '{'";
+// `if let x = e` and `while let x = e`: `x` is `e`'s value when that is not null.
+narrow @inline = "let" name:NAME ~ "expected a variable name" "=" ~ "expected '='" value:expr;
+// `for x in xs` (an array), `for k in m` (a map's keys), `for i in 0..n` (numbers from 0 to n - 1).
+for_stmt @def(variable: name) @scope
+    = "for" name:NAME ~ "expected a variable name" "in" ~ "expected 'in'"
+      iterable:expr ~ "expected an array, a map or a range" (".." end:expr ~ "expected the end of the range")?
+      body:block ~ "expected '{'";
+return_stmt = "return" value:expr? ";" ~ "expected ';'";
+break_stmt = "break" ";" ~ "expected ';'";
+continue_stmt = "continue" ";" ~ "expected ';'";
+// `throw e;` raises any value; `try { ... } catch e { ... }` handles it, with the value in `e`
+// (an `any`).
+throw_stmt = "throw" value:expr ~ "expected an expression" ";" ~ "expected ';'";
+try_stmt = "try" body:block ~ "expected '{'" "catch" ~ "expected 'catch'" handler:catch_clause;
+catch_clause @def(variable: name) @scope
+    = name:NAME ~ "expected a name for the exception" body:block ~ "expected '{'";
+// Raw pointers (`addr`, `offset`, indexing a `ptr<T>`) only inside `unsafe { ... }`.
+unsafe_stmt = "unsafe" body:block ~ "expected '{'";
+match_stmt = expr:match_expr;
+expr_stmt = expr:expr (op:assign_op value:expr ~ "expected an expression")? ";" ~ "expected ';'";
+assign_op = "=" | "+=" | "-=" | "*=" | "/=" | "%=" | "&=" | "|=" | "^=" | "<<=" | ">>=";
+
+expr @inline = @prec primary ~ "expected an expression" {
+    left "||" => logical;
+    left "&&" => logical;
+    left "|" => binary;
+    left "^" => binary;
+    left "&" => binary;
+    left "==" "!=" => binary;
+    left "<" "<=" ">" ">=" => binary;
+    left "<<" ">>" => binary;
+    left "+" "-" => binary;
+    left "*" "/" "%" => binary;
+    postfix "as" type:type ~ "expected a type" => cast;
+    postfix "is" type:type ~ "expected a type" => is;
+    prefix "-" "!" "~" => unary;
+    postfix "(" args:args? ")" ~ "expected ')'" => call;
+    postfix "." name:NAME ~ "expected a field name" => get;
+    postfix "[" index:expr ~ "expected an index" "]" ~ "expected ']'" => index;
+    postfix "!" => unwrap;
+    postfix "?" => propagate;
+};
+
+args = arg:expr ("," arg:expr)*;
+
+primary = literal | array_lit | map_lit | new_expr | sizeof | closure | match_expr | variant_expr
+        | paren | name_expr;
+literal = "true" | "false" | "null" | FLOAT | HEX | INT | STRING;
+array_lit = "[" args:args? ","? "]" ~ "expected ']'";
+// `{"a": 1, "b": 2}`; `{}` is an empty map.
+map_lit = "{" (entry ("," entry)* ","?)? "}" ~ "expected '}'";
+entry = key:expr ":" ~ "expected ':'" value:expr ~ "expected a value";
+// `new Point { x: 1.0, y: 2.0 }`; `new object` is a dynamic object with no fields yet.
+new_expr = "new" (module:NAME ".")? name:NAME ~ "expected a struct name"
+           ("{" (field_init ("," field_init)* ","?)? "}" ~ "expected '}'")?;
+field_init = name:NAME ~ "expected a field name" ":" ~ "expected ':'" value:expr;
+sizeof = "sizeof" "(" ~ "expected '('" type:type ~ "expected a type" ")" ~ "expected ')'";
+closure @scope
+    = "fn" "(" ~ "expected '('" (param ("," param)*)? ")" ~ "expected ')'"
+      ("->" ret:type ~ "expected a type")? body:block ~ "expected '{'";
+match_expr = "match" scrutinee:expr ~ "expected an expression" "{" ~ "expected '{'"
+             (!"}" arm ","?)* "}" ~ "expected '}'";
+arm @scope
+    = pattern:pattern "=>" ~ "expected '=>'" (body:block | body:expr) ~ "expected an expression";
+pattern @def(variable: bind)
+    = "_" | variant:NAME ("(" bind:NAME ("," bind:NAME)* ")" ~ "expected ')'")?;
+variant_expr = (module:NAME ".")? enum:NAME "::" name:NAME ~ "expected a variant name" ("(" args:args? ")" ~ "expected ')'")?;
+paren = "(" inner:expr ")" ~ "expected ')'";
+name_expr = NAME;

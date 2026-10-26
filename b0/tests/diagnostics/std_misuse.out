@@ -1,0 +1,30 @@
+$ b0 run std_misuse.b0
+--- stderr
+error[E2001]: mismatched types
+  --> std_misuse.b0:4:16
+   |
+ 4 |   print(s.find(1, "a"));
+   |                ^ expected `string`, found `int`
+   |
+  ::: <std>/str.hir:26:9
+   |
+26 | fn find(s: string, part: string) -> int {
+   |         - parameter declared here
+
+error[E1001]: module `std.str` has no public `splitt`
+ --> std_misuse.b0:5:11
+  |
+5 |   print(s.splitt("a,b", ","));
+  |           ^^^^^^ help: a public item with a similar name exists: `split`
+
+error[E1011]: `a0_std_find` is private to module `std.str`
+ --> std_misuse.b0:6:11
+  |
+6 |   print(s.a0_std_find("a", "b", 0));
+  |           ^^^^^^^^^^^ private
+  |
+ ::: <std>/str.hir:4:16
+  |
+4 | extern "a0" fn a0_std_find(string, string, int) -> int;
+  |                ----------- declared here without being public
+--- exit 1

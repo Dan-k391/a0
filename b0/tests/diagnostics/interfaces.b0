@@ -1,0 +1,21 @@
+interface Shape {
+  fn area(self) -> float;
+  fn name(self) -> string;
+}
+
+struct Circle { r: float }
+
+impl Shape for Circle {
+  fn area(self) -> int { return 3; }
+}
+
+fn describe<T: Shape>(x: T) -> string {
+  return x.name();
+}
+
+fn main() {
+  let c = new Circle { r: 1.0 };
+  print(c.aera());
+  print(describe(42));
+  let s: Shape = "not a shape";
+}
