@@ -56,8 +56,9 @@ fn random_calls_never_crash() {
         .output()
         .unwrap();
     let calls = std::fs::read_to_string(&log).unwrap_or_default();
+    // A sequence cut short by a crash has no last line.
     assert!(
-        out.status.success() && calls.ends_with("done\n"),
+        out.status.success() && calls.lines().last() == Some("done"),
         "{}\n{}\nthe sequence that failed, call by call ({}):\n{}",
         out.status,
         String::from_utf8_lossy(&out.stderr),

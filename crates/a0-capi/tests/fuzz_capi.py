@@ -311,7 +311,7 @@ def main():
             samples.append((kind, open(full, "rb").read()))
     funcs = parse_header(header)
     assert len(funcs) > 150, f"only {len(funcs)} functions found in the header"
-    with tempfile.TemporaryDirectory() as tmp, open(log_path, "w", encoding="utf-8") as log:
+    with tempfile.TemporaryDirectory() as tmp, open(log_path, "w", encoding="utf-8", newline="\n") as log:
         fz = Fuzzer(lib, funcs, handle_types(header), log)
         fz.tmp = tmp
         for seed in range(first, first + count):
