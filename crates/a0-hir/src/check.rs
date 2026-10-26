@@ -102,7 +102,9 @@ pub fn check_entry(m: &HirModule) -> Diagnostics {
         Some(Item::Func(f)) => {
             let body = m.func_body(f);
             let ret = m.body_ret(body);
-            if !m.body_params(body).is_empty() || !matches!(ret, TypeId::INT | TypeId::UNIT) {
+            let integer = matches!(ret, TypeId::INT | TypeId::UNIT)
+                || matches!(m.kind(ret), TypeKind::SizedInt(..));
+            if !m.body_params(body).is_empty() || !integer {
                 diags.push(
                     Diagnostic::error(
                         code::BAD_ENTRY,

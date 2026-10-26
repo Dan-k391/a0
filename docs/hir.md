@@ -157,7 +157,8 @@ fn main() -> int {
   as pointers to their objects, `any` as its 64-bit word; see `a0rt.h`). It may allocate: its
   reference arguments stay rooted during the call. The standard library is built on these
   (`docs/std.md`). Several modules may declare the same C function, with the same signature.
-- The entry point is `fn main() -> int` or `fn main()`; its result is the exit status.
+- The entry point is `fn main() -> int`, `fn main()` or `main` returning a sized integer (`i32` for
+  C's `int main`); its result is the exit status, as a C `int`.
 - Memory management is the program's choice (D72): `gc`, precise tracing collection, the default;
   or `manual` (`memory manual;` after the module line, `set_memory` in the builder): no collector
   at all (no shadow stack, no roots, nothing ever collected), and the builtin `free(r)` releases

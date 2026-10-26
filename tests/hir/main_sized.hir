@@ -1,0 +1,10 @@
+// `main` may return a sized integer, which is the exit status as C's `int main` gives it.
+// expect-stdout: hi
+// expect-exit: 3
+module "main_sized";
+
+fn main() -> i32 {
+  print("hi\n");
+  let x: i32 = 1;
+  x + 2
+}

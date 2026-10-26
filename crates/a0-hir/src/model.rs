@@ -1179,7 +1179,7 @@ impl HirModule {
             let tag = self.type_tag(t);
             if let Some((_, template)) = self.type_syntax.iter().find(|(g, _)| *g == tag) {
                 let parts: Vec<String> = match self.kind(t) {
-                    TypeKind::Array(e) | TypeKind::Nullable(e) => vec![name(*e)],
+                    TypeKind::Array(e) | TypeKind::Nullable(e) | TypeKind::Ptr(e) => vec![name(*e)],
                     TypeKind::Map(k, v) => vec![name(*k), name(*v)],
                     _ => Vec::new(),
                 };

@@ -1322,9 +1322,14 @@ impl<'a> Lowerer<'a> {
             self.b.unreachable();
             self.b.end_if();
         }
-        let code = match r {
-            Some(v) => self.b.cast(Opcode::Trunc, v, Type::I32),
-            None => self.b.iconst(Type::I32, 0),
+        // The exit status is the result as a C `int`, as C's `main` gives it.
+        let ret = self.m.body_ret(self.m.func_body(hir_main));
+        let code = match (r, self.m.kind(ret)) {
+            (None, _) => self.b.iconst(Type::I32, 0),
+            (Some(v), TypeKind::SizedInt(32, _)) => v,
+            (Some(v), TypeKind::SizedInt(8 | 16, true)) => self.b.cast(Opcode::Sext, v, Type::I32),
+            (Some(v), TypeKind::SizedInt(8 | 16, false)) => self.b.cast(Opcode::Zext, v, Type::I32),
+            (Some(v), _) => self.b.cast(Opcode::Trunc, v, Type::I32),
         };
         self.b.ret(Some(code));
         self.b.end_function();
