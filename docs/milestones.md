@@ -945,6 +945,61 @@ Nothing in A0 changed for the benchmark. What it found along the way:
 - LLVM's -O2 runs Kaleidoscope 2–3 times faster than Cranelift's code: inlining across the whole
   program and loop optimizations, which A0 leaves to Cranelift (D27).
 
+## M24. v0.6: systems languages
+
+**Done**
+
+- Sized numbers (D69): `i8` .. `u64` and `f32` in the HIR, wrapping as C's do, with unsigned
+  division, comparison and conversion, the bitwise operators, and arrays that keep each element at
+  its size (C sees `uint8_t *`, `int32_t *`).
+- Values inline (D70): `inline struct` values live in locals, fields, array elements and globals,
+  laid out as C lays them out and copied where they are consumed. The core IR gained `stack_slot`.
+  Inline structs hold numbers, booleans and other inline structs (E1015), so the collector stays
+  precise.
+- Low-level operations (D71): `ptr<T>`, `addr`, `offset`, `data`, `size_of::<T>()` and pointer
+  conversions, unchecked; arrays, references and conversions stay checked by default.
+- Memory management per language (D72): `memory manual;` makes a program manage its memory itself:
+  no shadow stack, no roots, no collection, `free` for anything allocated. Chosen over reference
+  counting and ownership as the mode that costs nothing per operation and needs nothing of a
+  language's design. The random program generator makes one program in four manual.
+- C structs passed to and from C functions (D73): an extern's `ptr` parameter carries a struct
+  layout (`byval`, `sret`), and the native backend passes it as System V, Windows x64 and AArch64
+  (Apple's included) say, planning a call's arguments together because where a struct goes depends
+  on the registers left. The interpreter calls such C functions (and those of `f32` or more than
+  eight arguments) through thunks the native backend compiles in memory, so all modes share one
+  implementation of the ABI. HIR externs take and return inline structs and `f32`. Tested against
+  Rust's `extern "C"` functions (JIT, interpreter) and against C (Tin's `abi.c`, natively too) on
+  every CI platform; CI found two AArch64 mistakes the x86-64 machines could not.
+- A C-like example language (D74): Tin (`examples/tin`, about 850 lines with its grammar): structs
+  as values, `*T`, `&x`, `*p`, `p->f`, pointer arithmetic, `alloc`/`free`, checked arrays, C
+  functions called directly, compound literals. `json.tin` uses a real C library, cJSON (vendored,
+  MIT), reading its structs through pointers; `c_structs.tin` calls C functions of structs in every
+  ABI shape. Its programs run in all eight modes; it has the language server, debugger, REPL and
+  diagnostic snapshots of every example.
+- Garbage-collected languages are unaffected: their tests are unchanged, and the benchmark shows the
+  same times (allowing for a faster machine) and the same collections. Tin runs at clang -O0's
+  speed or better: `binarytrees` 143 ms against 138, `nbody` 48 against 75 (`docs/benchmarks.md`).
+
+**Changed**
+
+- `main` may return a sized integer; `set_type_syntax` fills in pointer types.
+- `HostSymbols` holds thunks; `a0_native::add_thunks`, which the drivers, the debugger, `a0 run` and
+  the C API call before interpreting. The C API and Python gain `set_struct_param` and
+  `stack_slot`.
+
+**Open questions**
+
+- Varargs C functions (`printf`) are not callable: their ABI differs again (Apple passes variadic
+  arguments on the stack). Tin has `print` instead.
+- On Apple's AArch64 a spilled struct whose alignment is below 8 is placed at 8 bytes after
+  arguments packed smaller; no test has that shape yet.
+- C cannot call back into the interpreter (a function pointer of an A0 function works in the JIT
+  and natively only), so `qsort` with an A0 comparator is not portable across modes.
+- In the JIT, programs with heavy malloc and free run slower than natively (glibc's per-thread
+  arena; Tin's `binarytrees` 320 against 143 ms). Running `main` on the main thread, or another
+  allocator, would close it.
+- The playground cannot call C functions of structs (no native backend for thunks in WebAssembly).
+
 ## Overall open questions
 
 None at the moment.

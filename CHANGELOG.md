@@ -6,6 +6,43 @@ APIs. `docs/milestones.md` has the details of each step, with measurements.
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-10-26
+
+Systems languages: values in place, raw pointers, memory without a collector, and C structs across
+the C boundary, proven by Tin, a C-like example language that calls a real C library. Milestone
+M24 in `docs/milestones.md`.
+
+### Added
+
+- **Sized numbers** (D69): `i8` .. `u64` and `f32` in the HIR, with wrapping arithmetic, unsigned
+  division, comparison and conversion, bitwise operators (`&`, `|`, `^`, `<<`, `>>`, `~`), and
+  arrays that keep each element at its size.
+- **Inline structs** (D70): `inline struct` values live where they are used (locals, fields,
+  array elements, globals), laid out as C lays them out and copied when assigned or passed. The
+  core IR gains `stack_slot`.
+- **Raw pointers** (D71): `ptr<T>`, `addr`, `offset`, `data`, `size_of::<T>()` and conversions;
+  unchecked where a language asks, while arrays and references stay checked.
+- **Memory without a collector** (D72): a HIR module that says `memory manual;` roots nothing,
+  never collects, and frees with `free`; garbage-collected programs are unchanged.
+- **C structs by value** (D73): externs take and return structs as each platform's C ABI says
+  (System V x86-64, Windows x64, AArch64 and Apple's), from one implementation in the native backend
+  (`byval`/`sret` in the IR); the interpreter calls such functions (and those of `f32` or more than
+  eight arguments) through thunks compiled in memory, so every mode shares it. HIR externs take and
+  return inline structs and `f32`. `a0_builder_set_struct_param` and `a0_builder_stack_slot` in
+  the C API and Python.
+- **Tin** (`examples/tin`, D74): a C-like systems language: structs as values, `*T`, `&x`, `p->f`,
+  `alloc`/`free`, checked arrays beside unchecked pointers, and C functions called directly. Its
+  programs run in all eight modes; one parses and builds JSON with cJSON (vendored, MIT), one calls
+  C functions of structs in every ABI shape. Language server, debugger and REPL included.
+- `main` may return a sized integer (C's `int main`).
+- The benchmark measures Tin against C.
+
+### Changed
+
+- `HostSymbols` can hold thunks (`add_thunk`, `thunk`, `keep_alive`); `a0_native::add_thunks`; the
+  drivers and the C API add thunks before interpreting.
+- `set_type_syntax` fills in the pointee of pointer types.
+
 ## [0.5.0] - 2026-10-25
 
 Fast to run: programs start at once and run at native speed in every mode, and the gaps the
@@ -236,7 +273,9 @@ three example languages, editor support and a C API.
   IR, the HIR, editors and the C API; design decisions and milestone summaries.
 - **CI** on x86-64 and aarch64 Linux, aarch64 macOS and x86-64 Windows, with rustfmt and clippy.
 
-[Unreleased]: https://github.com/Dan-k391/a0/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/Dan-k391/a0/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/Dan-k391/a0/compare/v0.5.0...v0.6.0
+[0.5.0]: https://github.com/Dan-k391/a0/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/Dan-k391/a0/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/Dan-k391/a0/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/Dan-k391/a0/compare/v0.1.0...v0.2.0

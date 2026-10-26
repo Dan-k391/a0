@@ -228,7 +228,7 @@ x86-64 and aarch64 Linux, aarch64 macOS and x86-64 Windows.
 
 ## Status
 
-Version 0.5.0 (`CHANGELOG.md`). Not yet: cross-compiled executables (object files for other
+Version 0.6.0 (`CHANGELOG.md`). Not yet: cross-compiled executables (object files for other
 targets work), compiling languages to WebAssembly (A0 itself runs there, in the playground),
 variables in native debug information and PDB for Windows' debuggers (`lang dap` covers both),
 aarch64 Windows. A0 is MIT-licensed.
