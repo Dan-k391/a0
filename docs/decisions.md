@@ -1047,3 +1047,15 @@ need to be found and promoted), and concurrent marking (a write barrier in every
 change a generational collector needs, left for v0.9 with it). Allocation-heavy threads contend on
 the heap lock; per-thread allocation buffers would remove most of that and are recorded as an open
 question rather than done now.
+
+## D77. aarch64-windows through a patched cranelift-object
+
+v0.8 asks for aarch64-windows if Cranelift supports it. Cranelift does (its AArch64 backend emits
+Windows ARM64 unwind information, and Windows on ARM64 passes arguments as AAPCS64 does); what
+failed was `cranelift-object` 0.137, which writes no COFF relocations for the `adrp`/`add` pair
+every reference to data uses, though COFF defines both (`IMAGE_REL_ARM64_PAGEBASE_REL21`,
+`IMAGE_REL_ARM64_PAGEOFFSET_12A`). The choices were to wait for upstream, to write our own object
+module for this one target, or to carry the two-line fix. A0 carries it: a copy of the crate in
+`vendor/` with the mapping (marked `A0:`), used through `[patch.crates-io]`, listed with its reason
+in `vendor/README.md`, to be dropped when a release has the fix. CI builds and tests A0 natively on
+GitHub's Windows ARM64 runners, so the target is checked like the others, the JIT included.
