@@ -49,7 +49,8 @@ LLVM's tutorial, is about 580 lines including its grammar and is what the tutori
 closures and nullable references, is about 1000, and [`json`](examples/minnow/json), a JSON tool
 written in it, about 480; [Lox](examples/lox), from *Crafting Interpreters*, passes all 241 tests
 of the official suite (and has exceptions as an extension), and its native programs run faster
-than they did with a hand-written C runtime.
+than clox, the book's own bytecode virtual machine, on all of the book's benchmarks
+([docs/benchmarks.md](docs/benchmarks.md)).
 
 ```
 // examples/minnow/tests/programs/closures.mn
@@ -140,7 +141,7 @@ By hand:
    `repl`, renders diagnostics and maps errors to your exit codes.
 
 A0 is not published on crates.io; depend on it from git (`a0-hir = { git =
-"https://github.com/Dan-k391/a0", tag = "v0.4.0" }`) or work inside this repository.
+"https://github.com/Dan-k391/a0", tag = "v0.5.0" }`) or work inside this repository.
 
 ## Documentation
 
@@ -223,7 +224,7 @@ x86-64 and aarch64 Linux, aarch64 macOS and x86-64 Windows.
 
 ## Status
 
-Version 0.4.0 (`CHANGELOG.md`). Not yet: cross-compiled executables (object files for other
+Version 0.5.0 (`CHANGELOG.md`). Not yet: cross-compiled executables (object files for other
 targets work), compiling languages to WebAssembly (A0 itself runs there, in the playground),
 variables in native debug information and PDB for Windows' debuggers (`lang dap` covers both),
 aarch64 Windows. A0 is MIT-licensed.

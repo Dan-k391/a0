@@ -5,7 +5,7 @@ repl` for a language defined by its grammar, `python lang.py repl` for one writt
 
 ```
 $ minnow repl
-minnow 0.4.0 (A0): :help for help, :quit to leave
+minnow 0.5.0 (A0): :help for help, :quit to leave
 > let x = 20;
 > fn twice(n: int) -> int {
 .   return n * 2;

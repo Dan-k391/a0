@@ -890,6 +890,61 @@ Nothing in A0 changed for the benchmark. What it found along the way:
 - The collector marks the whole live heap at each collection: half of Lox's `binary_trees` time,
   41% of Minnow's `binarytrees`.
 
+## M23. v0.5: fast to run
+
+**Done**
+
+- `lang run` runs at native speed with no linking (D63): the native backend's lowering is generic
+  over Cranelift's module, so its JIT loads exactly what an executable holds, trace tables
+  included. `lang run`, `a0 run`, the REPL and Python's driver use it; `A0_INTERP=1` interprets.
+  Kaleidoscope's `mandel` runs in 283 ms with `run` (8.2 s interpreted before); Minnow's programs
+  run in the JIT as fast as linked. The interpreter stays the reference and the debugger's engine.
+  The differential tests run eight ways (interpreted, JIT, JIT under GC stress, native, each
+  optimized and not), the Lox suite's 241 tests included.
+- Less time in the collector (D64), cheapest first: 16-byte object headers (32 before), marking
+  that prefetches headers through a short queue, and a heap three times what survives a collection.
+  Minnow's `binarytrees`: collector 101 → 65 ms; Lox's `binary_trees`: 780 → 139 ms, with the
+  objects below.
+- Arrays (D65): `filled(n, v)` allocates at a size, and `array<bool>` keeps a byte per element
+  (lowering strides by one; C sees a `bool *`). The sieve: 84 → 46 ms, clang -O0's speed, 16 → 2 MB.
+- Fast names for dynamic languages (D66): the HIR type `object` (`has_field`, `field`,
+  `set_field`, `field_names`), whose names are interned and whose objects share shapes; lowering
+  keeps a cache at every place that names a field with a literal, so a hit is a comparison and a
+  load. Lox keeps fields and methods in objects and calls methods without binding them. Native Lox
+  now beats clox on all six benchmarks (`zoo` 274 → 110 ms against clox's 163; `method_call` 142 →
+  81 against 118; `invocation` 284 → 173 against 171; `binary_trees` 1546 → 480 against 1673).
+- Python languages get the language server, the debugger and every other driver command (D67): the
+  C API binds `a0_driver::Language` with a compile callback, and Python's driver is a thin layer
+  over it. Pebble's server and debugger are tested with the driver's clients.
+- The standard library has source spans (D68): its modules are built-in sources every `SourceMap`
+  knows, so diagnostics point into it, traces show its lines, and go-to-definition and the
+  debugger open a copy of it.
+- The benchmark (`docs/benchmarks.md`) adds LLVM's standard -O2 pipeline, run on the whole
+  Kaleidoscope program, and A0's JIT. LLVM -O2 is 2.2–3 times faster than A0 on Kaleidoscope; the
+  tutorial's passes 1.6 times slower on `mandel`.
+
+**Changed**
+
+- An object's type is 8 bytes before it (generated code and the debugger read it there).
+- `HostSymbols` lives in `a0-runtime`; `a0_ir::referenced_externs`; `Language::run_status`; the C
+  API depends on `a0-driver` (the layer table says so); `a0_jit_run`, `a0_language_*`,
+  `a0_hir_new_object`.
+- The optimizer propagates string literals. Lowering describes every struct and enum for the
+  debugger, so `any` values holding them show their fields.
+- Python's `a0.driver` is the Rust driver: its REPL and commands are no longer Python code.
+
+**Open questions**
+
+- The collector still marks the whole live heap at each collection; a generational one needs a
+  write barrier (two lowering helpers and the runtime's array and map stores, it turned out) and is
+  left for when large programs need it (v0.9).
+- Shapes and interned names live as long as the program; a program that makes up field names from
+  data should use maps. A dictionary mode for objects with many fields is not there yet.
+- The JIT gives `lang run` no native debug information; `lang dap` debugs in the interpreter.
+- Python languages compile one file; `Modules` (several files) takes Rust functions.
+- LLVM's -O2 runs Kaleidoscope 2–3 times faster than Cranelift's code: inlining across the whole
+  program and loop optimizations, which A0 leaves to Cranelift (D27).
+
 ## Overall open questions
 
 None at the moment.

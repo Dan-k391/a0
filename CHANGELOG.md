@@ -6,11 +6,45 @@ APIs. `docs/milestones.md` has the details of each step, with measurements.
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-25
+
+Fast to run: programs start at once and run at native speed in every mode, and the gaps the
+benchmark found are closed. Milestone M23 in `docs/milestones.md`.
+
 ### Added
 
-- **A benchmark** (`docs/benchmarks.md`, `bench/run.py`): Kaleidoscope against LLVM's tutorial,
-  Minnow against C (clang -O0 and -O2) and Go, Lox against clox; compile and run times with the
-  optimizer on and off, medians of repeated runs, every tool's version, and where A0 loses and why.
+- **A JIT** (D63): `lang run`, `a0 run`, the REPL and Python's driver compile the program into
+  memory with Cranelift and run it at native speed, with no linking; the code, the traces and the
+  errors are an executable's. `A0_INTERP=1` interprets; the interpreter stays the reference and the
+  debugger's engine. `a0_native::run_main`, `a0_jit_run` in the C API, `Module.run_jit` in Python.
+- **Dynamic objects** (D66): the HIR type `object`, with `has_field`, `field`, `set_field` and
+  `field_names`, for dynamically typed languages. Names are interned, objects built alike share a
+  shape, and every place that names a field with a literal keeps a cache, so a field is a
+  comparison and a load away. Lox's instances and classes use them, and method calls no longer
+  allocate a bound method.
+- **Arrays at a size and compact booleans** (D65): `filled(n, v)`; `array<bool>` keeps a byte per
+  element (C sees a `bool *`).
+- **The language server and the debugger for languages in Python** (D67): the driver is bound in
+  the C API (`a0_language_new`, `a0_language_main`) with a compile callback, and Python's
+  `a0.driver.main` runs it, so Python languages have every command of Rust ones.
+- **Source spans for the standard library** (D68): its modules are built-in sources (`<std>/fs.hir`)
+  that every `SourceMap` knows; diagnostics point into it, traces show its lines, and
+  go-to-definition and the debugger open a copy of it.
+- **The benchmark** (`docs/benchmarks.md`, `bench/run.py`): Kaleidoscope against LLVM's tutorial
+  and LLVM's standard -O2 pipeline, Minnow against C (clang -O0 and -O2) and Go, Lox against clox;
+  compile and run times natively, in the JIT and interpreted, with the optimizer on and off.
+
+### Changed
+
+- The collector spends far less time on allocation-heavy programs (D64): object headers are 16
+  bytes instead of 32 (an object's type is 8 bytes before it, which generated code reads), marking
+  prefetches, and the heap grows to three times what survives a collection.
+- The differential tests run eight ways: interpreted, in the JIT, in the JIT under GC stress, and
+  native, each optimized and not.
+- `HostSymbols` moved to `a0-runtime` (re-exported by `a0-interp`); `a0_ir::referenced_externs`;
+  `Language::run_status`; the C API depends on `a0-driver`.
+- The optimizer propagates string literals; lowering describes every struct and enum for the
+  debugger, so `any` values holding them show their fields.
 
 ## [0.4.0] - 2026-10-25
 
