@@ -43,6 +43,45 @@ TRIVIAL = {
 }
 
 
+# LLVM's tutorial with its four function passes replaced by LLVM's standard -O2 pipeline, run on
+# one module that holds the whole program: the tutorial gives each definition a module of its own,
+# which would hide every callee from the inliner. The benchmark's programs end with their only
+# top-level expression, so the program is optimized and compiled at once when it comes.
+TOY_O2 = [
+    # Definitions stay in the module of the whole program.
+    ("""      ExitOnErr(TheJIT->addModule(
+          ThreadSafeModule(std::move(TheModule), std::move(TheContext))));
+      InitializeModuleAndManagers();
+""", ""),
+    ("""    TheFPM->run(*TheFunction, *TheFAM);
+""", ""),
+    ("""      auto TSM = ThreadSafeModule(std::move(TheModule), std::move(TheContext));""",
+     """      {
+        PassBuilder PB;
+        LoopAnalysisManager LAM;
+        FunctionAnalysisManager FAM;
+        CGSCCAnalysisManager CGAM;
+        ModuleAnalysisManager MAM;
+        PB.registerModuleAnalyses(MAM);
+        PB.registerCGSCCAnalyses(CGAM);
+        PB.registerFunctionAnalyses(FAM);
+        PB.registerLoopAnalyses(LAM);
+        PB.crossRegisterProxies(LAM, FAM, CGAM, MAM);
+        PB.buildPerModuleDefaultPipeline(OptimizationLevel::O2).run(*TheModule, MAM);
+      }
+      auto TSM = ThreadSafeModule(std::move(TheModule), std::move(TheContext));"""),
+]
+
+
+def toy_o2(source):
+    """The tutorial's toy.cpp with LLVM's -O2 pipeline (TOY_O2)."""
+    for old, new in TOY_O2:
+        if old not in source:
+            raise RuntimeError(f"toy.cpp has changed; cannot find:\n{old}")
+        source = source.replace(old, new, 1)
+    return source
+
+
 def sh(cmd, **kw):
     return subprocess.run(cmd, check=True, capture_output=True, text=True, **kw)
 
@@ -138,6 +177,10 @@ def main():
     toy_build = ["clang++", "-O2", "-rdynamic", f"-I{toy_dir / 'include'}", str(toy_dir / "toy.cpp"),
                  *llvm_flags, "-o", toy]
     sh(toy_build)
+    (toy_dir / "toy_o2.cpp").write_text(toy_o2((toy_dir / "toy.cpp").read_text()))
+    toy2 = str(WORK / "kaleidoscope-llvm-O2")
+    sh(["clang++", "-O2", "-rdynamic", f"-I{toy_dir / 'include'}", str(toy_dir / "toy_o2.cpp"),
+        *llvm_flags, "-o", toy2])
 
     report = []
     w = report.append
@@ -153,7 +196,8 @@ def main():
     w(f"- A0: {git}, {first_line(['rustc', '--version'])}, Cranelift 0.137, release build")
     w(f"- {first_line(['clang', '--version'])}")
     w(f"- `cc`, which A0 links with: {first_line(['cc', '--version'])}")
-    w(f"- LLVM {llvm_version} (the Kaleidoscope tutorial, chapter 7, built with `clang++ -O2`)")
+    w(f"- LLVM {llvm_version} (the Kaleidoscope tutorial, chapter 7, built with `clang++ -O2`; and the "
+      f"same with LLVM's -O2 pipeline on the whole program)")
     w(f"- {first_line(['go', 'version'])}")
     w(f"- clox at craftinginterpreters {CLOX_COMMIT[:12]}, built with `clang {' '.join(clox_flags)}`")
     w(f"- Times are medians of {runs} runs (wall clock); compile times include linking.\n")
@@ -166,8 +210,8 @@ def main():
     loc_llvm = code_lines([toy_dir / "toy.cpp", toy_dir / "include" / "KaleidoscopeJIT.h"], ["//"])
     w(f"Lines of code (without blank lines and comments): A0's Kaleidoscope {loc_a0} (grammar, "
       f"compiler, driver, runtime); LLVM's chapter 7 {loc_llvm} (`toy.cpp` and `KaleidoscopeJIT.h`).\n")
-    w("| Program | A0 build | no HIR optimizer | A0 native run | no HIR optimizer | A0 interpreted | LLVM JIT: startup and compile | LLVM JIT: run |")
-    w("|---|---|---|---|---|---|---|---|")
+    w("| Program | A0 build | no HIR optimizer | A0 native run | no HIR optimizer | A0 JIT (`run`) | A0 interpreted | LLVM JIT: startup and compile | LLVM JIT: run | LLVM -O2: startup and compile | LLVM -O2: run |")
+    w("|---|---|---|---|---|---|---|---|---|---|---|")
     for prog in ["fib", "mandel"]:
         src = BENCH / "kaleidoscope" / f"{prog}.k"
         exe = str(WORK / f"k-{prog}")
@@ -175,7 +219,9 @@ def main():
         build0, _ = timed([kaleidoscope, "build", str(src), "-o", exe + "-noopt"], runs, env={"A0_OPT": "0"})
         run, out = timed([exe], runs)
         run0, _ = timed([exe + "-noopt"], runs, expect=out)
-        interp, _ = timed([kaleidoscope, "run", str(src)], max(1, runs // 2), expect=out)
+        jit, _ = timed([kaleidoscope, "run", str(src)], runs, expect=out)
+        interp, _ = timed([kaleidoscope, "run", str(src)], max(1, runs // 2), expect=out,
+                          env={"A0_INTERP": "1"})
         # LLVM's tutorial reads the program from standard input, compiles each top-level
         # expression with its JIT as it comes and runs it; printd writes to standard error. The
         # same program with the same calls doing no work gives startup and compilation, the rest
@@ -185,14 +231,16 @@ def main():
         assert trivial != text.strip() + "\n", prog
         full = timed_toy(toy, text, runs, expect=out.strip())
         empty = timed_toy(toy, trivial, runs)
-        w(f"| {prog} | {ms(build)} | {ms(build0)} | {ms(run)} | {ms(run0)} | {ms(interp)} | {ms(empty)} | "
-          f"{ms(max(full - empty, 0))} |")
+        full2 = timed_toy(toy2, text, runs, expect=out.strip())
+        empty2 = timed_toy(toy2, trivial, runs)
+        w(f"| {prog} | {ms(build)} | {ms(build0)} | {ms(run)} | {ms(run0)} | {ms(jit)} | {ms(interp)} | "
+          f"{ms(empty)} | {ms(max(full - empty, 0))} | {ms(empty2)} | {ms(max(full2 - empty2, 0))} |")
     w("")
 
     # Minnow against C and Go.
     w("## Minnow against C and Go\n")
-    w("| Program | Minnow build | no HIR optimizer | clang -O0 | clang -O2 | go build | Minnow run | no HIR optimizer | clang -O0 | clang -O2 | Go |")
-    w("|---|---|---|---|---|---|---|---|---|---|---|")
+    w("| Program | Minnow build | no HIR optimizer | clang -O0 | clang -O2 | go build | Minnow run | no HIR optimizer | Minnow JIT (`run`) | clang -O0 | clang -O2 | Go |")
+    w("|---|---|---|---|---|---|---|---|---|---|---|---|")
     for prog in NATIVE:
         mn = BENCH / "minnow" / f"{prog}.mn"
         exe = str(WORK / f"mn-{prog}")
@@ -208,8 +256,9 @@ def main():
         r_go, _ = timed([str(WORK / f"go-{prog}")], runs, expect=out)
         r_mn, _ = timed([exe], runs, expect=out)
         r_mn0, _ = timed([exe + "-noopt"], runs, expect=out)
+        r_jit, _ = timed([minnow, "run", str(mn)], runs, expect=out)
         w(f"| {prog} | {ms(b_mn)} | {ms(b_mn0)} | {ms(b_c0)} | {ms(b_c2)} | {ms(b_go)} | {ms(r_mn)} | "
-          f"{ms(r_mn0)} | {ms(r_c0)} | {ms(r_c2)} | {ms(r_go)} |")
+          f"{ms(r_mn0)} | {ms(r_jit)} | {ms(r_c0)} | {ms(r_c2)} | {ms(r_go)} |")
     w("")
     w(f"A0's collector in `binarytrees` (`A0_GC_STATS=1`): {gc_stats(str(WORK / 'mn-binarytrees'))}.\n")
 
@@ -239,8 +288,8 @@ def main():
 
     # Lox against clox.
     w("## Lox: A0 against clox\n")
-    w("| Program | A0 build | no HIR optimizer | A0 native run | no HIR optimizer | A0 interpreted | clox |")
-    w("|---|---|---|---|---|---|---|")
+    w("| Program | A0 build | no HIR optimizer | A0 native run | no HIR optimizer | A0 JIT (`lox file`) | A0 interpreted | clox |")
+    w("|---|---|---|---|---|---|---|---|")
     suite = ROOT / "examples/lox/tests/craftinginterpreters/test/benchmark"
     for prog in LOX_PROGRAMS:
         src = suite / f"{prog}.lox"
@@ -251,12 +300,13 @@ def main():
         # The programs print the time they took; the rest must agree.
         r_native, mine = timed([exe], runs)
         r_native0, mine0 = timed([exe + "-noopt"], runs)
-        r_interp, mine_i = timed([lox, str(src)], max(1, runs // 2))
-        for o in (mine, mine0, mine_i):
+        r_jit, mine_j = timed([lox, str(src)], runs)
+        r_interp, mine_i = timed([lox, str(src)], max(1, runs // 2), env={"A0_INTERP": "1"})
+        for o in (mine, mine0, mine_j, mine_i):
             if without_times(o) != without_times(out):
                 raise RuntimeError(f"A0's Lox printed\n{o}\ninstead of\n{out}")
-        w(f"| {prog} | {ms(build)} | {ms(build0)} | {ms(r_native)} | {ms(r_native0)} | {ms(r_interp)} | "
-          f"{ms(r_clox)} |")
+        w(f"| {prog} | {ms(build)} | {ms(build0)} | {ms(r_native)} | {ms(r_native0)} | {ms(r_jit)} | "
+          f"{ms(r_interp)} | {ms(r_clox)} |")
     w("")
     w(f"A0's collector in `binary_trees` (`A0_GC_STATS=1`): {gc_stats(str(WORK / 'lox-binary_trees'))}.\n")
 
