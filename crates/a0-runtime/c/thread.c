@@ -346,6 +346,8 @@ uint64_t a0_thread_join(uint64_t handle, uint64_t loc, void *frame) {
 
 int64_t a0_thread_started(void) { return a0_threads_active; }
 
+int64_t a0_thread_id(void) { return self != NULL ? self->id : 1; }
+
 int64_t a0_thread_parallelism(void) {
 #if defined(A0_NO_THREADS)
     return 1;

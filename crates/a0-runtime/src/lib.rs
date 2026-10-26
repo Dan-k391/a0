@@ -21,6 +21,7 @@ unsafe extern "C" {
     fn a0_rt_set_thread_starter(starter: Option<extern "C" fn(*mut c_void) -> u64>);
     fn a0_rt_set_thread_stack(bytes: u64);
     fn a0_thread_started() -> i64;
+    fn a0_thread_id() -> i64;
     fn a0_panic(message: *const c_char) -> !;
     pub fn a0_rt_exit(code: i32) -> !;
     pub fn a0_rt_flush();
@@ -283,6 +284,11 @@ pub fn set_thread_starter(starter: extern "C" fn(*mut c_void) -> u64, stack: usi
 /// Whether the program started a second thread (which may still be running).
 pub fn thread_started() -> bool {
     unsafe { a0_thread_started() != 0 }
+}
+
+/// The current thread's number: 1 for the main thread, then 2, 3, ... as the program starts them.
+pub fn thread_id() -> i64 {
+    unsafe { a0_thread_id() }
 }
 
 /// Fails as the runtime does, with `message` and no location.

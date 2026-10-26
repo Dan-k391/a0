@@ -277,6 +277,8 @@ uint64_t a0_thread_join(uint64_t thread, uint64_t loc, void *frame);
 int64_t a0_thread_parallelism(void);
 /* Whether the program ever started a second thread. */
 int64_t a0_thread_started(void);
+/* The current thread's number: 1 for the main thread, then 2, 3, ... in the order started. */
+int64_t a0_thread_id(void);
 /* A channel of `capacity` values (at least 1). */
 uint64_t a0_chan_new(int64_t capacity);
 /* Waits for room; fails on a closed channel. */

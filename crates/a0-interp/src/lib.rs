@@ -53,6 +53,10 @@ pub enum DebugEvent {
     Line,
     /// The program failed ([`Interpreter::debug_failure`]); its calls are still active.
     Failure,
+    /// A thread the program started ([`Interpreter::debug_thread`]) begins, before its first line.
+    ThreadStarted,
+    /// A thread the program started ends.
+    ThreadEnded,
 }
 
 /// A debugger's view of execution. It runs on the interpreter's thread; returning resumes it.
@@ -365,6 +369,8 @@ pub struct Interpreter {
     max_depth: u32,
     /// The debugger, when one is attached (`Interpreter::new_debug`).
     hook: Option<DebugHook>,
+    /// The thread this state runs on: 1 for the main one, then as the runtime numbers them.
+    thread: u32,
     /// Per active call, innermost last, when debugging.
     frames: Vec<DebugFrame>,
     /// Whether the debugger was told of the failure being unwound.
@@ -405,13 +411,21 @@ extern "C" fn start_thread(closure: *mut std::ffi::c_void) -> u64 {
         depth: 0,
         max_depth: program.max_depth,
         hook: program.hook,
+        thread: a0_runtime::thread_id() as u32,
         frames: Vec::new(),
         failure_told: false,
     };
-    match machine.call(FuncId((token - base) as u32), &[closure as u64]) {
+    if let Some(hook) = machine.hook {
+        hook(&machine, DebugEvent::ThreadStarted);
+    }
+    let result = match machine.call(FuncId((token - base) as u32), &[closure as u64]) {
         Ok(result) => result.unwrap_or(0),
         Err(trap) => trap.report_and_exit(),
+    };
+    if let Some(hook) = machine.hook {
+        hook(&machine, DebugEvent::ThreadEnded);
     }
+    result
 }
 
 /// A call as the debugger sees it.
@@ -594,12 +608,19 @@ impl Interpreter {
             max_depth: DEFAULT_MAX_DEPTH,
             slot_memory: Vec::new(),
             hook,
+            thread: 1,
             frames: Vec::new(),
             failure_told: false,
         })
     }
 
     // ---------------------------------------------------------------- debugging
+
+    /// The thread this interpreter runs: 1 for the program's main thread, then 2, 3, ... in the
+    /// order the program started them (as stack traces number them).
+    pub fn debug_thread(&self) -> u32 {
+        self.thread
+    }
 
     /// The number of active calls of defined functions (when debugging).
     pub fn debug_frame_count(&self) -> usize {

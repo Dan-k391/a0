@@ -1,0 +1,65 @@
+// Real parallelism: the primes below a limit, counted by several threads at once, each taking every
+// `workers`-th odd number. `parallel.mn [workers] [limit]`; tests/parallel.rs measures the speedup.
+// expect: primes below 100000: 9592 (4 threads)
+import std.env;
+import std.str;
+import std.thread;
+
+fn is_prime(n: int) -> bool {
+  if n < 2 {
+    return false;
+  }
+  let d = 2;
+  while d * d <= n {
+    if n % d == 0 {
+      return false;
+    }
+    d = d + 1;
+  }
+  return true;
+}
+
+// How many of the odd numbers `3 + 2 * start`, then every `step`-th odd number, below `limit` are
+// prime.
+fn count(start: int, step: int, limit: int) -> int {
+  let found = 0;
+  let n = 3 + 2 * start;
+  while n < limit {
+    if is_prime(n) {
+      found = found + 1;
+    }
+    n = n + 2 * step;
+  }
+  return found;
+}
+
+fn number(args: [string], i: int, default: int) -> int {
+  if len(args) <= i {
+    return default;
+  }
+  return match str.parse_int(args[i]) {
+    Ok(n) => n,
+    Err(e) => default + len(e) * 0,
+  };
+}
+
+fn main() {
+  let args = env.args();
+  let workers = number(args, 0, 4);
+  let limit = number(args, 1, 100000);
+  let threads: [thread.Thread<int>] = [];
+  let k = 0;
+  while k < workers {
+    let start = k;
+    push(threads, thread.spawn(fn() -> int {
+      return count(start, workers, limit);
+    }));
+    k = k + 1;
+  }
+  // 2, the even prime.
+  let total = 1;
+  for t in threads {
+    total = total + thread.join(t);
+  }
+  print("primes below " + str(limit) + ": " + str(total) + " (" + str(workers) + " threads)");
+}

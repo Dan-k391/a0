@@ -37,6 +37,7 @@ const A0Symbol a0_rt_symbols[] = {
     SYM(a0_thread_join),
     SYM(a0_thread_parallelism),
     SYM(a0_thread_started),
+    SYM(a0_thread_id),
     SYM(a0_chan_new),
     SYM(a0_chan_send),
     SYM(a0_chan_recv),

@@ -7,8 +7,13 @@
 //! output becomes `output` events and its standard input is empty (`a0rt.h`, "Debuggers"), since
 //! requests come on standard input. Programs are compiled without the HIR optimizer, so that each
 //! function keeps its frame.
+//!
+//! Threads the program starts are debugged with it: each is listed (1 is the main thread), and
+//! when one stops the others pause at their next line, so that every thread's stack can be shown
+//! (a thread waiting for a channel or another thread shows none until it runs again). Steps belong
+//! to the thread that stopped; continuing lets them all go.
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::io::{BufRead, Write};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
@@ -34,13 +39,29 @@ struct Session {
     stop_on_entry: AtomicBool,
     /// Requests that need the stopped program (stack, variables, steps), for its thread.
     requests: Mutex<Option<Receiver<Json>>>,
-    step: Mutex<Step>,
-    /// The last line reached: its depth, file and line.
-    last: Mutex<Option<(usize, String, u32)>>,
+    /// The step the stopped thread was told to make, and that thread.
+    step: Mutex<(u32, Step)>,
+    /// The last line each thread reached: its depth, file and line.
+    last: Mutex<HashMap<u32, (usize, String, u32)>>,
+    /// The program's threads, by number, with their names.
+    threads: Mutex<BTreeMap<u32, String>>,
+    /// Whether a thread is stopped (the others pause at their next line), and the paused ones.
+    world: (Mutex<bool>, Condvar),
+    paused: Mutex<HashMap<u32, Paused>>,
+    /// One thread is stopped at a time.
+    stopper: Mutex<()>,
     sources: OnceLock<SourceMap>,
     /// Set when the client disconnects, which ends a program that already ended.
     disconnected: (Mutex<bool>, Condvar),
 }
+
+/// A thread waiting while another is stopped: its interpreter, which stays put until it resumes.
+#[derive(Clone, Copy)]
+struct Paused(*const Interpreter);
+
+// SAFETY: a paused thread waits inside the debugger's hook until it is released, so its interpreter
+// is neither moved nor changed while others read it.
+unsafe impl Send for Paused {}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum Step {
@@ -73,8 +94,12 @@ pub fn serve(
         pause: AtomicBool::new(false),
         stop_on_entry: AtomicBool::new(false),
         requests: Mutex::new(Some(requests)),
-        step: Mutex::new(Step::None),
-        last: Mutex::new(None),
+        step: Mutex::new((0, Step::None)),
+        last: Mutex::new(HashMap::new()),
+        threads: Mutex::new(BTreeMap::from([(1, "main".to_string())])),
+        world: (Mutex::new(false), Condvar::new()),
+        paused: Mutex::new(HashMap::new()),
+        stopper: Mutex::new(()),
         sources: OnceLock::new(),
         disconnected: (Mutex::new(false), Condvar::new()),
     };
@@ -144,13 +169,18 @@ pub fn serve(
                 configured = true;
                 respond(&request, Json::object([]));
             }
-            "threads" => respond(
-                &request,
-                Json::object([(
-                    "threads",
-                    vec![Json::object([("id", 1u32.into()), ("name", "main".into())])].into(),
-                )]),
-            ),
+            "threads" => {
+                let threads: Vec<Json> = session()
+                    .threads
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .map(|(&id, name)| {
+                        Json::object([("id", id.into()), ("name", name.as_str().into())])
+                    })
+                    .collect();
+                respond(&request, Json::object([("threads", threads.into())]));
+            }
             "pause" => {
                 session().pause.store(true, Ordering::SeqCst);
                 respond(&request, Json::object([]));
@@ -290,9 +320,28 @@ extern "C" fn program_exit(code: i32) {
     let _ = session().out.lock().unwrap().flush();
 }
 
-/// What the interpreter tells the debugger, on the program's thread.
+/// What the interpreter tells the debugger, on the thread it runs.
 fn on_event(interp: &Interpreter, e: DebugEvent) {
     let s = session();
+    let thread = interp.debug_thread();
+    match e {
+        DebugEvent::ThreadStarted => {
+            s.threads
+                .lock()
+                .unwrap()
+                .insert(thread, format!("thread {thread}"));
+            thread_event("started", thread);
+            return;
+        }
+        DebugEvent::ThreadEnded => {
+            s.threads.lock().unwrap().remove(&thread);
+            s.last.lock().unwrap().remove(&thread);
+            thread_event("exited", thread);
+            return;
+        }
+        _ => {}
+    }
+    wait_while_stopped(interp);
     if e == DebugEvent::Failure {
         let text = interp.debug_failure().unwrap_or_default();
         stop(interp, "exception", Some(&text));
@@ -310,8 +359,8 @@ fn on_event(interp: &Interpreter, e: DebugEvent) {
     let new = {
         let mut last = s.last.lock().unwrap();
         let key = (depth, file.clone(), here.line);
-        let new = last.as_ref() != Some(&key);
-        *last = Some(key);
+        let new = last.get(&thread) != Some(&key);
+        last.insert(thread, key);
         new
     };
     if !new {
@@ -330,11 +379,12 @@ fn on_event(interp: &Interpreter, e: DebugEvent) {
     {
         Some("breakpoint")
     } else {
-        match *s.step.lock().unwrap() {
-            Step::None => None,
-            Step::In => Some("step"),
-            Step::Over(d) if depth <= d => Some("step"),
-            Step::Out(d) if depth < d => Some("step"),
+        match &*s.step.lock().unwrap() {
+            (t, _) if *t != thread => None,
+            (_, Step::None) => None,
+            (_, Step::In) => Some("step"),
+            (_, Step::Over(d)) if depth <= *d => Some("step"),
+            (_, Step::Out(d)) if depth < *d => Some("step"),
             _ => None,
         }
     };
@@ -343,19 +393,57 @@ fn on_event(interp: &Interpreter, e: DebugEvent) {
     }
 }
 
+fn thread_event(reason: &str, thread: u32) {
+    event(
+        "thread",
+        Json::object([("reason", reason.into()), ("threadId", thread.into())]),
+    );
+}
+
+/// Pauses this thread while another one is stopped, where the stopped one can read its calls.
+fn wait_while_stopped(interp: &Interpreter) {
+    let s = session();
+    let (stopped, signal) = &s.world;
+    let mut guard = stopped.lock().unwrap();
+    if !*guard {
+        return;
+    }
+    let thread = interp.debug_thread();
+    s.paused
+        .lock()
+        .unwrap()
+        .insert(thread, Paused(interp as *const Interpreter));
+    while *guard {
+        guard = signal.wait(guard).unwrap();
+    }
+    s.paused.lock().unwrap().remove(&thread);
+}
+
 /// What a variable reference stands for while the program is stopped.
 enum Target {
-    Frame(usize),
+    Frame(u32, usize),
     Value(u64, View),
 }
 
-/// Stops the program: answers requests about it until one resumes it.
+/// Frame ids name the thread and the call (1 for the innermost).
+const FRAMES_PER_THREAD: u32 = 100_000;
+
+/// Stops the program at this thread: answers requests about it until one resumes it.
 fn stop(interp: &Interpreter, reason: &str, text: Option<&str>) {
     let s = session();
-    *s.step.lock().unwrap() = Step::None;
+    let thread = interp.debug_thread();
+    // Another thread may be stopped already: this one waits its turn, readable meanwhile.
+    s.paused
+        .lock()
+        .unwrap()
+        .insert(thread, Paused(interp as *const Interpreter));
+    let _turn = s.stopper.lock().unwrap();
+    s.paused.lock().unwrap().remove(&thread);
+    *s.world.0.lock().unwrap() = true;
+    *s.step.lock().unwrap() = (thread, Step::None);
     let mut body = vec![
         ("reason", reason.into()),
-        ("threadId", 1u32.into()),
+        ("threadId", thread.into()),
         ("allThreadsStopped", true.into()),
     ];
     if let Some(text) = text {
@@ -374,13 +462,34 @@ fn stop(interp: &Interpreter, reason: &str, text: Option<&str>) {
         };
         let args = request.get("arguments");
         let depth = interp.debug_frame_count();
+        // The thread a request is about (by its frame, or as it says), if it can be read.
+        let paused = s.paused.lock().unwrap().clone();
+        let of = |t: u32| -> Option<&Interpreter> {
+            if t == thread {
+                return Some(interp);
+            }
+            // SAFETY: a paused thread's interpreter stays put while it waits (`Paused`).
+            paused.get(&t).map(|p| unsafe { &*p.0 })
+        };
+        let frame_of = |args: &Json| -> (u32, usize) {
+            let id = args.get("frameId").as_u32().unwrap_or(1);
+            // A small id is a call of the stopped thread.
+            if id < FRAMES_PER_THREAD {
+                return (thread, id as usize);
+            }
+            (id / FRAMES_PER_THREAD, (id % FRAMES_PER_THREAD) as usize)
+        };
         match request.get("command").as_str().unwrap_or("") {
             "stackTrace" => {
+                let t = args.get("threadId").as_u32().unwrap_or(thread);
                 // Calls of generated code (the entry that sets the program up) have no lines.
-                let frames: Vec<Json> = (0..depth)
-                    .filter(|&i| i == 0 || interp.debug_frame_location(i) != 0)
-                    .map(|i| stack_frame(interp, i))
-                    .collect();
+                let frames: Vec<Json> = match of(t) {
+                    Some(it) => (0..it.debug_frame_count())
+                        .filter(|&i| i == 0 || it.debug_frame_location(i) != 0)
+                        .map(|i| stack_frame(it, t, i))
+                        .collect(),
+                    None => Vec::new(),
+                };
                 let depth = frames.len();
                 respond(
                     &request,
@@ -391,8 +500,9 @@ fn stop(interp: &Interpreter, reason: &str, text: Option<&str>) {
                 );
             }
             "scopes" => {
-                let frame = frame_index(args, depth);
-                targets.push(Target::Frame(frame));
+                let (t, i) = frame_of(args);
+                let frame = of(t).map_or(0, |it| frame_index(i, it.debug_frame_count()));
+                targets.push(Target::Frame(t, frame));
                 let reference = targets.len() as u32;
                 let scope = Json::object([
                     ("name", "Locals".into()),
@@ -406,7 +516,7 @@ fn stop(interp: &Interpreter, reason: &str, text: Option<&str>) {
                 let reference = args.get("variablesReference").as_u32().unwrap_or(0) as usize;
                 let items: Vec<(String, u64, View)> =
                     match reference.checked_sub(1).and_then(|i| targets.get(i)) {
-                        Some(&Target::Frame(i)) => locals(interp, i),
+                        Some(&Target::Frame(t, i)) => of(t).map_or(Vec::new(), |it| locals(it, i)),
                         Some(&Target::Value(w, view)) => values::parts(interp.module(), w, view),
                         None => Vec::new(),
                     };
@@ -418,11 +528,12 @@ fn stop(interp: &Interpreter, reason: &str, text: Option<&str>) {
             }
             "evaluate" => {
                 let name = args.get("expression").as_str().unwrap_or("").trim();
-                let frame = frame_index(args, depth);
-                match locals(interp, frame)
-                    .into_iter()
-                    .find(|(n, _, _)| n == name)
-                {
+                let (t, i) = frame_of(args);
+                let found = of(t).and_then(|it| {
+                    let frame = frame_index(i, it.debug_frame_count());
+                    locals(it, frame).into_iter().find(|(n, _, _)| n == name)
+                });
+                match found {
                     Some((_, w, view)) => {
                         let v = variable(interp, &mut targets, name, w, view);
                         respond(
@@ -438,12 +549,16 @@ fn stop(interp: &Interpreter, reason: &str, text: Option<&str>) {
                 }
             }
             command @ ("continue" | "next" | "stepIn" | "stepOut") => {
-                *s.step.lock().unwrap() = match command {
+                let step = match command {
                     "next" => Step::Over(depth),
                     "stepIn" => Step::In,
                     "stepOut" => Step::Out(depth),
                     _ => Step::None,
                 };
+                *s.step.lock().unwrap() = (thread, step);
+                // The paused threads go on too.
+                *s.world.0.lock().unwrap() = false;
+                s.world.1.notify_all();
                 let body = if command == "continue" {
                     Json::object([("allThreadsContinued", true.into())])
                 } else {
@@ -457,16 +572,16 @@ fn stop(interp: &Interpreter, reason: &str, text: Option<&str>) {
     }
 }
 
-fn frame_index(args: &Json, depth: usize) -> usize {
-    let id = args.get("frameId").as_u32().unwrap_or(1) as usize;
-    id.saturating_sub(1).min(depth.saturating_sub(1))
+/// The call a frame id's call number names (1 for the innermost), within `depth` calls.
+fn frame_index(call: usize, depth: usize) -> usize {
+    call.saturating_sub(1).min(depth.saturating_sub(1))
 }
 
-fn stack_frame(interp: &Interpreter, i: usize) -> Json {
+fn stack_frame(interp: &Interpreter, thread: u32, i: usize) -> Json {
     let m = interp.module();
     let f = interp.debug_frame_function(i);
     let fallback = m.func_trace_name(f).unwrap_or(m.func_name(f)).to_string();
-    let mut frame = vec![("id", (i as u32 + 1).into())];
+    let mut frame = vec![("id", (thread * FRAMES_PER_THREAD + i as u32 + 1).into())];
     match interp.debug_location(interp.debug_frame_location(i)) {
         Some(l) if l.line != 0 => {
             frame.push(("name", l.func.as_str().into()));
@@ -733,7 +848,12 @@ impl Client {
 
     /// The stack of the stopped program, innermost first: each frame's name and line.
     pub fn stack(&mut self) -> Vec<(String, u32)> {
-        let r = self.request("stackTrace", Json::object([("threadId", 1u32.into())]));
+        self.stack_of(1)
+    }
+
+    /// The stack of thread `thread` (1 is the main one): function names and lines, innermost first.
+    pub fn stack_of(&mut self, thread: u32) -> Vec<(String, u32)> {
+        let r = self.request("stackTrace", Json::object([("threadId", thread.into())]));
         r.get("body")
             .get("stackFrames")
             .as_array()
@@ -741,6 +861,20 @@ impl Client {
             .map(|f| {
                 let name = f.get("name").as_str().unwrap_or("").to_string();
                 (name, f.get("line").as_u32().unwrap_or(0))
+            })
+            .collect()
+    }
+
+    /// The program's threads: their numbers and names.
+    pub fn threads(&mut self) -> Vec<(u32, String)> {
+        let r = self.request("threads", Json::object([]));
+        r.get("body")
+            .get("threads")
+            .as_array()
+            .iter()
+            .map(|t| {
+                let id = t.get("id").as_u32().unwrap_or(0);
+                (id, t.get("name").as_str().unwrap_or("").to_string())
             })
             .collect()
     }

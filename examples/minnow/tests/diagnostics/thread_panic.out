@@ -1,0 +1,10 @@
+$ minnow run thread_panic.mn
+--- stderr
+panic: index out of bounds: the length is 3 but the index is 7
+    at check (thread_panic.mn:5:10)
+    at main::{closure} (thread_panic.mn:11:12)
+    at std.thread.spawn<int>::{closure} (<std>/thread.hir:23:54)
+    in thread 2, spawned
+    at std.thread.spawn<int> (<std>/thread.hir:23:24)
+    at main (thread_panic.mn:10:11)
+--- exit 101

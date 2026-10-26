@@ -1,0 +1,14 @@
+// A panic on a spawned thread ends the program: its trace ends where the thread was spawned.
+import std.thread;
+
+fn check(xs: [int], i: int) -> int {
+  return xs[i];
+}
+
+fn main() {
+  let xs = [1, 2, 3];
+  let t = thread.spawn(fn() -> int {
+    return check(xs, 7);
+  });
+  print(thread.join(t));
+}
