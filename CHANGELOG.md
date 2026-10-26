@@ -14,11 +14,36 @@ APIs. `docs/milestones.md` has the details of each step, with measurements.
   file take the package, `update` refreshes the lock file and `--locked` refuses to change it.
   The language server and the debugger resolve imports through packages. Builds are reproducible,
   byte for byte. New diagnostic codes `E5001`–`E5006`.
+- **Fast builds of large programs** (D82): a 100,000-line program builds in about half the time
+  (the lexer runs a DFA, the HIR optimizer is linear, the location table is interned), and large
+  programs compile into several objects at once on the machine's processors. `A0_TIME=1` prints
+  how long each stage takes; `A0_CODEGEN_UNITS=n` sets the number of objects.
+- **Fuzzing** (D85): IR and HIR text, grammars with their programs, the C API and manifests are
+  fuzzed in the test suite, from the corpus (`A0_FUZZ_ITERATIONS`, `A0_FUZZ_SEED` to run longer).
+- **Inlining of known closures** (D84): a call of a closure through a local that always holds it,
+  such as the parameter of an inlined `fold(xs, 0, fn(a, b) { a + b })`, is inlined; such code
+  runs about 2.8 times faster.
+- `bench/large/` generates a large package and measures building it and the language server on it;
+  the benchmark gains a `closures` program.
 
 ### Changed
 
 - A module's imports resolve from its package's source directory, so a file analyzed on its own
   (in the editor) resolves them as the build does. MSVC and lld-link link with `/Brepro`.
+- The language server keeps each file's syntax tree and index between analyses and reuses those of
+  files that did not change.
+- Drivers and `a0` compile on a thread with a 1 GB stack, and the parser stops at 10,000 levels of
+  nesting with `E0003` instead of overflowing the stack (D83).
+- The HIR builder makes types with the right number of type arguments even when given the wrong
+  number (it still reports it), and the checker rejects a closure made outside the body it was
+  declared in.
+
+### Fixed
+
+- Rendering a diagnostic whose span starts or ends inside a multi-byte character panicked.
+- `a0_hir_set_struct_inline` and the IR builder's `func_addr` and `global_addr` did not check
+  their handles; a type parameter used outside its item, or a closure whose body makes the closure,
+  crashed the compiler instead of being reported.
 
 ## [0.8.0] - 2026-10-26
 

@@ -473,11 +473,19 @@ impl Builder {
 
     /// The address of a function.
     pub fn func_addr(&mut self, f: FuncId) -> Value {
+        if f.is_none() || f.index() >= self.module.funcs.len() {
+            self.error("func_addr called with an invalid function");
+            return self.null();
+        }
         self.inst(Opcode::Addr, &[], Symbol::func(f).to_imm(), Some(Type::Ptr))
     }
 
     /// The address of a `data` or `global` item.
     pub fn global_addr(&mut self, g: GlobalId) -> Value {
+        if g.is_none() || g.index() >= self.module.globals.len() {
+            self.error("global_addr called with an invalid global");
+            return self.null();
+        }
         self.inst(
             Opcode::Addr,
             &[],

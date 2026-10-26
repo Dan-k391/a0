@@ -30,8 +30,14 @@ pub struct Span {
 }
 
 impl Span {
+    /// A span from `start` to `end`; an `end` before `start` (a host's mistake through the C API)
+    /// is taken as `start`.
     pub fn new(source: SourceId, start: u32, end: u32) -> Span {
-        Span { source, start, end }
+        Span {
+            source,
+            start,
+            end: end.max(start),
+        }
     }
 
     /// The smallest span covering both `self` and `other` (which must share a source).
@@ -44,7 +50,7 @@ impl Span {
     }
 
     pub fn len(self) -> u32 {
-        self.end - self.start
+        self.end.saturating_sub(self.start)
     }
 
     pub fn is_empty(self) -> bool {
@@ -166,7 +172,9 @@ impl SourceMap {
 
     /// The text covered by `span`.
     pub fn slice(&self, span: Span) -> &str {
-        &self.text(span.source)[span.start as usize..span.end as usize]
+        let text = self.text(span.source);
+        let start = text.floor_char_boundary(span.start as usize);
+        &text[start..text.ceil_char_boundary((span.end as usize).max(start))]
     }
 
     /// 1-based line number of a byte offset.
@@ -182,7 +190,8 @@ impl SourceMap {
     pub fn line_col(&self, id: SourceId, offset: u32) -> (u32, u32) {
         let line = self.line(id, offset);
         let start = self.file(id).line_starts[line as usize - 1];
-        let text = &self.text(id)[start as usize..offset as usize];
+        let text = self.text(id);
+        let text = &text[start as usize..text.floor_char_boundary(offset as usize)];
         (line, text.chars().count() as u32 + 1)
     }
 

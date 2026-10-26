@@ -1266,4 +1266,80 @@ mod tests {
         assert!(url_key("https://example.com/x/http.git").starts_with("http-"));
         assert_ne!(url_key("a/http"), url_key("b/http"));
     }
+
+    #[test]
+    fn mutated_manifests_never_panic() {
+        // Manifests and lock files are input like any other (D84): mutations of valid ones must
+        // give a manifest or diagnostics that render, never a panic. A0_FUZZ_ITERATIONS sets how
+        // many (crates/a0/tests/fuzz.rs fuzzes the other inputs).
+        let seeds = [
+            "# an app\n[package]\nname = \"app\"  # its name\nversion = \"0.1.0\"\nmain = \"src/main.mn\"\n\n\
+             [dependencies]\njson = { path = \"../json\" }\n\
+             http = { git = \"https://example.com/http.git\", tag = \"v1\" }\n\
+             util = { git = \"u\", branch = \"main\" }\nx = { git = \"u\", rev = \"abc\" }\n",
+            "[package]\nname = \"lib\"\nlib = \"src/lib.mn\"\nflags = [1, true, \"s\", [], {}]\n",
+            "# generated\n[git]\n\"https://x/a.git#tag=v1\" = \"abc\"\n",
+        ];
+        let words = [
+            "[",
+            "]",
+            "{",
+            "}",
+            "\"",
+            "=",
+            ",",
+            "#",
+            "\n",
+            "\\",
+            "\\u{1F600}",
+            "\\x",
+            "é",
+            "0",
+            "-1",
+            "true",
+            "package",
+            "dependencies",
+            "path",
+            "git",
+            "[[",
+            "]]",
+            "'",
+            ".",
+        ];
+        let iterations: u64 = std::env::var("A0_FUZZ_ITERATIONS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(3000);
+        let mut state = 0x2545_F491_4F6C_DD1Du64;
+        let mut next = |n: usize| {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            (state % n.max(1) as u64) as usize
+        };
+        for _ in 0..iterations {
+            let mut text = seeds[next(seeds.len())].to_string();
+            for _ in 0..1 + next(3) {
+                let at = text.floor_char_boundary(next(text.len() + 1));
+                let end = text.ceil_char_boundary(at + next(12));
+                match next(4) {
+                    0 => text.replace_range(at..end, ""),
+                    1 => text.insert_str(at, words[next(words.len())]),
+                    2 => {
+                        let piece = text[at..end].to_string();
+                        text.insert_str(text.floor_char_boundary(next(text.len() + 1)), &piece);
+                    }
+                    _ => text.replace_range(at..end, words[next(words.len())]),
+                }
+            }
+            let mut sources = SourceMap::new();
+            let id = sources.add("m.toml", &text);
+            let result = std::panic::catch_unwind(|| {
+                if let Err(d) = parse_manifest(&text, id, Path::new("/p/app")) {
+                    d.render(&sources);
+                }
+            });
+            assert!(result.is_ok(), "panicked on {text:?}");
+        }
+    }
 }

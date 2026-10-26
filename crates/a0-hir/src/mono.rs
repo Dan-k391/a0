@@ -181,8 +181,17 @@ impl Mono<'_> {
             // A finished module has no inference variables; this is not reached.
             TypeKind::Var(_) | TypeKind::Error => return TypeId::UNIT,
             TypeKind::Param(owner, i) => {
-                debug_assert_eq!(Some(owner), subst.owner);
-                return subst.args[i as usize];
+                // Only a builder's misuse puts a type parameter outside its item.
+                return match subst.args.get(i as usize) {
+                    Some(&t) if subst.owner == Some(owner) => t,
+                    _ => {
+                        self.diags.push(Diagnostic::error(
+                            "hir.builder",
+                            "a type parameter is used outside the item that declares it",
+                        ));
+                        TypeId::UNIT
+                    }
+                };
             }
             TypeKind::Array(e) => TypeKind::Array(self.ty(e, subst)),
             TypeKind::Ptr(e) => TypeKind::Ptr(self.ty(e, subst)),

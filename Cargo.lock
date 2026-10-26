@@ -14,6 +14,7 @@ dependencies = [
  "a0-native",
  "a0-runtime",
  "a0-syntax",
+ "a0-wasm",
  "gimli",
  "object",
 ]

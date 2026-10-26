@@ -411,6 +411,62 @@ fn builder_checks_structure() {
 }
 
 #[test]
+fn builder_misuse_found_by_fuzzing_is_reported() {
+    // A closure whose body makes the closure: no pass may loop or overflow its stack on it.
+    let mut b = HirBuilder::new("m");
+    let main = b.declare_function("main", &[], &[], TypeId::INT);
+    let body = b.function_body(main);
+    let inner = b.new_closure_body(body, &[], &[], TypeId::UNIT);
+    let lambda = b.lambda(inner);
+    b.set_root(inner, lambda);
+    let zero = b.int(0);
+    b.set_root(body, zero);
+    let err = b.finish().unwrap_err().summary();
+    assert!(
+        err.contains("made outside the body it was declared in"),
+        "{err}"
+    );
+
+    // Too many or too few type arguments are reported, and the types made stay usable.
+    let mut b = HirBuilder::new("m");
+    let s = b.declare_generic_struct("Box", &["T"]);
+    let t = b.type_param(Item::Struct(s), 0);
+    b.add_field(s, "value", t);
+    let bad = b.type_param(Item::Struct(s), 3);
+    assert_eq!(bad, TypeId::ERROR);
+    let main = b.declare_function("main", &[], &[], TypeId::INT);
+    let body = b.function_body(main);
+    let one = b.int(1);
+    let made = b.new_struct_generic(s, &[TypeId::INT, TypeId::INT], &[one]);
+    let boxed = b.struct_type_args(s, &[TypeId::INT]);
+    let l = b.new_local(body, "b", boxed);
+    let let_ = b.let_(l, made);
+    let zero = b.int(0);
+    let block = b.block(&[let_], Some(zero));
+    b.set_root(body, block);
+    let err = b.finish().unwrap_err().summary();
+    assert!(
+        err.contains("`Box` takes 1 type argument but 2 were given"),
+        "{err}"
+    );
+
+    // A type parameter used outside its item.
+    let mut b = HirBuilder::new("m");
+    let s = b.declare_generic_struct("Box", &["T"]);
+    let t = b.type_param(Item::Struct(s), 0);
+    b.declare_global("g", t);
+    let main = b.declare_function("main", &[], &[], TypeId::INT);
+    let body = b.function_body(main);
+    let zero = b.int(0);
+    b.set_root(body, zero);
+    let err = b.finish().unwrap_err().summary();
+    assert!(
+        err.contains("a type parameter is used outside the item"),
+        "{err}"
+    );
+}
+
+#[test]
 fn lowering_needs_an_entry_point() {
     let m = parse_ok("module \"m\";\nfn helper() -> int { 1 }\n");
     let err = lower(&m).unwrap_err().summary();
@@ -422,7 +478,8 @@ fn lowered_closures_take_their_environment_first() {
     let m = parse_ok(
         "module \"m\";\nfn main() -> int {\n  let n = 1;\n  let f = fn(x: int) -> int { x + n };\n  f(41)\n}\n",
     );
-    let ir = lower(&m).unwrap();
+    // Unoptimized: the optimizer would inline the call of the known closure (D84).
+    let ir = lower_with(&m, LowerOptions { optimize: false }).unwrap();
     let text = ir.to_string();
     assert!(
         text.contains("func @hir.main.closure0(%0: ptr, %1: i64) -> i64"),

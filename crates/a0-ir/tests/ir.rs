@@ -178,6 +178,27 @@ fn builder_reports_misuse_instead_of_panicking() {
 }
 
 #[test]
+fn builder_reports_bad_symbols() {
+    // Found by fuzzing the C API: handles that name no function or global.
+    let mut b = Builder::new("bad");
+    let f = b.declare_function("f", &[], None);
+    b.begin_function(f);
+    b.func_addr(FuncId(7));
+    b.global_addr(GlobalId(u32::MAX));
+    b.ret(None);
+    b.end_function();
+    let text = b.finish().unwrap_err().summary();
+    assert!(
+        text.contains("func_addr called with an invalid function"),
+        "{text}"
+    );
+    assert!(
+        text.contains("global_addr called with an invalid global"),
+        "{text}"
+    );
+}
+
+#[test]
 fn builder_reports_duplicate_symbols() {
     let mut b = Builder::new("dup");
     b.declare_function("f", &[], None);

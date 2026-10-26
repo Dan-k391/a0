@@ -757,8 +757,8 @@ impl HirBuilder {
 
     /// A struct's type with type arguments, one per type parameter.
     pub fn struct_type_args(&mut self, s: StructId, args: &[TypeId]) -> TypeId {
-        self.arity(Item::Struct(s), args.len());
-        self.m.intern(TypeKind::Struct(s, args.to_vec()))
+        let args = self.arity(Item::Struct(s), args);
+        self.m.intern(TypeKind::Struct(s, args))
     }
 
     pub fn enum_type(&mut self, e: EnumId) -> TypeId {
@@ -766,20 +766,26 @@ impl HirBuilder {
     }
 
     pub fn enum_type_args(&mut self, e: EnumId, args: &[TypeId]) -> TypeId {
-        self.arity(Item::Enum(e), args.len());
-        self.m.intern(TypeKind::Enum(e, args.to_vec()))
+        let args = self.arity(Item::Enum(e), args);
+        self.m.intern(TypeKind::Enum(e, args))
     }
 
     /// The `index`th type parameter of a generic struct, enum or function.
     pub fn type_param(&mut self, owner: Item, index: u32) -> TypeId {
         if index as usize >= self.m.type_params(owner).len() {
             self.misuse("no such type parameter");
+            return TypeId::ERROR;
         }
         self.m.intern(TypeKind::Param(owner, index))
     }
 
-    fn arity(&mut self, item: Item, given: usize) {
+    /// `args`, which should be as many as `item` has type parameters: too many or too few is
+    /// reported, and the type made with error types for the missing ones.
+    fn arity(&mut self, item: Item, args: &[TypeId]) -> Vec<TypeId> {
+        let given = args.len();
         let want = self.m.type_params(item).len();
+        let mut fixed = args.to_vec();
+        fixed.resize(want, TypeId::ERROR);
         if want != given {
             let name = match item {
                 Item::Struct(s) => self.m.struct_name(s).to_string(),
@@ -799,6 +805,7 @@ impl HirBuilder {
             .at(self.m.item_span(item), format!("`{name}` declared here"));
             self.problem(&p);
         }
+        fixed
     }
 
     /// Fresh inference variables for a generic item's type parameters.
@@ -1403,8 +1410,8 @@ impl HirBuilder {
 
     /// A generic function used as a closure value, with explicit type arguments.
     pub fn func_generic(&mut self, f: FuncId, type_args: &[TypeId]) -> ExprId {
-        self.arity(Item::Func(f), type_args.len());
-        self.push(ExprKind::Func(f, type_args.to_vec()), TypeId::NEVER)
+        let type_args = self.arity(Item::Func(f), type_args);
+        self.push(ExprKind::Func(f, type_args), TypeId::NEVER)
     }
 
     pub fn let_(&mut self, l: LocalId, init: ExprId) -> ExprId {
@@ -1460,11 +1467,8 @@ impl HirBuilder {
 
     /// Calls a generic function with explicit type arguments.
     pub fn call_generic(&mut self, f: FuncId, type_args: &[TypeId], args: &[ExprId]) -> ExprId {
-        self.arity(Item::Func(f), type_args.len());
-        self.push(
-            ExprKind::Call(f, type_args.to_vec(), args.to_vec()),
-            TypeId::NEVER,
-        )
+        let type_args = self.arity(Item::Func(f), type_args);
+        self.push(ExprKind::Call(f, type_args, args.to_vec()), TypeId::NEVER)
     }
 
     pub fn call_extern(&mut self, x: ExternId, args: &[ExprId]) -> ExprId {

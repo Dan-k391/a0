@@ -17,6 +17,10 @@ WASI_SDK=/path/to/wasi-sdk sh playground/build.sh && node playground/test.mjs ta
 python3 targets/build.py            # the target packs cross-compilation links against (docs/cross.md;
                                     # Linux, macOS); then `cargo test -p a0 --test programs pack`
 python3 bench/run.py                # the benchmark (docs/benchmarks.md; Linux, macOS; not in CI)
+A0_FUZZ_ITERATIONS=20000 cargo test --release -p a0 --test fuzz -- --test-threads 1 --nocapture
+                                    # fuzz IR and HIR text and grammars longer (D85); likewise
+                                    # `-p a0-capi --test fuzz` (the C API) and `-p a0-driver --lib
+                                    # mutated_manifests`
 cargo clippy --workspace --all-targets   # must report no warnings
 cargo fmt --all                     # run before committing
 ```
@@ -131,6 +135,12 @@ layer, decision D17). A new crate goes into the table above and into `[workspace
   `A0_GC_STRESS=1` many times pinned to two and four processors (`taskset -c 0,1` on Linux), as
   CI's runners have; `examples/minnow/tests/parallel.rs` checks that threads really run at once.
 - HIR text must round-trip: `print(parse(print(m))) == print(m)` is tested for every corpus file.
+- **Fuzzing** (D85): every input A0 accepts is fuzzed from the corpus in every test run, a few
+  hundred inputs each: IR and HIR text and grammars (`crates/a0/tests/fuzz.rs`), the C API
+  (`crates/a0-capi/tests/fuzz.rs`, through Python) and manifests (`a0-driver`). Errors are fine; a
+  panic, a hang or an internal error is a bug. After changing a parser, the verifier, lowering or
+  the C API, fuzz longer (`A0_FUZZ_ITERATIONS`, `A0_FUZZ_SEED`), and give what it finds a
+  regression test where the bug is.
 - Example languages test interpreted, JIT and native output (`examples/*/tests`), and the JIT
   under GC stress, optimized and not. The Lox suite must stay at all 241 passing in all eight modes, and the tests of A0's extensions to
   Lox (`examples/lox/tests/a0`) with it.
