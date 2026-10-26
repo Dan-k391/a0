@@ -154,9 +154,9 @@ def main():
 
     print("building A0's languages (release)", file=sys.stderr)
     sh(["cargo", "build", "--release", "--locked", "-p", "a0", "-p", "minnow", "-p", "lox", "-p",
-        "kaleidoscope"], cwd=ROOT)
+        "kaleidoscope", "-p", "tin"], cwd=ROOT)
     target = Path(os.environ.get("CARGO_TARGET_DIR", ROOT / "target")) / "release"
-    a0, minnow, lox, kaleidoscope = (str(target / n) for n in ("a0", "minnow", "lox", "kaleidoscope"))
+    a0, minnow, lox, kaleidoscope, tin = (str(target / n) for n in ("a0", "minnow", "lox", "kaleidoscope", "tin"))
 
     # References.
     clox_dir = WORK / "clox"
@@ -261,6 +261,23 @@ def main():
           f"{ms(r_mn0)} | {ms(r_jit)} | {ms(r_c0)} | {ms(r_c2)} | {ms(r_go)} |")
     w("")
     w(f"A0's collector in `binarytrees` (`A0_GC_STATS=1`): {gc_stats(str(WORK / 'mn-binarytrees'))}.\n")
+
+    # Tin, the systems language (no collector, raw pointers, C's allocator), against the same C.
+    w("## Tin against C\n")
+    w("| Program | Tin build | Tin run | no HIR optimizer | Tin JIT (`run`) | clang -O0 | clang -O2 |")
+    w("|---|---|---|---|---|---|---|")
+    for prog in NATIVE:
+        src = BENCH / "tin" / f"{prog}.tin"
+        exe = str(WORK / f"tin-{prog}")
+        b_tin, _ = timed([tin, "build", str(src), "-o", exe], runs)
+        timed([tin, "build", str(src), "-o", exe + "-noopt"], 1, env={"A0_OPT": "0"})
+        r_c2, out = timed([str(WORK / f"c-{prog}-O2")], runs)
+        r_c0, _ = timed([str(WORK / f"c-{prog}-O0")], runs, expect=out)
+        r_tin, _ = timed([exe], runs, expect=out)
+        r_tin0, _ = timed([exe + "-noopt"], runs, expect=out)
+        r_jit, _ = timed([tin, "run", str(src)], runs, expect=out)
+        w(f"| {prog} | {ms(b_tin)} | {ms(r_tin)} | {ms(r_tin0)} | {ms(r_jit)} | {ms(r_c0)} | {ms(r_c2)} |")
+    w("")
 
     # Where a build's time goes. Each of A0's steps includes the ones before it (the object file
     # from the IR text); A0 links with `cc`, or `$CC`, like the C programs' links beside it.

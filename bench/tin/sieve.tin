@@ -1,0 +1,21 @@
+// Arrays: the primes below 2,000,000 by the sieve of Eratosthenes, ten times, in memory from
+// `alloc` indexed without checks, as C does.
+fn count_primes(n: i64) -> i64 {
+  var composite = alloc(n + 1) as *bool;
+  var count = 0;
+  for (var p = 2; p <= n; p += 1) {
+    if (!composite[p]) {
+      count += 1;
+      for (var m = p * p; m <= n; m += p) { composite[m] = true; }
+    }
+  }
+  free(composite);
+  return count;
+}
+
+fn main() -> i32 {
+  var total = 0;
+  for (var round = 0; round < 10; round += 1) { total += count_primes(2000000); }
+  println(total);
+  return 0;
+}

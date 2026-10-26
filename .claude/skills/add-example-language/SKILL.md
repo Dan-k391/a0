@@ -84,6 +84,14 @@ output, and report errors with source locations.
   JIT, native, GC stress, each optimized and with `A0_OPT=0`). A0's extensions to Lox (exceptions, the
   natives in `natives.hir`) get tests in `tests/a0`, in the suite's form; keep them out of the
   book's behavior (D51).
+- Tin: grammar `tin.a0g`, the compiler in `src/lib.rs` (by name, like Minnow), its C library in
+  `runtime/` (Tin's runtime, `abi.c`'s functions of structs by value, vendored cJSON; a C function
+  the interpreter and the JIT call goes in `tin_symbols`). It is the template for a systems
+  language: `set_memory(Memory::Manual)`, every struct `set_struct_inline`, pointers as
+  `ptr_type`, `Builtin::Addr`/`Offset`/`Data`, and externs that take and return inline structs.
+  Programs in `tests/programs/*.tin` with `// expect:` lines; they include native C calls, so a
+  change to the C ABI code (`a0-native/src/cabi.rs`) must keep `c_structs.tin` passing on every
+  CI platform.
 
 ## Checks that must pass
 

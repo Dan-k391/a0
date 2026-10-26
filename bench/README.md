@@ -7,6 +7,7 @@ and what they mean.
 |---|---|
 | `kaleidoscope/` | Kaleidoscope programs that run on A0's Kaleidoscope and on LLVM's tutorial (chapter 7) |
 | `minnow/`, `c/`, `go/` | The same programs in Minnow, C and Go: calls (`fib`), arrays (`sieve`), floating point and structs (`nbody`), allocation (`binarytrees`) |
+| `tin/` | The same programs in Tin, A0's systems language, written as the C ones are (pointers, C's allocator) |
 | `run.py` | Builds everything, checks that the implementations print the same, and times compiling and running |
 
 Lox is measured on the benchmark programs of Crafting Interpreters' own test suite

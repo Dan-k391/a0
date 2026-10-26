@@ -1,0 +1,46 @@
+// Allocation: many short-lived binary trees and one long-lived one (the Benchmarks Game's
+// binary-trees, maximum depth 16), with C's allocator: `alloc` and `free`.
+struct Node { left: *Node, right: *Node }
+
+fn make(depth: i64) -> *Node {
+  var n = alloc(sizeof(Node)) as *Node;
+  if (depth > 0) {
+    n->left = make(depth - 1);
+    n->right = make(depth - 1);
+  }
+  return n;
+}
+
+fn check(n: *Node) -> i64 {
+  if (n->left == null) { return 1; }
+  return 1 + check(n->left) + check(n->right);
+}
+
+fn release(n: *Node) {
+  if (n->left != null) {
+    release(n->left);
+    release(n->right);
+  }
+  free(n);
+}
+
+fn main() -> i32 {
+  var max_depth = 16;
+  var stretch = make(max_depth + 1);
+  println(max_depth + 1, " ", check(stretch));
+  release(stretch);
+  var long_lived = make(max_depth);
+  for (var depth = 4; depth <= max_depth; depth += 2) {
+    var iterations = 1 << (max_depth - depth + 4);
+    var total = 0;
+    for (var i = 0; i < iterations; i += 1) {
+      var t = make(depth);
+      total += check(t);
+      release(t);
+    }
+    println(iterations, " ", depth, " ", total);
+  }
+  println(max_depth, " ", check(long_lived));
+  release(long_lived);
+  return 0;
+}
