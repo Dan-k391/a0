@@ -34,6 +34,21 @@ pub struct ProgramFile {
     pub library: Vec<Import>,
 }
 
+/// Syntax trees kept between loads of programs (the language server's, D82): a file whose text has
+/// not changed since it was last parsed is not parsed again.
+#[derive(Default)]
+pub struct TreeCache {
+    files: HashMap<PathBuf, (String, SyntaxTree)>,
+    hits: usize,
+}
+
+impl TreeCache {
+    /// How many times a file's tree was reused.
+    pub fn hits(&self) -> usize {
+        self.hits
+    }
+}
+
 /// The files of a program, in the order they are compiled: every file after the files it imports,
 /// so the root file last.
 pub struct Program {
@@ -68,6 +83,19 @@ pub fn load(
     packages: Option<&Packages>,
     read: &mut dyn FnMut(&Path) -> Option<String>,
     sources: &mut SourceMap,
+) -> Result<Program, Diagnostics> {
+    load_cached(grammar, modules, root, packages, read, sources, None)
+}
+
+/// [`load`], taking unchanged files' trees from `cache` and keeping new ones there.
+pub fn load_cached(
+    grammar: &Grammar,
+    modules: &Modules,
+    root: &str,
+    packages: Option<&Packages>,
+    read: &mut dyn FnMut(&Path) -> Option<String>,
+    sources: &mut SourceMap,
+    mut cache: Option<&mut TreeCache>,
 ) -> Result<Program, Diagnostics> {
     let root_path = normalize(Path::new(root));
     let root_dir = root_path
@@ -110,8 +138,31 @@ pub fn load(
         let index = files.len();
         let (path, shown, text, package, module) = found[index].clone();
         let source = sources.add(&shown, &text);
-        let (tree, parse) = grammar.parse(&text, source);
-        diags.extend(parse);
+        let cached = cache
+            .as_deref()
+            .and_then(|c| c.files.get(&path))
+            .filter(|(old, _)| *old == text)
+            .map(|(_, tree)| tree.clone());
+        let tree = match cached {
+            Some(mut tree) => {
+                tree.set_source(source);
+                if let Some(c) = cache.as_deref_mut() {
+                    c.hits += 1;
+                }
+                tree
+            }
+            None => {
+                let (tree, parse) = grammar.parse(&text, source);
+                // Only trees without errors are kept: their diagnostics need not be.
+                if !parse.has_errors()
+                    && let Some(c) = cache.as_deref_mut()
+                {
+                    c.files.insert(path.clone(), (text.clone(), tree.clone()));
+                }
+                diags.extend(parse);
+                tree
+            }
+        };
         let dir = path.parent().map(Path::to_path_buf).unwrap_or_default();
         let shown_base = Path::new(&shown)
             .parent()

@@ -32,6 +32,7 @@ pub(crate) struct NodeData {
 
 /// A concrete syntax tree. Every token that was parsed is a leaf; nodes carry their kind (the rule or
 /// operator that produced them), their span and their children, which may be labeled with fields.
+#[derive(Clone)]
 pub struct SyntaxTree {
     pub(crate) text: String,
     pub(crate) source: SourceId,
@@ -57,6 +58,12 @@ impl SyntaxTree {
 
     pub fn source(&self) -> SourceId {
         self.source
+    }
+
+    /// The same tree for the same text under another source id (a tree kept from an earlier
+    /// source map, `a0_driver::program::TreeCache`): spans are made from it.
+    pub fn set_source(&mut self, source: SourceId) {
+        self.source = source;
     }
 
     /// The full source text the tree was parsed from.

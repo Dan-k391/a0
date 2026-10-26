@@ -35,6 +35,8 @@ codes! {
         "The program does not follow the language's grammar here: a token is missing or one appears where it cannot. The message says what the parser expected.";
     INVALID_TOKEN = "E0002", "invalid token",
         "These characters do not form any token of the language, for example an unknown symbol or a string that is never closed.";
+    TOO_DEEP = "E0003", "nested too deeply",
+        "The program nests deeper than the compiler goes: expressions inside expressions or blocks inside blocks, more than 10,000 levels (in a long chain of operators, each operator is a level). Name intermediate results with variables, or move inner parts into functions of their own.";
 
     UNKNOWN_NAME = "E1001", "unknown name",
         "The name is not declared where it is used: no variable, function or global of that name is in scope. It may be misspelled, declared later in an inner block, or declared in a block that has ended.";

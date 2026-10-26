@@ -44,6 +44,7 @@ pub struct IndexedToken {
     pub member: bool,
 }
 
+#[derive(Clone)]
 struct Symbol {
     name: String,
     kind: SymbolKind,
@@ -56,6 +57,7 @@ struct Symbol {
 }
 
 /// The tokens, symbols and references of one file. Symbols are numbered in source order.
+#[derive(Clone)]
 pub struct SyntaxIndex {
     tokens: Vec<IndexedToken>,
     targets: Vec<Vec<u32>>,
@@ -63,6 +65,18 @@ pub struct SyntaxIndex {
 }
 
 impl SyntaxIndex {
+    /// The same index for the same text under another source id (one kept from an earlier
+    /// source map).
+    pub fn set_source(&mut self, source: SourceId) {
+        for s in &mut self.symbols {
+            s.name_span.source = source;
+            s.extent.source = source;
+            if let Some(span) = &mut s.scope_span {
+                span.source = source;
+            }
+        }
+    }
+
     /// Indexes `tree`, which `grammar` parsed. Works on trees with syntax errors too.
     pub fn new(grammar: &Grammar, tree: &SyntaxTree) -> SyntaxIndex {
         let text = tree.source_text();

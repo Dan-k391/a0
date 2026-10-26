@@ -37,6 +37,17 @@ targets: x86_64-linux, aarch64-linux, x86_64-macos, aarch64-macos, x86_64-window
 ";
 
 fn main() -> ExitCode {
+    // Compiling recurses as deep as the program nests (D83).
+    std::thread::Builder::new()
+        .name("a0".to_string())
+        .stack_size(a0_driver::COMPILER_STACK)
+        .spawn(main_here)
+        .expect("cannot start the compiler's thread")
+        .join()
+        .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+}
+
+fn main_here() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let Some(command) = args.first() else {
         eprint!("{USAGE}");

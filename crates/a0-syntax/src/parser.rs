@@ -14,6 +14,11 @@ use a0_diag::{Diagnostic, Diagnostics, SourceId, Span};
 use crate::grammar::{Assoc, Expr, ExprId, FieldId, Grammar, KindId, LexAction, RuleId};
 use crate::tree::{NodeData, NodeId, SyntaxTree};
 
+/// How deep a tree may nest, and how deep the parser recurses through rules (D83): every pass over
+/// a tree recurses as deep as it nests, so a program nested deeper gets a diagnostic, not a
+/// stack overflow. Real programs nest a few dozen levels.
+pub const MAX_NESTING: usize = 10_000;
+
 /// A token produced by the lexer. `start..end` are byte offsets.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Token {
@@ -96,15 +101,43 @@ impl Grammar {
             expected: Vec::new(),
             suppress: 0,
             diags,
+            depth: 0,
+            too_deep: None,
         };
         let ok = p.rule(self.start);
-        let root = if ok && p.at_eof() && p.pending.len() == 1 {
+        let too_deep = match p.too_deep {
+            Some(at) => Some(at),
+            None if ok => p.deepest_node(),
+            None => None,
+        };
+        if let Some(at) = too_deep {
+            // What the parser reported while giving up is not the program's problem.
+            let mut kept = Diagnostics::new();
+            for d in p.diags.as_slice() {
+                if d.code != code::SYNTAX {
+                    kept.push(d.clone());
+                }
+            }
+            p.diags = kept;
+            p.diags.push(
+                Diagnostic::error(
+                    code::TOO_DEEP,
+                    &format!("this is nested more than {MAX_NESTING} levels deep"),
+                )
+                .with_span(Span::new(source, at.0, at.1))
+                .with_primary_label("too deep")
+                .with_help("name intermediate results, or move inner parts into functions"),
+            );
+        }
+        let root = if too_deep.is_none() && ok && p.at_eof() && p.pending.len() == 1 {
             p.pending.pop().unwrap().0
         } else {
-            if ok {
-                p.fail_token(p.pos, KindId::EOF);
+            if too_deep.is_none() {
+                if ok {
+                    p.fail_token(p.pos, KindId::EOF);
+                }
+                p.report_furthest();
             }
-            p.report_furthest();
             // Keep every token under one error node.
             p.pending.clear();
             p.pos = 0;
@@ -155,6 +188,10 @@ struct Parser<'g> {
     /// Inside a lookahead: failures are not recorded as expectations.
     suppress: u32,
     diags: Diagnostics,
+    /// How many rules are being parsed, one inside another.
+    depth: usize,
+    /// Where the input nested too deeply, if it did: parsing then gives up.
+    too_deep: Option<(u32, u32)>,
 }
 
 impl<'g> Parser<'g> {
@@ -269,6 +306,24 @@ impl<'g> Parser<'g> {
         }
     }
 
+    /// The span of the first node nested deeper than [`MAX_NESTING`] in the parsed tree, whose
+    /// nodes come before their parents (operators chained in a loop nest without recursing).
+    fn deepest_node(&self) -> Option<(u32, u32)> {
+        let mut depth = vec![0usize; self.nodes.len()];
+        for (i, node) in self.nodes.iter().enumerate().rev() {
+            let children = &self.children
+                [node.children_start as usize..(node.children_start + node.children_len) as usize];
+            for &(child, _) in children {
+                depth[child.0 as usize] = depth[i] + 1;
+                if depth[i] + 1 > MAX_NESTING {
+                    let c = &self.nodes[child.0 as usize];
+                    return Some((c.start, c.end));
+                }
+            }
+        }
+        None
+    }
+
     fn report_furthest(&mut self) {
         let tok = self.toks[self.furthest];
         let span = Span::new(self.source, tok.start, tok.end);
@@ -306,6 +361,21 @@ impl<'g> Parser<'g> {
     // ---------------------------------------------------------------- rules and expressions
 
     fn rule(&mut self, r: RuleId) -> bool {
+        if self.too_deep.is_some() {
+            return false;
+        }
+        if self.depth >= MAX_NESTING {
+            let tok = self.toks[self.pos];
+            self.too_deep = Some((tok.start, tok.end));
+            return false;
+        }
+        self.depth += 1;
+        let ok = self.rule_body(r);
+        self.depth -= 1;
+        ok
+    }
+
+    fn rule_body(&mut self, r: RuleId) -> bool {
         let rule = &self.g.rules[r];
         if rule.recover.is_some() {
             return self.recovering_rule(r);

@@ -219,6 +219,10 @@ pub fn interpret() -> bool {
         || !a0_native::jit_supported()
 }
 
+/// The stack of the thread the driver compiles on: deep nesting in a program is deep recursion in
+/// the compiler (D83). Reserved, not committed: only what is used costs memory.
+pub const COMPILER_STACK: usize = 1 << 30;
+
 /// How usage messages name a command.
 fn command_word(command: Command) -> &'static str {
     match command {
@@ -263,6 +267,20 @@ impl Language {
     /// [`Language::run`], with the exit status as a number (for hosts that are not Rust programs,
     /// `a0_language_main` in the C API). A program that runs ends the process with its own status.
     pub fn run_status(&self, args: &[String]) -> u8 {
+        // Compiling recurses as deep as the program nests (D83): on a thread with room for it.
+        // Programs run on threads of their own, with their own stacks.
+        std::thread::scope(|scope| {
+            std::thread::Builder::new()
+                .name("a0-compiler".to_string())
+                .stack_size(COMPILER_STACK)
+                .spawn_scoped(scope, || self.run_status_here(args))
+                .expect("cannot start the compiler's thread")
+                .join()
+                .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+        })
+    }
+
+    fn run_status_here(&self, args: &[String]) -> u8 {
         let Some(inv) = self.parse_args(args) else {
             eprint!("{}", self.usage());
             return self.exit_codes.usage;

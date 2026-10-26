@@ -490,3 +490,116 @@ fn emitted_hir_round_trips_through_text() {
         assert_eq!(reparsed.to_string(), printed, "{}", f.display());
     }
 }
+
+/// Trees kept between loads (the language server's cache, D82) give the same program, and the same
+/// diagnostics, when the files get other source ids.
+#[test]
+fn cached_trees_load_the_same_program() {
+    let dir = std::env::temp_dir().join(format!("minnow-trees-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("main.mn"),
+        "import util;\n\nfn main() {\n  print(util.twice(21));\n}\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("util.mn"),
+        "pub fn twice(x: int) -> int {\n  return \"twice\";\n}\n",
+    )
+    .unwrap();
+    let modules = a0_driver::Modules {
+        extension: "mn",
+        start: minnow::start,
+        compile: minnow::compile_file,
+    };
+    let grammar = minnow::grammar();
+    let root = dir.join("main.mn").to_string_lossy().into_owned();
+    let mut cache = a0_driver::program::TreeCache::default();
+    let mut rendered = Vec::new();
+    for pads in [0, 3] {
+        let mut sm = SourceMap::new();
+        for i in 0..pads {
+            sm.add(&format!("pad{i}"), "nothing here\n");
+        }
+        let mut read = |p: &Path| std::fs::read_to_string(p).ok();
+        let program = a0_driver::program::load_cached(
+            &grammar,
+            &modules,
+            &root,
+            None,
+            &mut read,
+            &mut sm,
+            Some(&mut cache),
+        )
+        .unwrap();
+        let err = a0_driver::program::compile(&program, &modules, "test").unwrap_err();
+        rendered.push(err.render(&sm));
+    }
+    std::fs::remove_dir_all(&dir).ok();
+    assert!(rendered[0].contains("util.mn:2:10"), "{}", rendered[0]);
+    assert_eq!(rendered[0], rendered[1]);
+    // The second load parsed nothing.
+    assert_eq!(cache.hits(), 2);
+}
+
+/// Deep nesting is deep recursion in every pass (D83): 2,000 blocks deep compiles and runs, and
+/// nesting past the limit is a diagnostic, never a stack overflow.
+#[test]
+fn deep_programs_compile_or_say_they_are_too_deep() {
+    let dir = std::env::temp_dir().join(format!("minnow-deep-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let n = 2000;
+    let nested = format!(
+        "fn main() {{\n  let x = 0;\n{}  x = x + 1;\n{}  print(x);\n}}\n",
+        "  if x == 0 {\n".repeat(n),
+        "  }\n".repeat(n)
+    );
+    std::fs::write(dir.join("nested.mn"), nested).unwrap();
+    let minnow = env!("CARGO_BIN_EXE_minnow");
+    let out = Command::new(minnow)
+        .arg("run")
+        .arg(dir.join("nested.mn"))
+        .output()
+        .unwrap();
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout).trim(),
+        "1",
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let exe = dir.join(format!("nested{}", std::env::consts::EXE_SUFFIX));
+    let out = Command::new(minnow)
+        .arg("build")
+        .arg(dir.join("nested.mn"))
+        .arg("-o")
+        .arg(&exe)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let out = Command::new(&exe).output().unwrap();
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "1");
+
+    let parens = format!(
+        "fn main() {{\n  print({}1{});\n}}\n",
+        "(".repeat(20_000),
+        ")".repeat(20_000)
+    );
+    std::fs::write(dir.join("parens.mn"), parens).unwrap();
+    let out = Command::new(minnow)
+        .arg("run")
+        .arg(dir.join("parens.mn"))
+        .output()
+        .unwrap();
+    std::fs::remove_dir_all(&dir).ok();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(1), "{stderr}");
+    assert!(
+        stderr.contains("error[E0003]: this is nested more than 10000 levels deep")
+            && !stderr.contains("E0001"),
+        "{stderr}"
+    );
+}

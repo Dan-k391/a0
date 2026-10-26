@@ -49,6 +49,7 @@ list matches it.
 |---|---|
 | E0001 | syntax error |
 | E0002 | invalid token |
+| E0003 | nested too deeply |
 | E1001 | unknown name |
 | E1002 | unknown type |
 | E1003 | unknown field |

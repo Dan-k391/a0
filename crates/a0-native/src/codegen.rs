@@ -213,7 +213,11 @@ pub fn compile_objects(
         .min(units.len());
     std::thread::scope(|scope| {
         for _ in 0..workers {
-            scope.spawn(|| {
+            // Lowering recurses as deep as the program's regions nest (D83).
+            let worker = std::thread::Builder::new()
+                .name("a0-codegen".to_string())
+                .stack_size(256 << 20);
+            let started = worker.spawn_scoped(scope, || {
                 loop {
                     let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     let Some(unit) = units.get(i) else {
@@ -225,8 +229,20 @@ pub fn compile_objects(
                     *results[i].lock().unwrap() = Some(result);
                 }
             });
+            if started.is_err() {
+                break;
+            }
         }
     });
+    // With no thread to compile on, compile here.
+    for (i, unit) in units.iter().enumerate() {
+        let mut slot = results[i].lock().unwrap();
+        if slot.is_none() {
+            *slot = Some(catch_codegen_panic(target, || {
+                compile_unit(m, target, opts, unit, units.len(), &locations)
+            }));
+        }
+    }
     results
         .into_iter()
         .map(|r| r.into_inner().unwrap().expect("every unit is compiled"))

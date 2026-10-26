@@ -43,6 +43,6 @@ pub use grammar::{Definition, FieldId, Grammar, KindId, SymbolKind};
 pub use imports::{Import, imports, module_path};
 pub use index::{IndexedToken, SyntaxIndex, TokenClass};
 pub use literal::unquote;
-pub use parser::Token;
+pub use parser::{MAX_NESTING, Token};
 pub use precedence::{Combine, Operand, resolve_precedence};
 pub use tree::{NodeId, SyntaxTree};

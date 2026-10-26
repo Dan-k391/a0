@@ -353,3 +353,28 @@ fn rules_can_give_their_nodes_hir_forms() {
     let e = grammar_errors("token N /[0-9]+/; program @hir = N;");
     assert!(e.contains("expected '('"), "{e}");
 }
+
+/// Nesting past `MAX_NESTING`, by recursion (parentheses) or by a chain an operator loop builds,
+/// is one diagnostic (D83).
+#[test]
+fn nesting_too_deep_is_reported() {
+    // Parsing recurses: on a thread with room for it, as the drivers parse.
+    std::thread::Builder::new()
+        .stack_size(256 << 20)
+        .spawn(|| {
+            let g = grammar(
+                "expr = atom (\"+\" atom)*; atom = NUM | \"(\" expr \")\"; token NUM /[0-9]+/; \
+                 skip / +/;",
+            );
+            let n = a0_syntax::MAX_NESTING + 10;
+            let deep = format!("{}1{}", "(".repeat(n), ")".repeat(n));
+            let (_, diags) = g.parse(&deep, SourceId(0));
+            assert_eq!(diags.len(), 1);
+            assert_eq!(diags.get(0).code, "E0003");
+            let (_, diags) = g.parse("((1)) + 2", SourceId(0));
+            assert!(diags.is_empty());
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}

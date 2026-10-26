@@ -10,6 +10,7 @@ Prints a Markdown table of medians in milliseconds.
 
 import argparse
 import json
+import os
 import statistics
 import subprocess
 import threading
@@ -20,7 +21,7 @@ from pathlib import Path
 class Client:
     def __init__(self, cmd, cwd):
         self.proc = subprocess.Popen(cmd, cwd=cwd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                     stderr=subprocess.DEVNULL)
+                                     stderr=None if os.environ.get("A0_TIME") else subprocess.DEVNULL)
         self.next_id = 0
         self.messages = []
         self.cond = threading.Condition()
@@ -67,24 +68,22 @@ class Client:
                 self.cond.wait(30)
 
 
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("minnow")
-    parser.add_argument("dir")
-    parser.add_argument("--runs", type=int, default=5)
-    args = parser.parse_args()
-    root = Path(args.dir).resolve()
-    modules = sorted((root / "src").glob("m*.mn"), key=lambda p: int(p.stem[1:]))
-    target = modules[len(modules) // 2]
+def measure(minnow, root, runs, file=None):
+    """Medians in ms of: open to diagnostics, edit to an answer, hover, definition, completion."""
+    root = Path(root).resolve()
+    modules = sorted((p for p in (root / "src").glob("m*.mn") if p.stem[1:].isdigit()),
+                     key=lambda p: int(p.stem[1:]))
+    target = root / "src" / file if file else modules[len(modules) // 2]
     uri = target.as_uri()
     text = target.read_text()
     lines = text.splitlines()
-    # A call of an imported module's function, and a local function's name.
-    call = next(i for i, l in enumerate(lines) if ".f" in l and "total = total +" in l)
-    col = lines[call].index(".f") + 2
-    results = {k: [] for k in ["open", "edit", "hover", "definition", "completion"]}
-    for _ in range(args.runs):
-        c = Client([args.minnow, "lsp"], root)
+    # A call of another module's function.
+    call = next(i for i, l in enumerate(lines)
+                if ".check" in l or ("total = total +" in l and ".f" in l))
+    col = lines[call].index(".") + 2
+    results = {k: [] for k in KEYS}
+    for _ in range(runs):
+        c = Client([str(Path(minnow).resolve()), "lsp"], root)
         c.request("initialize", {"processId": None, "rootUri": root.as_uri(), "capabilities": {}})
         c.notify("initialized", {})
         published = lambda m: (m.get("method") == "textDocument/publishDiagnostics"
@@ -95,7 +94,7 @@ def main():
         results["open"].append(c.wait(published, start))
         # An edit (a new statement in the middle), then a request, which needs the new analysis.
         edited = lines[:]
-        edited.insert(call + 1, "  total = total + 1;")
+        edited.insert(call + 1, "  sum = sum + 1;" if file else "  total = total + 1;")
         start = time.perf_counter()
         c.notify("textDocument/didChange", {"textDocument": {"uri": uri, "version": 2},
                                              "contentChanges": [{"text": "\n".join(edited)}]})
@@ -112,12 +111,24 @@ def main():
         c.request("shutdown", None)
         c.notify("exit", None)
         c.proc.wait()
-    total = sum(1 for _ in (root / "src").glob("*.mn"))
-    print(f"`minnow lsp` on {total} files, {target.name} open; medians of {args.runs} runs:\n")
+    return target.name, {k: statistics.median(v) for k, v in results.items()}
+
+
+KEYS = ["open", "edit", "hover", "definition", "completion"]
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("minnow")
+    parser.add_argument("dir")
+    parser.add_argument("--runs", type=int, default=5)
+    parser.add_argument("--file", help="the file to open (default: a module in the middle)")
+    args = parser.parse_args()
+    name, medians = measure(args.minnow, args.dir, args.runs, args.file)
+    print(f"`minnow lsp`, {name} open; medians of {args.runs} runs:\n")
     print("| open to diagnostics | edit to an answer | hover | definition | completion |")
     print("|---|---|---|---|---|")
-    print("| " + " | ".join(f"{statistics.median(results[k]):.0f} ms"
-                            for k in ["open", "edit", "hover", "definition", "completion"]) + " |")
+    print("| " + " | ".join(f"{medians[k]:.0f} ms" for k in KEYS) + " |")
 
 
 if __name__ == "__main__":

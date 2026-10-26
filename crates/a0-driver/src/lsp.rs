@@ -184,6 +184,10 @@ struct Server<'a> {
     reported: HashMap<String, Vec<String>>,
     /// Documents edited since they were last analyzed, in the order they were.
     dirty: Vec<String>,
+    /// Syntax trees and indexes of files kept between analyses, by path: unchanged files are not
+    /// parsed or indexed again (D82).
+    trees: program::TreeCache,
+    indexes: HashMap<PathBuf, (String, SyntaxIndex)>,
     out: &'a mut dyn Write,
 }
 
@@ -212,6 +216,8 @@ pub(crate) fn serve(
         docs: HashMap::new(),
         reported: HashMap::new(),
         dirty: Vec::new(),
+        trees: program::TreeCache::default(),
+        indexes: HashMap::new(),
         out: output,
     };
     // Messages are read on a thread of their own, so that the server can tell when edits pause.
@@ -678,7 +684,7 @@ impl Server<'_> {
     fn analyze_dirty(&mut self) {
         for uri in std::mem::take(&mut self.dirty) {
             if let Some(text) = self.docs.get(&uri).map(|d| d.text.clone()) {
-                self.update(&uri, text);
+                a0_diag::time::stage("lsp: update", || self.update(&uri, text));
             }
         }
     }
@@ -691,7 +697,7 @@ impl Server<'_> {
         if let Some(i) = self.dirty.iter().position(|d| d == uri) {
             let uri = self.dirty.remove(i);
             if let Some(text) = self.docs.get(&uri).map(|d| d.text.clone()) {
-                self.update(&uri, text);
+                a0_diag::time::stage("lsp: update", || self.update(&uri, text));
             }
         }
     }
@@ -741,13 +747,14 @@ impl Server<'_> {
                         }
                     };
                     source = SourceId(sources.len());
-                    let loaded = program::load(
+                    let loaded = program::load_cached(
                         grammar,
                         &modules,
                         &root_name,
                         packages.as_ref(),
                         &mut read,
                         &mut sources,
+                        Some(&mut self.trees),
                     )
                     .map_err(CompileError::Diagnostics)?;
                     files = loaded
@@ -762,18 +769,32 @@ impl Server<'_> {
                             (f.source, file_uri)
                         })
                         .collect();
+                    let indexes = &mut self.indexes;
                     program_files = loaded
                         .files
                         .iter()
                         .zip(&files)
                         .map(|(f, (_, file_uri))| {
                             let text = sources.text(f.source).to_string();
+                            // An unchanged file's index is kept from the last analysis (D82).
+                            let index = match indexes.get(&f.path) {
+                                Some((old, index)) if *old == text => {
+                                    let mut index = index.clone();
+                                    index.set_source(f.source);
+                                    index
+                                }
+                                _ => {
+                                    let index = SyntaxIndex::new(grammar, &f.tree);
+                                    indexes.insert(f.path.clone(), (text.clone(), index.clone()));
+                                    index
+                                }
+                            };
                             FileInfo {
                                 source: f.source,
                                 uri: file_uri.clone(),
                                 lines: Lines::new(&text),
                                 text,
-                                index: SyntaxIndex::new(grammar, &f.tree),
+                                index,
                                 imports: f
                                     .imports
                                     .iter()

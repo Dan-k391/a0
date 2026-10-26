@@ -1187,3 +1187,18 @@ lose. `A0_TIME=1` prints how long each stage takes.
 
 The language server, which analyzes on every pause in typing, is where reuse pays: see the
 measurements in `docs/benchmarks.md` ("Large programs").
+
+## D83. Deep nesting: compile on a large stack, and stop at 10,000 levels
+
+Every pass over a tree recurses as deep as the program nests: the parser, the language's walk, the
+HIR builder, the checker, the optimizer, lowering and code generation. A program 10,000 terms long in
+one expression, or blocks a few thousand deep, overflowed the main thread's stack (1 MB on Windows)
+and took the compiler down. The choices were to rewrite every pass without recursion (a large change
+to every layer, and to every language's walk), to grow the stack on demand (a dependency such as
+`stacker`), or to give compiling a large stack and refuse what goes beyond it. A0 does the last:
+drivers and the `a0` command compile on a thread with a 1 GB stack (reserved, not committed; the
+interpreter already ran on one), code generation's workers get 256 MB, and the parser stops at
+10,000 levels of nesting, its own recursion or the tree's, with `E0003` instead of crashing.
+Programs keep their own stacks: they run on threads of their own sized as before, so a program
+behaves the same in every mode. Hosts that compile on their own threads through the C API or
+Python should give them a large stack too (`a0_driver::COMPILER_STACK`).

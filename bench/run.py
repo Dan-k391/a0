@@ -344,8 +344,49 @@ def main():
     w("")
     w(f"A0's collector in `binary_trees` (`A0_GC_STATS=1`): {gc_stats(str(WORK / 'lox-binary_trees'))}.\n")
 
+    large_programs(w, minnow, runs)
+
     Path(args.out).write_text("\n".join(report) + "\n")
     print("\n".join(report))
+
+
+def large_programs(w, minnow, runs):
+    """A generated 100,000-line Minnow package (bench/large): its build, by stage, and the
+    language server on it."""
+    large = WORK / "large"
+    shutil.rmtree(large, ignore_errors=True)
+    made = sh([sys.executable, str(BENCH / "large" / "gen.py"), str(large)]).stdout.strip()
+    main = str(large / "src" / "main.mn")
+    exe = str(WORK / "large-exe")
+    w("## Large programs\n")
+    w(f"`bench/large/gen.py` makes a Minnow package of {made}: each module imports up to three "
+      "earlier ones and calls into them.\n")
+    t_build, _ = timed([minnow, "build", main, "-o", exe], runs)
+    t_run, out = timed([minnow, "run", main], runs)
+    t_exe, out2 = timed([exe], runs)
+    if out != out2:
+        raise RuntimeError(f"the large program printed {out2} natively and {out} in the JIT")
+    w("| Build | `minnow run` (compiling included) | the executable |")
+    w("|---|---|---|")
+    w(f"| {ms(t_build)} | {ms(t_run)} | {ms(t_exe)} |\n")
+    stages = subprocess.run([minnow, "build", main, "-o", exe], capture_output=True, text=True,
+                            env={**os.environ, "A0_TIME": "1"}).stderr
+    rows = [re.match(r"time:\s+([\d.]+) ms\s+(.*)", l) for l in stages.splitlines()]
+    rows = [(m.group(2), float(m.group(1))) for m in rows if m]
+    w("Where the build's time goes (`A0_TIME=1`):\n")
+    w("| " + " | ".join(name for name, _ in rows) + " |")
+    w("|" + "---|" * len(rows))
+    w("| " + " | ".join(f"{t:.0f} ms" for _, t in rows) + " |\n")
+    sys.path.insert(0, str(BENCH / "large"))
+    import lsp
+    w("`minnow lsp` on it: the time from opening a file to its diagnostics, from an edit to the "
+      "answer to the next request (which waits for the new analysis), and to answer requests:\n")
+    w("| File open | its program | open to diagnostics | edit to an answer | hover | definition | completion |")
+    w("|---|---|---|---|---|---|---|")
+    for file, program in [(None, "half the modules"), ("main.mn", "every module")]:
+        name, medians = lsp.measure(minnow, large, runs, file)
+        w(f"| {name} | {program} | " + " | ".join(f"{medians[k]:.0f} ms" for k in lsp.KEYS) + " |")
+    w("")
 
 
 def gc_stats(exe):

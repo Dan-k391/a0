@@ -56,11 +56,16 @@ fn retype(m: &mut HirModule) -> Diagnostics {
     }
     let mut diags = Diagnostics::new();
     for e in nodes {
-        let (kind, ty) = (m.exprs[e.index()].kind.clone(), m.exprs[e.index()].ty);
+        let ty = m.exprs[e.index()].ty;
         if ty == TypeId::NEVER || ty == TypeId::ERROR || !m.is_resolved(ty) {
             continue;
         }
-        let (at, problem) = match infer(m, &kind, ty) {
+        // Inferring looks at the node's children, never at the node: take its kind out rather
+        // than cloning a program's worth of nodes.
+        let kind = std::mem::replace(&mut m.exprs[e.index()].kind, ExprKind::Unit);
+        let inferred = infer(m, &kind, ty);
+        m.exprs[e.index()].kind = kind;
+        let (at, problem) = match inferred {
             Ok(t) if m.same(t, ty) => continue,
             Ok(t) => (
                 e,
