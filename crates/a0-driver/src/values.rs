@@ -130,7 +130,9 @@ fn summary(m: &Module, w: u64, view: View, depth: u32) -> String {
     let nested = depth > 1;
     match m.debug_type_kind(t) {
         DebugKind::Int => (w as i64).to_string(),
+        DebugKind::UInt => w.to_string(),
         DebugKind::Float => float(w),
+        DebugKind::Float32 => float((f32::from_bits(w as u32) as f64).to_bits()),
         DebugKind::Bool => (w & 1 != 0).to_string(),
         DebugKind::String if w == 0 => "null".to_string(),
         DebugKind::String => string(w),
@@ -345,14 +347,22 @@ fn fields(o: u64) -> Vec<(String, u64, View)> {
 fn elements(a: u64, elem: View) -> Vec<(String, u64, View)> {
     let len = word(a) as usize;
     let data = word(a + 16);
-    // An array of bytes (`A0_ELEM_BYTE` as its element kind, `array<bool>`) or of words.
-    let bytes = word(a + 24) == ELEM_BYTE;
+    // Elements of 1, 2 or 4 bytes (`A0_ELEM_BYTE`, `A0_ELEM_16`, `A0_ELEM_32`) or words.
+    let size: u64 = match word(a + 24) {
+        ELEM_BYTE => 1,
+        4 => 2,
+        5 => 4,
+        _ => 8,
+    };
     (0..len.min(SHOWN))
         .map(|i| {
-            let w = if bytes {
-                self::bytes(data + i as u64, 1)[0] as u64
+            let at = data + size * i as u64;
+            let w = if size < 8 {
+                let mut le = [0u8; 8];
+                le[..size as usize].copy_from_slice(&self::bytes(at, size as usize));
+                u64::from_le_bytes(le)
             } else {
-                word(data + 8 * i as u64)
+                word(at)
             };
             (format!("[{i}]"), w, elem)
         })

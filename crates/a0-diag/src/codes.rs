@@ -107,6 +107,8 @@ codes! {
         "A type is used as an interface it does not implement, or declares that it implements one without having all of its methods with the signatures the interface gives them (`Self` standing for the type).";
     NOT_DYNAMIC = "E2022", "not callable through an interface value",
         "The method takes or returns `Self`, the type that implements the interface, which a value of the interface type does not know. Call it on a value whose type is known, or on a value of a type parameter bounded by the interface.";
+    LITERAL_RANGE = "E2023", "literal out of range",
+        "A number written in the program takes the integer type expected of it, and must fit in it: an 8-bit unsigned integer holds 0 to 255, a signed one -128 to 127. Write a number that fits, or convert a value of a wider type with a conversion, which wraps.";
 
     OUTSIDE_LOOP = "E3001", "outside a loop",
         "Leaving or continuing a loop is only possible inside a loop.";

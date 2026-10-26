@@ -76,13 +76,17 @@ expr @inline = @prec primary ~ "expected an expression" {
     right "=" => assign;
     left "||" => or;
     left "&&" => and;
+    left "|" => binary;
+    left "^" => binary;
+    left "&" => binary;
     left "==" "!=" => binary;
     left "<" "<=" ">" ">=" => binary;
+    left "shl" "shr" => binary;
     left "+" "-" => binary;
     left "*" "/" "%" => binary;
     postfix "as" ty:type ~ "expected a type" => cast;
     postfix "is" ty:type ~ "expected a type" => is;
-    prefix "-" "!" => unary;
+    prefix "-" "!" "~" => unary;
     postfix "(" args:args? ")" ~ "expected ')'" => call;
     postfix "!" => unwrap;
     postfix "." name:NAME ~ "expected a field name" => field;

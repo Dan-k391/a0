@@ -48,6 +48,9 @@ impl Rng {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Ty {
     Int,
+    /// `u8` and `i32`: sized numbers, which wrap at their width.
+    U8,
+    I32,
     Bool,
     Float,
     Str,
@@ -68,14 +71,16 @@ enum Ty {
 use Ty::*;
 
 /// The types of parameters, results and locals.
-const VALUES: [Ty; 13] = [
-    Int, Bool, Float, Str, Any, Arr, Flags, Obj, Map, Rec, Opt, Shape, Fun,
+const VALUES: [Ty; 15] = [
+    Int, U8, I32, Bool, Float, Str, Any, Arr, Flags, Obj, Map, Rec, Opt, Shape, Fun,
 ];
 
 impl Ty {
     fn syntax(self) -> &'static str {
         match self {
             Int => "int",
+            U8 => "u8",
+            I32 => "i32",
             Bool => "bool",
             Float => "float",
             Str => "string",
@@ -241,7 +246,7 @@ fn show_opt(o: R?) -> string {
 /// The string that shows a local of type `ty` named `name`.
 fn show(ty: Ty, name: &str) -> String {
     match ty {
-        Int | Bool | Float => format!("str({name})"),
+        Int | U8 | I32 | Bool | Float => format!("str({name})"),
         Str => name.to_string(),
         Any => format!("show_any({name})"),
         Arr => format!("show_arr({name})"),
@@ -359,6 +364,10 @@ impl Gen {
                     "100",
                     "9223372036854775807",
                 ])
+                .to_string(),
+            U8 => r.pick(&["0", "1", "7", "200", "255"]).to_string(),
+            I32 => r
+                .pick(&["0", "-5", "3", "100000", "2147483647", "-2147483648"])
                 .to_string(),
             Bool => r.pick(&["true", "false"]).to_string(),
             Float => r
@@ -487,6 +496,10 @@ impl Gen {
                     let of = self.rng.pick(&[Str, Arr, Flags, Map]);
                     format!("len({})", self.expr(of, ctx, d))
                 }
+                5 if self.rng.chance(50) => {
+                    let of = self.rng.pick(&[U8, I32]);
+                    format!("({} as int)", self.expr(of, ctx, d))
+                }
                 5 => format!("note({})", self.expr(Int, ctx, d)),
                 6 => format!("({}).n", self.expr(Rec, ctx, d)),
                 7 => format!("({} as int)", self.expr(Float, ctx, d)),
@@ -587,6 +600,28 @@ impl Gen {
                     self.expr(Map, ctx, d),
                     self.expr(Str, ctx, d)
                 ),
+            },
+            U8 | I32 => match self.rng.below(7) {
+                0 | 1 => {
+                    let op = self.rng.pick(&["+", "-", "*", "&", "|", "^"]);
+                    format!("({} {op} {})", self.expr(ty, ctx, d), self.expr(ty, ctx, d))
+                }
+                2 => {
+                    let op = self.rng.pick(&["/", "%"]);
+                    let by = self.rng.pick(&["1", "3", "7"]);
+                    format!("({} {op} {by})", self.expr(ty, ctx, d))
+                }
+                3 => {
+                    let op = self.rng.pick(&["shl", "shr"]);
+                    let by = self.rng.pick(&["0", "1", "3", "9"]);
+                    format!("({} {op} {by})", self.expr(ty, ctx, d))
+                }
+                4 => format!("(~{})", self.expr(ty, ctx, d)),
+                5 => format!("({} as {})", self.expr(Int, ctx, d), ty.syntax()),
+                _ => {
+                    let other = if ty == U8 { I32 } else { U8 };
+                    format!("({} as {})", self.expr(other, ctx, d), ty.syntax())
+                }
             },
             Float => match self.rng.below(3) {
                 0 => {
@@ -743,7 +778,8 @@ impl Gen {
                         ty,
                         mutable: true,
                     });
-                    return if self.rng.chance(50) {
+                    // A literal is an `int` unless a sized type is expected of it.
+                    return if self.rng.chance(50) || matches!(ty, U8 | I32) {
                         format!("let {name}: {} = {init};", ty.syntax())
                     } else {
                         format!("let {name} = {init};")

@@ -104,6 +104,18 @@ A0String *a0_string_from_float(double value) {
     return a0_string_new((const uint8_t *)buf, n);
 }
 
+A0String *a0_string_from_uint(uint64_t value) {
+    char buf[32];
+    int n = snprintf(buf, sizeof buf, "%llu", (unsigned long long)value);
+    return a0_string_new((const uint8_t *)buf, n);
+}
+
+A0String *a0_string_from_f32(double value) {
+    char buf[32];
+    int32_t n = a0_format_f32(value, buf);
+    return a0_string_new((const uint8_t *)buf, n);
+}
+
 A0String *a0_string_from_bool(int64_t value) {
     return value ? a0_string_new((const uint8_t *)"true", 4) : a0_string_new((const uint8_t *)"false", 5);
 }

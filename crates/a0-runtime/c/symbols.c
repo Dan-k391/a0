@@ -78,6 +78,8 @@ const A0Symbol a0_rt_symbols[] = {
     SYM(a0_string_from_int),
     SYM(a0_string_from_float),
     SYM(a0_string_from_bool),
+    SYM(a0_string_from_uint),
+    SYM(a0_string_from_f32),
     SYM(a0_string_print),
     SYM(a0_string_eprint),
     SYM(a0_string_panic),

@@ -121,6 +121,26 @@ fn type_errors_are_reported_with_locations() {
             "expected `array<string>`, found `array<int>`",
         ),
         (
+            "fn main() -> int { let b: u8 = 256; 0 }",
+            "E2023",
+            "the literal `256` does not fit in `u8`",
+        ),
+        (
+            "fn main() -> int { let b: i8 = -129; 0 }",
+            "E2023",
+            "`i8` holds -128 to 127",
+        ),
+        (
+            "fn main() -> int { let a: u8 = 1; let b: i32 = 2; a + b; 0 }",
+            "E2001",
+            "expected `u8`, found `i32`",
+        ),
+        (
+            "fn main() -> int { 1.5 & 2.5; 0 }",
+            "E2004",
+            "operator `&` cannot be applied to `float`",
+        ),
+        (
             "fn main() -> int { break; 0 }",
             "E3001",
             "`break` outside of a loop",
@@ -238,12 +258,12 @@ fn type_errors_are_reported_with_locations() {
         (
             "extern fn f(array<string>);\nfn main() -> int { 0 }",
             "hir.builder",
-            "C functions take int, float, bool, strings and arrays of int, float or bool",
+            "C functions take numbers, bool, strings and arrays of numbers or bool",
         ),
         (
             "extern fn f() -> array<int>;\nfn main() -> int { 0 }",
             "hir.builder",
-            "C functions return int, float, bool, unit or a string",
+            "C functions return numbers, bool, unit or a string",
         ),
         (
             "extern \"cobol\" fn f();\nfn main() -> int { 0 }",

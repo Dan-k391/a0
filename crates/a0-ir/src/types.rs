@@ -425,6 +425,10 @@ pub enum DebugKind {
     Object,
     /// Shown by name only (closures, foreign pointers).
     Opaque,
+    /// An unsigned integer.
+    UInt,
+    /// A 32-bit float (in the low 32 bits of a word).
+    Float32,
 }
 
 impl DebugKind {
@@ -442,6 +446,8 @@ impl DebugKind {
         DebugKind::Boxed,
         DebugKind::Object,
         DebugKind::Opaque,
+        DebugKind::UInt,
+        DebugKind::Float32,
     ];
 
     pub fn name(self) -> &'static str {
@@ -459,6 +465,8 @@ impl DebugKind {
             DebugKind::Boxed => "boxed",
             DebugKind::Object => "object",
             DebugKind::Opaque => "opaque",
+            DebugKind::UInt => "uint",
+            DebugKind::Float32 => "float32",
         }
     }
 

@@ -43,6 +43,9 @@ const WORD_REF: u8 = 1;
 const WORD_ANY: u8 = 2;
 /// An array whose elements are bytes (`array<bool>`), not words (`A0_ELEM_BYTE` in `a0rt.h`).
 const ELEM_BYTE: u8 = 3;
+/// Elements of two and four bytes (`A0_ELEM_16`, `A0_ELEM_32`).
+const ELEM_16: u8 = 4;
+const ELEM_32: u8 = 5;
 const KEY_RAW: i64 = 0;
 const KEY_STRING: i64 = 1;
 const KEY_BOOL: i64 = 2;
@@ -119,6 +122,8 @@ struct Runtime {
     string_substr: IrFunc,
     string_byte_at: IrFunc,
     string_from_int: IrFunc,
+    string_from_uint: IrFunc,
+    string_from_f32: IrFunc,
     string_from_float: IrFunc,
     string_from_bool: IrFunc,
     string_print: IrFunc,
@@ -177,6 +182,8 @@ impl Runtime {
             string_substr: f("a0_string_substr", &[Ptr, I64, I64], Some(Ptr)),
             string_byte_at: f("a0_string_byte_at", &[Ptr, I64], Some(I64)),
             string_from_int: f("a0_string_from_int", &[I64], Some(Ptr)),
+            string_from_uint: f("a0_string_from_uint", &[I64], Some(Ptr)),
+            string_from_f32: f("a0_string_from_f32", &[F64], Some(Ptr)),
             string_from_float: f("a0_string_from_float", &[F64], Some(Ptr)),
             string_from_bool: f("a0_string_from_bool", &[I64], Some(Ptr)),
             string_print: f("a0_string_print", &[Ptr], None),
@@ -394,8 +401,15 @@ impl<'a> Lowerer<'a> {
             TypeKind::Bool => Some(Type::I1),
             TypeKind::Int | TypeKind::Any => Some(Type::I64),
             TypeKind::Float => Some(Type::F64),
+            TypeKind::SizedInt(bits, _) => Some(int_type(*bits)),
+            TypeKind::F32 => Some(Type::F32),
             _ => Some(Type::Ptr),
         }
+    }
+
+    /// The width and signedness of an integer type (`int` included).
+    fn int_bits(&self, t: TypeId) -> Option<(u32, bool)> {
+        crate::builder::int_bits(self.m, t)
     }
 
     fn word_kind(&self, t: TypeId) -> u8 {
@@ -408,12 +422,14 @@ impl<'a> Lowerer<'a> {
         }
     }
 
-    /// How an array stores elements of type `t`: booleans as bytes, everything else as words.
+    /// How an array stores elements of type `t`: numbers narrower than a word in as many bytes
+    /// as they take, booleans as bytes, everything else as words.
     fn elem_kind(&self, t: TypeId) -> u8 {
-        if t == TypeId::BOOL {
-            ELEM_BYTE
-        } else {
-            self.word_kind(t)
+        match self.m.kind(t) {
+            TypeKind::Bool | TypeKind::SizedInt(8, _) => ELEM_BYTE,
+            TypeKind::SizedInt(16, _) => ELEM_16,
+            TypeKind::SizedInt(32, _) | TypeKind::F32 => ELEM_32,
+            _ => self.word_kind(t),
         }
     }
 
@@ -526,16 +542,26 @@ impl<'a> Lowerer<'a> {
                 self.externs.push(f);
                 continue;
             }
-            // A C function gets a `bool` as a 64-bit 0 or 1 (`c_argument`).
+            // A C function gets a `bool` as a 64-bit 0 or 1 (`c_argument`), and integers narrower
+            // than 32 bits as 32-bit ones, extended as C promotes them; it returns them in 32
+            // bits too, which `c_result` narrows.
+            let c_type = |me: &Self, t: TypeId| match me.m.kind(t) {
+                TypeKind::SizedInt(8 | 16, _) => Some(Type::I32),
+                _ => me.ir_type(t),
+            };
             let params: Vec<Type> = x
                 .params
                 .iter()
                 .filter_map(|&t| match (x.abi, t) {
                     (Abi::C, TypeId::BOOL) => Some(Type::I64),
+                    (Abi::C, t) => c_type(self, t),
                     _ => self.ir_type(t),
                 })
                 .collect();
-            let ret = self.ir_type(x.ret);
+            let ret = match x.abi {
+                Abi::C => c_type(self, x.ret),
+                Abi::A0 => self.ir_type(x.ret),
+            };
             let f = self.b.declare_extern(&x.name, &params, ret);
             self.externs.push(f);
         }
@@ -1001,6 +1027,15 @@ impl<'a> Lowerer<'a> {
     fn word_encode(&mut self, v: Value, t: TypeId) -> Value {
         match self.m.kind(t) {
             TypeKind::Float => self.b.cast(Opcode::Bitcast, v, Type::I64),
+            // Extended by their sign, so that a word reads as the number.
+            TypeKind::SizedInt(64, _) => v,
+            TypeKind::SizedInt(_, true) => self.b.cast(Opcode::Sext, v, Type::I64),
+            TypeKind::SizedInt(_, false) => self.b.cast(Opcode::Zext, v, Type::I64),
+            // Its 32 bits, as in an array of them.
+            TypeKind::F32 => {
+                let bits = self.b.cast(Opcode::Bitcast, v, Type::I32);
+                self.b.cast(Opcode::Zext, bits, Type::I64)
+            }
             TypeKind::Bool => self.b.cast(Opcode::Zext, v, Type::I64),
             TypeKind::Int | TypeKind::Any => v,
             _ => self.b.cast(Opcode::Ptrtoint, v, Type::I64),
@@ -1012,6 +1047,12 @@ impl<'a> Lowerer<'a> {
             TypeKind::Unit => return V::Unit,
             TypeKind::Never => return V::Never,
             TypeKind::Float => self.b.cast(Opcode::Bitcast, w, Type::F64),
+            TypeKind::SizedInt(64, _) => w,
+            TypeKind::SizedInt(bits, _) => self.b.cast(Opcode::Trunc, w, int_type(*bits)),
+            TypeKind::F32 => {
+                let bits = self.b.cast(Opcode::Trunc, w, Type::I32);
+                self.b.cast(Opcode::Bitcast, bits, Type::F32)
+            }
             TypeKind::Bool => {
                 let zero = self.b.iconst(Type::I64, 0);
                 self.b.icmp(IntCC::Ne, w, zero)
@@ -1057,6 +1098,11 @@ impl<'a> Lowerer<'a> {
     fn c_argument(&mut self, v: Value, t: TypeId) -> Value {
         if t == TypeId::BOOL {
             return self.b.cast(Opcode::Zext, v, Type::I64);
+        }
+        match self.m.kind(t) {
+            TypeKind::SizedInt(8 | 16, true) => return self.b.cast(Opcode::Sext, v, Type::I32),
+            TypeKind::SizedInt(8 | 16, false) => return self.b.cast(Opcode::Zext, v, Type::I32),
+            _ => {}
         }
         let inner = self.m.non_null(t);
         let pointer = |me: &mut Self, v: Value| match me.m.kind(inner) {
@@ -1120,30 +1166,40 @@ impl<'a> Lowerer<'a> {
 
     /// The address of element `i` of an array (`A0Array`: length, capacity, then the pointer to
     /// the elements), whose elements are bytes if `bytes`, words otherwise.
-    fn element_address(&mut self, a: Value, i: Value, bytes: bool) -> Value {
+    fn element_address(&mut self, a: Value, i: Value, size: u32) -> Value {
         let data = self.load_word(a, 2);
         let data = self.b.cast(Opcode::Inttoptr, data, Type::Ptr);
-        if bytes {
+        if size == 1 {
             return self.b.ptradd(data, i);
         }
-        let eight = self.b.iconst(Type::I64, 8);
-        let offset = self.b.imul(i, eight);
+        let size = self.b.iconst(Type::I64, size as i64);
+        let offset = self.b.imul(i, size);
         self.b.ptradd(data, offset)
+    }
+
+    /// The size of an array's elements of type `elem`, and the IR type of each in memory.
+    fn elem_layout(&self, elem: TypeId) -> (u32, Type) {
+        match self.elem_kind(elem) {
+            ELEM_BYTE => (1, Type::I8),
+            ELEM_16 => (2, Type::I16),
+            ELEM_32 => (4, Type::I32),
+            _ => (8, Type::I64),
+        }
     }
 
     /// `a[i]`, as a word, for an array of `elem`s.
     fn array_element(&mut self, a: Value, i: Value, elem: TypeId) -> Value {
-        let bytes = self.elem_kind(elem) == ELEM_BYTE;
+        let (size, mem) = self.elem_layout(elem);
         let result = self.b.declare_var("element", Type::I64);
         let bad = self.out_of_bounds(a, i);
         self.b.if_(bad);
         let r = self.b.call(self.rt.array_get, &[a, i]).unwrap();
         self.b.set(result, r);
         self.b.else_();
-        let at = self.element_address(a, i, bytes);
-        let w = if bytes {
-            let byte = self.b.load(Type::I8, at);
-            self.b.cast(Opcode::Zext, byte, Type::I64)
+        let at = self.element_address(a, i, size);
+        let w = if size < 8 {
+            let narrow = self.b.load(mem, at);
+            self.b.cast(Opcode::Zext, narrow, Type::I64)
         } else {
             self.b.load(Type::I64, at)
         };
@@ -1154,15 +1210,15 @@ impl<'a> Lowerer<'a> {
 
     /// `a[i] = w`, for an array of `elem`s.
     fn set_array_element(&mut self, a: Value, i: Value, w: Value, elem: TypeId) {
-        let bytes = self.elem_kind(elem) == ELEM_BYTE;
+        let (size, mem) = self.elem_layout(elem);
         let bad = self.out_of_bounds(a, i);
         self.b.if_(bad);
         self.b.call(self.rt.array_set, &[a, i, w]);
         self.b.else_();
-        let at = self.element_address(a, i, bytes);
-        if bytes {
-            let byte = self.b.cast(Opcode::Trunc, w, Type::I8);
-            self.b.store(byte, at);
+        let at = self.element_address(a, i, size);
+        if size < 8 {
+            let narrow = self.b.cast(Opcode::Trunc, w, mem);
+            self.b.store(narrow, at);
         } else {
             self.b.store(w, at);
         }
@@ -1394,8 +1450,10 @@ impl<'a> Lowerer<'a> {
             s.b.debug_type(kind, &name, &elems)
         };
         let d = match m.kind(t) {
-            TypeKind::Int => simple(self, DebugKind::Int, &[]),
+            TypeKind::Int | TypeKind::SizedInt(_, true) => simple(self, DebugKind::Int, &[]),
+            TypeKind::SizedInt(_, false) => simple(self, DebugKind::UInt, &[]),
             TypeKind::Float => simple(self, DebugKind::Float, &[]),
+            TypeKind::F32 => simple(self, DebugKind::Float32, &[]),
             TypeKind::Bool => simple(self, DebugKind::Bool, &[]),
             TypeKind::String => simple(self, DebugKind::String, &[]),
             TypeKind::Any => simple(self, DebugKind::Any, &[]),
@@ -1560,7 +1618,19 @@ impl<'a> Lowerer<'a> {
         match kind {
             ExprKind::Unit => V::Unit,
             ExprKind::Bool(b) => V::Val(self.b.iconst(Type::I1, b as i64)),
-            ExprKind::Int(v) => V::Val(self.b.iconst(Type::I64, v)),
+            ExprKind::Int(v) => {
+                let t = self.ir_type(ty).unwrap_or(Type::I64);
+                let v = match self.int_bits(ty) {
+                    // The literal's bits at its width, as the IR expects.
+                    Some((bits, _)) if bits < 64 => v & ((1i64 << bits) - 1),
+                    _ => v,
+                };
+                V::Val(self.b.iconst(t, v))
+            }
+            ExprKind::Float(bits) if ty == TypeId::F32 => {
+                let single = (f64::from_bits(bits) as f32).to_bits();
+                V::Val(self.b.fconst_bits(Type::F32, single as u64))
+            }
             ExprKind::Float(bits) => V::Val(self.b.fconst_bits(Type::F64, bits)),
             ExprKind::Str(s) => {
                 let g = self.string_global(&s);
@@ -1639,8 +1709,8 @@ impl<'a> Lowerer<'a> {
                 let v = self.expr(a);
                 let V::Val(v) = v else { return v };
                 V::Val(match op {
-                    UnOp::Not => self.b.not(v),
-                    UnOp::Neg if ty == TypeId::FLOAT => self.b.fneg(v),
+                    UnOp::Not | UnOp::BitNot => self.b.not(v),
+                    UnOp::Neg if ty == TypeId::FLOAT || ty == TypeId::F32 => self.b.fneg(v),
                     UnOp::Neg => self.b.ineg(v),
                 })
             }
@@ -1690,7 +1760,12 @@ impl<'a> Lowerer<'a> {
                         });
                     }
                 }
-                let r = self.b.call(self.externs[x.index()], &ir_args);
+                let mut r = self.b.call(self.externs[x.index()], &ir_args);
+                if let (Abi::C, TypeKind::SizedInt(bits @ (8 | 16), _), Some(v)) =
+                    (abi, m.kind(ty), r)
+                {
+                    r = Some(self.b.cast(Opcode::Trunc, v, int_type(*bits)));
+                }
                 let string = m.non_null(ty) == TypeId::STRING;
                 match r {
                     Some(p) if abi == Abi::C && string => {
@@ -2287,16 +2362,39 @@ impl<'a> Lowerer<'a> {
             return V::Val(self.b.iconst(Type::I1, (op == BinOp::Eq) as i64));
         }
         let (x, y) = (vs[0].val(), vs[1].val());
+        let cmp_uint = |op: BinOp| match op {
+            BinOp::Lt => IntCC::Ult,
+            BinOp::Le => IntCC::Ule,
+            BinOp::Gt => IntCC::Ugt,
+            BinOp::Ge => IntCC::Uge,
+            BinOp::Eq => IntCC::Eq,
+            _ => IntCC::Ne,
+        };
         V::Val(match m.kind(t) {
-            TypeKind::Int => match op {
-                BinOp::Add => self.b.iadd(x, y),
-                BinOp::Sub => self.b.isub(x, y),
-                BinOp::Mul => self.b.imul(x, y),
-                BinOp::Div => self.b.sdiv(x, y),
-                BinOp::Rem => self.b.srem(x, y),
-                _ => self.b.icmp(cmp_int(op), x, y),
-            },
-            TypeKind::Float => match op {
+            TypeKind::Int | TypeKind::SizedInt(..) => {
+                let signed = self.int_bits(t).is_none_or(|(_, s)| s);
+                match op {
+                    BinOp::Add => self.b.iadd(x, y),
+                    BinOp::Sub => self.b.isub(x, y),
+                    BinOp::Mul => self.b.imul(x, y),
+                    BinOp::Div if signed => self.b.sdiv(x, y),
+                    BinOp::Div => self.b.binary(Opcode::Udiv, x, y),
+                    BinOp::Rem if signed => self.b.srem(x, y),
+                    BinOp::Rem => self.b.binary(Opcode::Urem, x, y),
+                    BinOp::BitAnd => self.b.and(x, y),
+                    BinOp::BitOr => self.b.or(x, y),
+                    BinOp::BitXor => self.b.xor(x, y),
+                    BinOp::Shl => self.b.binary(Opcode::Shl, x, y),
+                    BinOp::Shr if signed => self.b.binary(Opcode::Ashr, x, y),
+                    BinOp::Shr => self.b.binary(Opcode::Lshr, x, y),
+                    _ if signed => self.b.icmp(cmp_int(op), x, y),
+                    _ => self.b.icmp(cmp_uint(op), x, y),
+                }
+            }
+            TypeKind::Bool if op == BinOp::BitAnd => self.b.and(x, y),
+            TypeKind::Bool if op == BinOp::BitOr => self.b.or(x, y),
+            TypeKind::Bool if op == BinOp::BitXor => self.b.xor(x, y),
+            TypeKind::Float | TypeKind::F32 => match op {
                 BinOp::Add => self.b.fadd(x, y),
                 BinOp::Sub => self.b.fsub(x, y),
                 BinOp::Mul => self.b.fmul(x, y),
@@ -2344,6 +2442,16 @@ impl<'a> Lowerer<'a> {
         match t {
             TypeId::INT => self.b.call(self.rt.string_from_int, &[v]).unwrap(),
             TypeId::FLOAT => self.b.call(self.rt.string_from_float, &[v]).unwrap(),
+            TypeId::U64 => self.b.call(self.rt.string_from_uint, &[v]).unwrap(),
+            // The shortest text that reads back as the same `f32`.
+            TypeId::F32 => {
+                let d = self.b.cast(Opcode::Fext, v, Type::F64);
+                self.b.call(self.rt.string_from_f32, &[d]).unwrap()
+            }
+            _ if self.int_bits(t).is_some() => {
+                let w = self.word_encode(v, t);
+                self.b.call(self.rt.string_from_int, &[w]).unwrap()
+            }
             TypeId::STRING => v,
             _ => {
                 let w = self.b.cast(Opcode::Zext, v, Type::I64);
@@ -2530,13 +2638,62 @@ impl<'a> Lowerer<'a> {
             self.b.end_if();
             return V::Val(self.b.get(result));
         }
-        if from == TypeId::INT && to == TypeId::FLOAT {
-            return V::Val(self.b.cast(Opcode::Sitofp, v, Type::F64));
-        }
-        if from == TypeId::FLOAT && to == TypeId::INT {
-            return V::Val(self.b.cast(Opcode::Fptosi, v, Type::I64));
+        if let Some(c) = self.numeric_cast(v, from, to) {
+            return V::Val(c);
         }
         self.unpack_any(v, to)
+    }
+
+    /// Converts between numbers: integers wrap or extend by the source's sign, integers to floats
+    /// round, floats to integers truncate and saturate (NaN is 0), floats widen or round. `None`
+    /// if `from` or `to` is not a number.
+    fn numeric_cast(&mut self, v: Value, from: TypeId, to: TypeId) -> Option<Value> {
+        let float = |t: TypeId| match t {
+            TypeId::FLOAT => Some(Type::F64),
+            TypeId::F32 => Some(Type::F32),
+            _ => None,
+        };
+        let to_ir = self.ir_type(to)?;
+        Some(
+            match (
+                self.int_bits(from),
+                float(from),
+                self.int_bits(to),
+                float(to),
+            ) {
+                (Some((fb, signed)), _, Some((tb, _)), _) => {
+                    if fb == tb {
+                        v
+                    } else if fb > tb {
+                        self.b.cast(Opcode::Trunc, v, to_ir)
+                    } else if signed {
+                        self.b.cast(Opcode::Sext, v, to_ir)
+                    } else {
+                        self.b.cast(Opcode::Zext, v, to_ir)
+                    }
+                }
+                (Some((_, signed)), _, _, Some(f)) => {
+                    let op = if signed {
+                        Opcode::Sitofp
+                    } else {
+                        Opcode::Uitofp
+                    };
+                    self.b.cast(op, v, f)
+                }
+                (_, Some(_), Some((_, signed)), _) => {
+                    let op = if signed {
+                        Opcode::Fptosi
+                    } else {
+                        Opcode::Fptoui
+                    };
+                    self.b.cast(op, v, to_ir)
+                }
+                (_, Some(ff), _, Some(tf)) if ff == tf => v,
+                (_, Some(Type::F32), _, Some(_)) => self.b.cast(Opcode::Fext, v, Type::F64),
+                (_, Some(_), _, Some(_)) => self.b.cast(Opcode::Ftrunc, v, Type::F32),
+                _ => return None,
+            },
+        )
     }
 
     /// Unpacks an `any` word that must hold a `to`.
@@ -2589,6 +2746,15 @@ impl<'a> Lowerer<'a> {
                 self.b.select(v, t, f)
             }
             TypeKind::Int => self.b.call(self.rt.any_from_int, &[v]).unwrap(),
+            // Sized numbers become an `int` or a `float`.
+            TypeKind::SizedInt(..) => {
+                let w = self.word_encode(v, from);
+                self.b.call(self.rt.any_from_int, &[w]).unwrap()
+            }
+            TypeKind::F32 => {
+                let d = self.b.cast(Opcode::Fext, v, Type::F64);
+                self.box_any(V::Val(d), TypeId::FLOAT)
+            }
             TypeKind::Any => v,
             TypeKind::Nullable(_) => {
                 let null = self.b.null();
@@ -2864,6 +3030,16 @@ impl<'a> Lowerer<'a> {
 
 /// Whether a builtin allocates a GC object: one that makes a string or an array, or prints a value
 /// that is not a string yet.
+/// The IR integer type of a width.
+fn int_type(bits: u32) -> Type {
+    match bits {
+        8 => Type::I8,
+        16 => Type::I16,
+        32 => Type::I32,
+        _ => Type::I64,
+    }
+}
+
 fn builtin_allocates(m: &HirModule, op: Builtin, args: &[ExprId]) -> bool {
     match op {
         Builtin::Keys | Builtin::Substr | Builtin::Str | Builtin::Filled | Builtin::FieldNames => {

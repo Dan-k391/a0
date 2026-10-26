@@ -84,6 +84,7 @@ list matches it.
 | E2020 | cannot pass the failure on |
 | E2021 | interface not implemented |
 | E2022 | not callable through an interface value |
+| E2023 | literal out of range |
 | E3001 | outside a loop |
 | E4001 | no entry point |
 | E4002 | invalid entry point |

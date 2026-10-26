@@ -70,7 +70,27 @@ impl TypeId {
     pub const ERROR: TypeId = TypeId(7);
     /// A dynamic object: fields of type `any` added by name at run time (D66).
     pub const OBJECT: TypeId = TypeId(8);
+    // Sized numbers, for systems languages and C (`int` is `i64`, `float` is `f64`).
+    pub const I8: TypeId = TypeId(9);
+    pub const I16: TypeId = TypeId(10);
+    pub const I32: TypeId = TypeId(11);
+    pub const U8: TypeId = TypeId(12);
+    pub const U16: TypeId = TypeId(13);
+    pub const U32: TypeId = TypeId(14);
+    pub const U64: TypeId = TypeId(15);
+    pub const F32: TypeId = TypeId(16);
 }
+
+/// The sized integer types, by name, width and signedness (`int` is the 64-bit signed one).
+pub const SIZED_INTS: [(&str, TypeId, u32, bool); 7] = [
+    ("i8", TypeId::I8, 8, true),
+    ("i16", TypeId::I16, 16, true),
+    ("i32", TypeId::I32, 32, true),
+    ("u8", TypeId::U8, 8, false),
+    ("u16", TypeId::U16, 16, false),
+    ("u32", TypeId::U32, 32, false),
+    ("u64", TypeId::U64, 64, false),
+];
 
 /// The shape of a type (see `docs/hir.md`).
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -84,6 +104,10 @@ pub(crate) enum TypeKind {
     Never,
     Error,
     Object,
+    /// A sized integer: its width in bits and whether it is signed (not `int`, which is
+    /// `Int`).
+    SizedInt(u32, bool),
+    F32,
     Array(TypeId),
     Map(TypeId, TypeId),
     /// A struct and its type arguments (none unless the struct is generic).
@@ -126,6 +150,9 @@ pub enum TypeTag {
     Var,
     /// A dynamic object (`object`).
     Object,
+    /// `i8` .. `u64`.
+    SizedInt,
+    F32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -142,6 +169,14 @@ pub enum BinOp {
     Ge,
     Eq,
     Ne,
+    /// `&`, `|`, `^` on integers (and booleans for `&`, `|` and `^`, without short-circuit).
+    BitAnd,
+    BitOr,
+    BitXor,
+    /// `<<` and `>>` (written `shl` and `shr` in the text format): the amount is taken modulo the
+    /// width; `>>` is arithmetic for signed integers and logical for unsigned ones.
+    Shl,
+    Shr,
 }
 
 impl BinOp {
@@ -158,14 +193,21 @@ impl BinOp {
             BinOp::Ge => ">=",
             BinOp::Eq => "==",
             BinOp::Ne => "!=",
+            BinOp::BitAnd => "&",
+            BinOp::BitOr => "|",
+            BinOp::BitXor => "^",
+            BinOp::Shl => "<<",
+            BinOp::Shr => ">>",
         }
     }
 
     pub fn from_symbol(s: &str) -> Option<BinOp> {
         use BinOp::*;
-        [Add, Sub, Mul, Div, Rem, Lt, Le, Gt, Ge, Eq, Ne]
-            .into_iter()
-            .find(|op| op.symbol() == s)
+        [
+            Add, Sub, Mul, Div, Rem, Lt, Le, Gt, Ge, Eq, Ne, BitAnd, BitOr, BitXor, Shl, Shr,
+        ]
+        .into_iter()
+        .find(|op| op.symbol() == s)
     }
 
     pub fn is_comparison(self) -> bool {
@@ -178,6 +220,8 @@ impl BinOp {
 pub enum UnOp {
     Neg,
     Not,
+    /// `~`: the bits of an integer flipped.
+    BitNot,
 }
 
 macro_rules! builtins {
@@ -638,6 +682,10 @@ impl HirModule {
         ] {
             m.intern(k);
         }
+        for (_, _, bits, signed) in SIZED_INTS {
+            m.intern(TypeKind::SizedInt(bits, signed));
+        }
+        m.intern(TypeKind::F32);
         m
     }
 
@@ -952,6 +1000,8 @@ impl HirModule {
             TypeKind::Never => TypeTag::Never,
             TypeKind::Error => TypeTag::Error,
             TypeKind::Object => TypeTag::Object,
+            TypeKind::SizedInt(..) => TypeTag::SizedInt,
+            TypeKind::F32 => TypeTag::F32,
             TypeKind::Array(_) => TypeTag::Array,
             TypeKind::Map(..) => TypeTag::Map,
             TypeKind::Struct(..) => TypeTag::Struct,
@@ -1096,6 +1146,10 @@ impl HirModule {
             TypeKind::Never => "never".to_string(),
             TypeKind::Error => "{error}".to_string(),
             TypeKind::Object => "object".to_string(),
+            TypeKind::SizedInt(bits, signed) => {
+                format!("{}{bits}", if *signed { "i" } else { "u" })
+            }
+            TypeKind::F32 => "f32".to_string(),
             TypeKind::Array(e) => format!("array<{}>", name(*e)),
             TypeKind::Map(k, v) => format!("map<{}, {}>", name(*k), name(*v)),
             TypeKind::Struct(s, args) => self.applied(&self.structs[s.index()].name, args, custom),

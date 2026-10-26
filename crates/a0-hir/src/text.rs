@@ -67,6 +67,16 @@ impl HirBuilder {
     }
 }
 
+/// The sized number types by name, and `i64` and `f64` for `int` and `float`.
+pub(crate) fn numeric_type(name: &str) -> Option<TypeId> {
+    match name {
+        "i64" => Some(TypeId::INT),
+        "f64" => Some(TypeId::FLOAT),
+        "f32" => Some(TypeId::F32),
+        _ => SIZED_INTS.iter().find(|s| s.0 == name).map(|s| s.1),
+    }
+}
+
 /// Decodes a string literal (with its quotes).
 fn unquote(lit: &str) -> String {
     let inner = &lit[1..lit.len() - 1];
@@ -548,8 +558,11 @@ impl<'a> TextParser<'a> {
                     Some(Item::Struct(s)) => self.b.struct_type_args(s, &args),
                     Some(Item::Enum(e)) => self.b.enum_type_args(e, &args),
                     Some(Item::Interface(i)) if args.is_empty() => self.b.interface_type(i),
-                    // Not a keyword, so that it stays free as a name.
+                    // Not keywords, so that they stay free as names.
                     None if name == "object" && args.is_empty() => TypeId::OBJECT,
+                    None if args.is_empty() && numeric_type(&name).is_some() => {
+                        numeric_type(&name).unwrap()
+                    }
                     _ => {
                         return self.error(
                             node,
@@ -689,7 +702,11 @@ impl<'a> TextParser<'a> {
                 }
             }
             "binary" => {
-                let op = BinOp::from_symbol(self.text(self.field(node, "op").unwrap())).unwrap();
+                let op = match self.text(self.field(node, "op").unwrap()) {
+                    "shl" => BinOp::Shl,
+                    "shr" => BinOp::Shr,
+                    op => BinOp::from_symbol(op).unwrap(),
+                };
                 let a = self.expr(self.field(node, "left").unwrap())?;
                 let b = self.expr(self.field(node, "right").unwrap())?;
                 self.at(node);
@@ -768,9 +785,14 @@ impl<'a> TextParser<'a> {
         }
         let a = self.expr(operand)?;
         self.at(node);
-        Ok(self
-            .b
-            .unary(if op == "-" { UnOp::Neg } else { UnOp::Not }, a))
+        Ok(self.b.unary(
+            match op.as_str() {
+                "-" => UnOp::Neg,
+                "~" => UnOp::BitNot,
+                _ => UnOp::Not,
+            },
+            a,
+        ))
     }
 
     fn assign(&mut self, node: NodeId) -> R<ExprId> {

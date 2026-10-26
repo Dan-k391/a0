@@ -1,0 +1,70 @@
+// Sized numbers: literals that take the type expected of them, wrapping arithmetic at each width,
+// unsigned division, comparison and shifts, bitwise operators, conversions, compact arrays, `any`,
+// and C functions that take and return 32-bit integers.
+// expect-stdout: u8 250 + 10 = 4
+// expect-stdout: i8 127 + 1 = -128
+// expect-stdout: u32 max 4294967295, / 7 = 613566756
+// expect-stdout: u64 max 18446744073709551615
+// expect-stdout: i16 -300 / 7 = -42 rem -6
+// expect-stdout: unsigned 200 > 100: true, signed -56 > 100: false
+// expect-stdout: shifts 1 shl 9 = 512, -16 shr 2 = -4, 240 shr 4 = 15
+// expect-stdout: bits 12 & 10 = 8, 12 | 10 = 14, 12 ^ 10 = 6, ~0 = -1, ~0u8 = 255
+// expect-stdout: casts 300 as u8 = 44, -1 as u16 = 65535, 200u8 as i8 = -56, -2i8 as int = -2
+// expect-stdout: floats 1.5 as i32 = 1, -1e10 as i32 = -2147483648, 3 as f32 = 3, f32 0.1 = 0.1
+// expect-stdout: f32 sum 0.3 (as float 0.30000001192092896)
+// expect-stdout: bytes 10 20 255 len 3; halves -1 2; words 70000 -5; f32s 1.25
+// expect-stdout: any 200 -3 2.5
+// expect-stdout: c abs 7 toupper 65
+// expect-stdout: bool xor true
+// expect-stderr: panic: integer division by zero
+// expect-stderr:     at main (tests/hir/numbers.hir:68:13)
+// expect-exit: 101
+module "numbers";
+
+extern fn abs(i32) -> i32;
+extern fn toupper(i32) -> i32;
+
+fn main() -> int {
+  let a: u8 = 250;
+  print("u8 250 + 10 = " + str(a + 10) + "\n");
+  let b: i8 = 127;
+  print("i8 127 + 1 = " + str(b + 1) + "\n");
+  let c: u32 = 4294967295;
+  print("u32 max " + str(c) + ", / 7 = " + str(c / 7) + "\n");
+  let d: u64 = 0 as u64 - 1 as u64;
+  print("u64 max " + str(d) + "\n");
+  let e: i16 = -300;
+  print("i16 -300 / 7 = " + str(e / 7) + " rem " + str(e % 7) + "\n");
+  let u: u8 = 200;
+  let s: i8 = u as i8;
+  print("unsigned 200 > 100: " + str(u > 100) + ", signed -56 > 100: " + str(s > 100) + "\n");
+  let one: i32 = 1;
+  let neg: i64 = -16;
+  let high: u8 = 240;
+  print("shifts 1 shl 9 = " + str(one shl 9) + ", -16 shr 2 = " + str(neg shr 2) + ", 240 shr 4 = " + str(high shr 4) + "\n");
+  let zero: u8 = 0;
+  print("bits 12 & 10 = " + str(12 & 10) + ", 12 | 10 = " + str(12 | 10) + ", 12 ^ 10 = " + str(12 ^ 10) + ", ~0 = " + str(~0) + ", ~0u8 = " + str(~zero) + "\n");
+  let big = 300;
+  let minus = -1;
+  let m2: i8 = -2;
+  print("casts 300 as u8 = " + str(big as u8) + ", -1 as u16 = " + str(minus as u16) + ", 200u8 as i8 = " + str(u as i8) + ", -2i8 as int = " + str(m2 as int) + "\n");
+  let tenth: f32 = 0.1;
+  print("floats 1.5 as i32 = " + str(1.5 as i32) + ", -1e10 as i32 = " + str(-10000000000.0 as i32) + ", 3 as f32 = " + str(3 as f32) + ", f32 0.1 = " + str(tenth) + "\n");
+  let sum: f32 = tenth + tenth + tenth;
+  print("f32 sum " + str(sum) + " (as float " + str(sum as float) + ")\n");
+  let bytes: array<u8> = [10, 20, 255];
+  let halves: array<i16> = filled(2, -1);
+  halves[1] = 2;
+  let words: array<i32> = [70000, -5];
+  let fs: array<f32> = [1.25];
+  print("bytes " + str(bytes[0]) + " " + str(bytes[1]) + " " + str(bytes[2]) + " len " + str(len(bytes)) + "; halves " + str(halves[0]) + " " + str(halves[1]) + "; words " + str(words[0]) + " " + str(words[1]) + "; f32s " + str(fs[0]) + "\n");
+  let x: any = u as any;
+  let y: any = m2 as any;
+  let z: any = (2.5 as f32) as any;
+  print("any " + str(x as int) + " " + str((y as int) - 1) + " " + str(z as float) + "\n");
+  print("c abs " + str(abs(-7)) + " toupper " + str(toupper(97)) + "\n");
+  print("bool xor " + str(true ^ false) + "\n");
+  let none: u8 = 0;
+  print(str(bytes[0] / none));
+  0
+}

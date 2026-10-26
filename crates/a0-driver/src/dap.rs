@@ -525,6 +525,15 @@ fn locals(interp: &Interpreter, i: usize) -> Vec<(String, u64, View)> {
             },
             None => continue,
         };
+        // A narrow signed integer is held zero-extended; show its sign.
+        let w = match (view, m.var_type(var).bits()) {
+            (View::Typed(t), Some(bits))
+                if bits < 64 && m.debug_type_kind(t) == a0_ir::DebugKind::Int =>
+            {
+                (((w << (64 - bits)) as i64) >> (64 - bits)) as u64
+            }
+            _ => w,
+        };
         let position = declared.unwrap_or((0, 0));
         if let Some(h) = &here
             && declared.is_some()

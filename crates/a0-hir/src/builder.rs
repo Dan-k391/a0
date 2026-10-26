@@ -174,6 +174,13 @@ pub const KEYWORDS: &[&str] = &[
     "exit",
     "panic",
     "clock",
+    "filled",
+    "has_field",
+    "field",
+    "set_field",
+    "field_names",
+    "shl",
+    "shr",
 ];
 
 /// A name as the text format writes it: as is if it is an identifier and not a keyword, otherwise
@@ -884,8 +891,8 @@ impl HirBuilder {
                 if !self.c_param(t) {
                     let tn = self.m.display_type(t);
                     self.misuse(&format!(
-                        "extern fn {name} takes {tn}; C functions take int, float, bool, strings \
-                         and arrays of int, float or bool"
+                        "extern fn {name} takes {tn}; C functions take numbers, bool, strings \
+                         and arrays of numbers or bool"
                     ));
                 }
             }
@@ -895,11 +902,12 @@ impl HirBuilder {
                 || matches!(
                     ret,
                     TypeId::INT | TypeId::FLOAT | TypeId::BOOL | TypeId::UNIT
-                ))
+                )
+                || matches!(self.m.kind(ret), TypeKind::SizedInt(..)))
             {
                 let tn = self.m.display_type(ret);
                 self.misuse(&format!(
-                    "extern fn {name} returns {tn}; C functions return int, float, bool, unit or a string"
+                    "extern fn {name} returns {tn}; C functions return numbers, bool, unit or a string"
                 ));
             }
         }
@@ -929,13 +937,18 @@ impl HirBuilder {
 
     /// Whether a C function can take a `t`.
     fn c_param(&self, t: TypeId) -> bool {
-        if matches!(t, TypeId::INT | TypeId::FLOAT | TypeId::BOOL) {
+        let scalar = |t: TypeId| {
+            matches!(t, TypeId::INT | TypeId::FLOAT | TypeId::BOOL)
+                || matches!(self.m.kind(t), TypeKind::SizedInt(..))
+        };
+        if scalar(t) {
             return true;
         }
         let t = self.nullable_of(t).unwrap_or(t);
         match self.m.kind(t) {
             TypeKind::String => true,
-            TypeKind::Array(e) => matches!(*e, TypeId::INT | TypeId::FLOAT | TypeId::BOOL),
+            // A pointer to the elements: `int8_t *` for an `array<i8>`, `bool *` for booleans.
+            TypeKind::Array(e) => scalar(*e) || *e == TypeId::F32,
             _ => false,
         }
     }
@@ -1102,6 +1115,15 @@ impl HirBuilder {
     pub fn set_root(&mut self, body: BodyId, root: ExprId) {
         self.m.bodies[body.index()].root = Some(root);
         let ret = self.m.bodies[body.index()].ret;
+        // Literals take a sized result type, in the body's value and in its returns.
+        let mut returns = Vec::new();
+        collect_returns(&self.m, root, &mut returns);
+        for &v in returns.iter().chain([&root]) {
+            if let Adapt::OutOfRange(p) = adapt_literal(&mut self.m, v, ret) {
+                let span = self.m.exprs[v.index()].span;
+                self.problem_at(span, &p);
+            }
+        }
         let rt = self.m.expr_type(root);
         let want = self.m.quote_type(ret);
         // Where the result type comes from: the function's declaration (closures have none).
@@ -1134,8 +1156,6 @@ impl HirBuilder {
             let p = p.at(decl, format!("{fname} returns {want}"));
             self.problem_at(span, &p);
         }
-        let mut returns = Vec::new();
-        collect_returns(&self.m, root, &mut returns);
         for v in returns {
             let vt = self.m.expr_type(v);
             if self.m.coerce(vt, ret) {
@@ -1172,6 +1192,12 @@ impl HirBuilder {
         let e = ExprId(self.m.exprs.len() as u32);
         let ty = match infer(&mut self.m, &kind, hint) {
             Ok(t) => t,
+            // A conversion has its target's type whatever it converts; whether it can is
+            // checked once the source's type is known.
+            Err(TypeErr::Open(_)) if matches!(kind, ExprKind::Cast(_)) => {
+                self.deferred.push((e, hint));
+                hint
+            }
             Err(TypeErr::Open(_)) => {
                 self.deferred.push((e, hint));
                 self.m.fresh_var()
@@ -1554,6 +1580,11 @@ pub(crate) fn mismatch(m: &HirModule, expected: TypeId, found: TypeId) -> Box<Pr
 
 /// Requires `e` to fit `want`.
 fn expect(m: &mut HirModule, e: ExprId, want: TypeId) -> Result<(), TypeErr> {
+    match adapt_literal(m, e, want) {
+        Adapt::Done => return Ok(()),
+        Adapt::OutOfRange(p) => return Err(TypeErr::At(Some(e), p)),
+        Adapt::No => {}
+    }
     let found = m.expr_type(e);
     let mut p = mismatch(m, want, found);
     // A value that may be null where one that cannot is needed: say how to get at it.
@@ -1573,6 +1604,150 @@ fn expect(m: &mut HirModule, e: ExprId, want: TypeId) -> Result<(), TypeErr> {
     } else {
         Err(TypeErr::At(Some(e), p))
     }
+}
+
+/// Whether `t` is an integer type, and its width and signedness (`int` is 64 bits, signed).
+pub(crate) fn int_bits(m: &HirModule, t: TypeId) -> Option<(u32, bool)> {
+    match m.kind(t) {
+        TypeKind::Int => Some((64, true)),
+        TypeKind::SizedInt(bits, signed) => Some((*bits, *signed)),
+        _ => None,
+    }
+}
+
+pub(crate) enum Adapt {
+    Done,
+    OutOfRange(Box<Problem>),
+    No,
+}
+
+/// An expression made only of number literals (`5`, `-5`, `1.5`), operators on them and branches
+/// that end in them (`if c { 1 } else { 2 }`) takes the sized number type expected of it, if every
+/// literal fits, as in C: `let b: u8 = 200;`, `x + 1` for an `x: i32`, `[1, 2]` for an
+/// `array<u8>`. Nothing changes unless all of it fits.
+pub(crate) fn adapt_literal(m: &mut HirModule, e: ExprId, want: TypeId) -> Adapt {
+    let want = m.shallow(want);
+    if m.expr_type(e) == want || !adaptable(m, want) {
+        return Adapt::No;
+    }
+    let mut retype = Vec::new();
+    match plan(m, e, want, &mut retype) {
+        Ok(true) => {
+            for (x, t) in retype {
+                m.exprs[x.index()].ty = t;
+            }
+            Adapt::Done
+        }
+        Ok(false) => Adapt::No,
+        Err(p) => Adapt::OutOfRange(p),
+    }
+}
+
+/// Branches of which one has a sized number type and others are literals: the literals take it,
+/// so that `if c { x } else { 0 }` has `x`'s type.
+fn adapt_branches(m: &mut HirModule, bodies: &[ExprId]) {
+    let Some(want) = bodies
+        .iter()
+        .map(|&b| m.expr_type(b))
+        .find(|&t| adaptable(m, t))
+    else {
+        return;
+    };
+    for &b in bodies {
+        let _ = adapt_literal(m, b, want);
+    }
+}
+
+/// Whether literals can take type `t`: a number type other than `int` and `float`, or an array
+/// of them.
+fn adaptable(m: &HirModule, t: TypeId) -> bool {
+    match m.kind(t) {
+        TypeKind::SizedInt(..) | TypeKind::F32 => true,
+        TypeKind::Array(e) => adaptable(m, *e),
+        _ => false,
+    }
+}
+
+/// Collects in `out` the nodes of `e` to give type `want` (and the types), or says why not.
+fn plan(
+    m: &HirModule,
+    e: ExprId,
+    want: TypeId,
+    out: &mut Vec<(ExprId, TypeId)>,
+) -> Result<bool, Box<Problem>> {
+    let t = m.expr_type(e);
+    if t == want || t == TypeId::NEVER {
+        return Ok(true);
+    }
+    let all = |xs: &[ExprId], want: TypeId, out: &mut Vec<(ExprId, TypeId)>| {
+        for &x in xs {
+            if !plan(m, x, want, out)? {
+                return Ok::<bool, Box<Problem>>(false);
+            }
+        }
+        Ok(true)
+    };
+    let ok = match &m.expr(e).kind {
+        ExprKind::Int(v) => literal_fits(m, *v as i128, want)?,
+        ExprKind::Unary(UnOp::Neg, x) if matches!(m.expr(*x).kind, ExprKind::Int(_)) => {
+            let ExprKind::Int(v) = m.expr(*x).kind else {
+                unreachable!()
+            };
+            let fits = literal_fits(m, -(v as i128), want)?;
+            out.push((*x, want));
+            fits
+        }
+        ExprKind::Float(_) => matches!(want, TypeId::F32 | TypeId::FLOAT),
+        ExprKind::Unary(UnOp::Neg | UnOp::BitNot, x) => all(&[*x], want, out)?,
+        ExprKind::Binary(op, a, b)
+            if !op.is_comparison() && !matches!(op, BinOp::Eq | BinOp::Ne) =>
+        {
+            all(&[*a, *b], want, out)?
+        }
+        ExprKind::Block(_, Some(tail)) => all(&[*tail], want, out)?,
+        ExprKind::If(_, t, Some(f)) | ExprKind::IfLet(_, _, t, Some(f)) => {
+            all(&[*t, *f], want, out)?
+        }
+        ExprKind::Match(_, arms) => {
+            let bodies: Vec<ExprId> = arms.iter().map(|a| m.arms[a.index()].body).collect();
+            all(&bodies, want, out)?
+        }
+        ExprKind::Array(elems) => match *m.kind(want) {
+            TypeKind::Array(elem) if !elems.is_empty() => all(elems, elem, out)?,
+            _ => false,
+        },
+        ExprKind::Builtin(Builtin::Filled, args) if args.len() == 2 => match *m.kind(want) {
+            TypeKind::Array(elem) => all(&[args[1]], elem, out)?,
+            _ => false,
+        },
+        _ => false,
+    };
+    if ok {
+        out.push((e, want));
+    }
+    Ok(ok)
+}
+
+/// Whether an integer literal of value `v` fits in `want` (an error if it is an integer type it
+/// does not fit in).
+fn literal_fits(m: &HirModule, v: i128, want: TypeId) -> Result<bool, Box<Problem>> {
+    let Some((bits, signed)) = int_bits(m, want) else {
+        return Ok(false);
+    };
+    let (min, max) = if signed {
+        (-(1i128 << (bits - 1)), (1i128 << (bits - 1)) - 1)
+    } else {
+        (0, (1i128 << bits) - 1)
+    };
+    if v < min || v > max {
+        let t = m.quote_type(want);
+        return Err(Problem::new(
+            code::LITERAL_RANGE,
+            format!("the literal `{v}` does not fit in {t}"),
+        )
+        .label(format!("{t} holds {min} to {max}")));
+    }
+    Ok(true)
 }
 
 /// Adds a related location to a problem: where the expected type came from, for example.
@@ -1719,7 +1894,10 @@ pub(crate) fn infer(m: &mut HirModule, kind: &ExprKind, hint: TypeId) -> Typed {
     Ok(match kind {
         ExprKind::Unit => TypeId::UNIT,
         ExprKind::Bool(_) => TypeId::BOOL,
+        // A literal keeps the sized type it was adapted to (`adapt_literal`).
+        ExprKind::Int(_) if matches!(m.kind(hint), TypeKind::SizedInt(..)) => hint,
         ExprKind::Int(_) => TypeId::INT,
+        ExprKind::Float(_) if hint == TypeId::F32 => hint,
         ExprKind::Float(_) => TypeId::FLOAT,
         ExprKind::Str(_) => TypeId::STRING,
         ExprKind::Null => match m.kind(hint) {
@@ -1772,11 +1950,22 @@ pub(crate) fn infer(m: &mut HirModule, kind: &ExprKind, hint: TypeId) -> Typed {
             TypeId::UNIT
         }
         ExprKind::Unary(UnOp::Neg, a) => match m.kind(ty(m, *a)) {
-            TypeKind::Int | TypeKind::Float | TypeKind::Never | TypeKind::Error => {
+            TypeKind::Int
+            | TypeKind::Float
+            | TypeKind::SizedInt(..)
+            | TypeKind::F32
+            | TypeKind::Never
+            | TypeKind::Error => m.shallow(ty(m, *a)),
+            _ => {
+                return open_or(m, *a, || bad_operand(m, "-", ty(m, *a)));
+            }
+        },
+        ExprKind::Unary(UnOp::BitNot, a) => match m.kind(ty(m, *a)) {
+            TypeKind::Int | TypeKind::SizedInt(..) | TypeKind::Never | TypeKind::Error => {
                 m.shallow(ty(m, *a))
             }
             _ => {
-                return open_or(m, *a, || bad_operand(m, "-", ty(m, *a)));
+                return open_or(m, *a, || bad_operand(m, "~", ty(m, *a)));
             }
         },
         ExprKind::Unary(UnOp::Not, a) => {
@@ -1996,7 +2185,10 @@ pub(crate) fn infer(m: &mut HirModule, kind: &ExprKind, hint: TypeId) -> Typed {
                 // Without else, an if is a statement; the branch's value is discarded.
                 None => TypeId::UNIT,
                 // Branches of different types make a statement-like if of type unit.
-                Some(e) => m.join(ty(m, *then), ty(m, *e)).unwrap_or(TypeId::UNIT),
+                Some(e) => {
+                    adapt_branches(m, &[*then, *e]);
+                    m.join(ty(m, *then), ty(m, *e)).unwrap_or(TypeId::UNIT)
+                }
             }
         }
         ExprKind::IfLet(local, value, then, els) => {
@@ -2027,7 +2219,10 @@ pub(crate) fn infer(m: &mut HirModule, kind: &ExprKind, hint: TypeId) -> Typed {
             }
             match els {
                 None => TypeId::UNIT,
-                Some(e) => m.join(ty(m, *then), ty(m, *e)).unwrap_or(TypeId::UNIT),
+                Some(e) => {
+                    adapt_branches(m, &[*then, *e]);
+                    m.join(ty(m, *then), ty(m, *e)).unwrap_or(TypeId::UNIT)
+                }
             }
         }
         ExprKind::While(cond, _) => {
@@ -2278,6 +2473,17 @@ fn binary_type(m: &mut HirModule, op: BinOp, a: ExprId, b: ExprId) -> Typed {
     let (ta, tb) = (m.expr_type(a), m.expr_type(b));
     let left = |m: &HirModule| format!("expected because this is {}", m.quote_type(ta));
     let a_span = m.expr(a).span;
+    // A literal on either side takes the other side's sized type.
+    let (ta, tb) = match (adapt_literal(m, b, ta), ta == tb) {
+        (_, true) => (ta, tb),
+        (Adapt::Done, _) => (ta, ta),
+        (Adapt::OutOfRange(p), _) => return Err(TypeErr::At(Some(b), p)),
+        (Adapt::No, _) => match adapt_literal(m, a, tb) {
+            Adapt::Done => (tb, tb),
+            Adapt::OutOfRange(p) => return Err(TypeErr::At(Some(a), p)),
+            Adapt::No => (ta, tb),
+        },
+    };
     if matches!(op, BinOp::Eq | BinOp::Ne) {
         // Either side may be the nullable one: `x == null`.
         let p = mismatch(m, ta, tb).at(a_span, left(m));
@@ -2295,14 +2501,19 @@ fn binary_type(m: &mut HirModule, op: BinOp, a: ExprId, b: ExprId) -> Typed {
     } else {
         (ta, a)
     };
+    let bitwise = matches!(
+        op,
+        BinOp::BitAnd | BinOp::BitOr | BinOp::BitXor | BinOp::Shl | BinOp::Shr
+    );
     let ok = match m.kind(t) {
         TypeKind::Never | TypeKind::Error => true,
-        TypeKind::Int => true,
-        TypeKind::Float => op != BinOp::Rem,
+        TypeKind::Int | TypeKind::SizedInt(..) => true,
+        TypeKind::Float | TypeKind::F32 => op != BinOp::Rem && !bitwise,
         TypeKind::String => matches!(
             op,
             BinOp::Add | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge
         ),
+        TypeKind::Bool => matches!(op, BinOp::BitAnd | BinOp::BitOr | BinOp::BitXor),
         TypeKind::Var(_) => return Err(TypeErr::Open(operand)),
         _ => false,
     };
@@ -2345,6 +2556,8 @@ fn match_type(m: &mut HirModule, scrutinee: ExprId, arms: &[ArmId]) -> Typed {
             });
         }
     };
+    let bodies: Vec<ExprId> = arms.iter().map(|a| m.arms[a.index()].body).collect();
+    adapt_branches(m, &bodies);
     let mut result = TypeId::NEVER;
     let mut covered = vec![false; m.variant_count(e) as usize];
     let mut wildcard = false;
@@ -2536,6 +2749,8 @@ fn builtin_type(m: &mut HirModule, op: Builtin, args: &[ExprId]) -> Typed {
         Builtin::Str | Builtin::Print | Builtin::Eprint => match m.kind(t0) {
             TypeKind::Int
             | TypeKind::Float
+            | TypeKind::SizedInt(..)
+            | TypeKind::F32
             | TypeKind::Bool
             | TypeKind::String
             | TypeKind::Never
@@ -2546,6 +2761,8 @@ fn builtin_type(m: &mut HirModule, op: Builtin, args: &[ExprId]) -> Typed {
             }
             TypeKind::Int
             | TypeKind::Float
+            | TypeKind::SizedInt(..)
+            | TypeKind::F32
             | TypeKind::Bool
             | TypeKind::String
             | TypeKind::Never
@@ -2580,14 +2797,20 @@ pub(crate) fn testable(m: &HirModule, t: TypeId) -> bool {
     }
 }
 
+fn numeric(k: &TypeKind) -> bool {
+    matches!(
+        k,
+        TypeKind::Int | TypeKind::Float | TypeKind::SizedInt(..) | TypeKind::F32
+    )
+}
+
 fn cast_allowed(m: &HirModule, from: TypeId, to: TypeId) -> bool {
     let (fk, tk) = (m.kind(from), m.kind(to));
     m.same(from, to)
         || matches!(fk, TypeKind::Never | TypeKind::Error)
-        || matches!(
-            (fk, tk),
-            (TypeKind::Int, TypeKind::Float) | (TypeKind::Float, TypeKind::Int)
-        )
+        // Between numbers of any kinds: integers wrap or extend, floats round, and floats to
+        // integers truncate and saturate.
+        || (numeric(fk) && numeric(tk))
         || matches!(tk, TypeKind::Any)
         || (matches!(fk, TypeKind::Any) && testable(m, to))
         || matches!(tk, TypeKind::Nullable(inner) if m.same(from, *inner))

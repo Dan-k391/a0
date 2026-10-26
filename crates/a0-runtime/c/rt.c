@@ -122,12 +122,22 @@ int32_t a0_format_i64(int64_t value, char *buf) {
 }
 
 /* Whether `digits` significant digits of `value` read back as `value`; leaves them in `sci`. */
-static int round_trips(double value, int digits, char *sci, size_t cap) {
+/* Whether `digits` significant digits read back as `value`, as a double or, if `single`, as a
+ * float. */
+static int round_trips(double value, int digits, char *sci, size_t cap, int single) {
     snprintf(sci, cap, "%.*e", digits - 1, value);
-    return strtod(sci, NULL) == value;
+    double back = strtod(sci, NULL);
+    return single ? (float)back == (float)value : back == value;
 }
 
-int32_t a0_format_f64(double value, char *buf) {
+static int32_t format_float(double value, char *buf, int single);
+
+int32_t a0_format_f64(double value, char *buf) { return format_float(value, buf, 0); }
+
+/* An `f32` (widened to a double) with the fewest digits that read back as the same `f32`. */
+int32_t a0_format_f32(double value, char *buf) { return format_float(value, buf, 1); }
+
+static int32_t format_float(double value, char *buf, int single) {
     if (isnan(value)) {
         strcpy(buf, "nan");
         return 3;
@@ -147,13 +157,13 @@ int32_t a0_format_f64(double value, char *buf) {
     char sci[40];
     int digits = 0;
     for (int d = 1; d <= 6 && digits == 0; d++) {
-        if (round_trips(value, d, sci, sizeof sci)) digits = d;
+        if (round_trips(value, d, sci, sizeof sci, single)) digits = d;
     }
     if (digits == 0) {
-        int lo = 7, hi = 17;
+        int lo = 7, hi = single ? 9 : 17;
         while (lo < hi) {
             int mid = (lo + hi) / 2;
-            if (round_trips(value, mid, sci, sizeof sci)) {
+            if (round_trips(value, mid, sci, sizeof sci, single)) {
                 hi = mid;
             } else {
                 lo = mid + 1;

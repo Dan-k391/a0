@@ -93,22 +93,40 @@ pub(crate) fn quote(s: &str) -> String {
 const ASSIGN: u8 = 1;
 const OR: u8 = 2;
 const AND: u8 = 3;
-const EQUALITY: u8 = 4;
-const COMPARISON: u8 = 5;
-const ADDITIVE: u8 = 6;
-const MULTIPLICATIVE: u8 = 7;
-const AS: u8 = 8;
-const IS: u8 = 9;
-const PREFIX: u8 = 10;
-const POSTFIX: u8 = 11;
-const ATOM: u8 = 14;
+const BIT_OR: u8 = 4;
+const BIT_XOR: u8 = 5;
+const BIT_AND: u8 = 6;
+const EQUALITY: u8 = 7;
+const COMPARISON: u8 = 8;
+const SHIFT: u8 = 9;
+const ADDITIVE: u8 = 10;
+const MULTIPLICATIVE: u8 = 11;
+const AS: u8 = 12;
+const IS: u8 = 13;
+const PREFIX: u8 = 14;
+const POSTFIX: u8 = 15;
+const ATOM: u8 = 18;
 
 fn binary_level(op: BinOp) -> u8 {
     match op {
+        BinOp::BitOr => BIT_OR,
+        BinOp::BitXor => BIT_XOR,
+        BinOp::BitAnd => BIT_AND,
         BinOp::Eq | BinOp::Ne => EQUALITY,
         BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => COMPARISON,
+        BinOp::Shl | BinOp::Shr => SHIFT,
         BinOp::Add | BinOp::Sub => ADDITIVE,
         BinOp::Mul | BinOp::Div | BinOp::Rem => MULTIPLICATIVE,
+    }
+}
+
+/// How the text format writes an operator: as its symbol, except shifts (`>>` would end two type
+/// argument lists at once, as in `array<array<int>>`).
+fn binary_text(op: BinOp) -> &'static str {
+    match op {
+        BinOp::Shl => "shl",
+        BinOp::Shr => "shr",
+        op => op.symbol(),
     }
 }
 
@@ -531,7 +549,11 @@ impl Printer<'_> {
                 self.expr(v, ASSIGN, indent);
             }
             ExprKind::Unary(op, a) => {
-                self.out.push(if op == UnOp::Neg { '-' } else { '!' });
+                self.out.push(match op {
+                    UnOp::Neg => '-',
+                    UnOp::Not => '!',
+                    UnOp::BitNot => '~',
+                });
                 // `- -x`, not `--x`, for readability.
                 if op == UnOp::Neg && self.starts_with_minus(a) {
                     self.out.push(' ');
@@ -541,7 +563,7 @@ impl Printer<'_> {
             ExprKind::Binary(op, a, b) => {
                 let l = binary_level(op);
                 self.expr(a, l, indent);
-                let _ = write!(self.out, " {} ", op.symbol());
+                let _ = write!(self.out, " {} ", binary_text(op));
                 self.expr(b, l + 1, indent);
             }
             ExprKind::And(a, b) => {

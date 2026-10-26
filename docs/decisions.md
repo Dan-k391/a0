@@ -862,3 +862,24 @@ every map. Diagnostics then point into the library (the parameter declared there
 give its locations, and the language server and the debugger open a copy written to a directory
 of this version of A0 under the system's temporary directory, since editors open files. Warnings
 leave the library out.
+
+## D69. Sized numbers: literals take the type expected of them
+
+v0.6 asks for what a systems language needs, and C's types come first: explicit layouts and C
+functions need 8-, 16- and 32-bit integers, unsigned ones and single floats, and bit operations.
+The HIR gains `i8` .. `u64` and `f32` (`int` and `float` stay `i64` and `f64`), the operators `&`,
+`|`, `^`, `~`, `shl` and `shr`, and conversions between all numbers. The question is the type of a
+literal. Rust gives literals inference variables that default to `i32`; C gives them `int` and
+converts. A0 already infers types, but literal variables would reach every rule of the builder.
+Instead a literal is an `int` or a `float` unless a sized number type is expected of it (a
+declaration, an argument, a result, the other operand, array elements), in which case it takes
+that type if it fits (E2023): one function, `adapt_literal`, called where expectations meet, which
+also looks through operators and branches made of literals. `let x = 200;` is an `int`, as in C.
+
+Arrays of sized numbers keep each element in its own width (one, two or four bytes, generalizing
+D65), so C sees `uint8_t *` and `int32_t *`. C functions take and return sized integers; those
+narrower than 32 bits pass as C promotes them, extended to 32 bits by their sign. `f32` is not yet
+a C function's parameter type: the interpreter's call trampoline (D7) has no single floats, which
+calls through compiled thunks will lift (step five of v0.6). Values of sized types convert to
+`any` as `int` or `float`. The debugger shows unsigned and single-float values (`DebugKind::UInt`,
+`Float32`).

@@ -155,6 +155,7 @@ void a0_eprint_cstr(const char *s);
 /* `value` in decimal into `buf` (at least 24 bytes), NUL-terminated; returns the length. */
 int32_t a0_format_i64(int64_t value, char *buf);
 int32_t a0_format_f64(double value, char *buf);
+int32_t a0_format_f32(double value, char *buf);
 
 /* ---- Memory ------------------------------------------------------------------------------- */
 
@@ -308,6 +309,9 @@ int64_t a0_string_byte_at(A0String *s, int64_t index, uint64_t loc, void *frame)
 A0String *a0_string_from_int(int64_t value);
 A0String *a0_string_from_float(double value);
 A0String *a0_string_from_bool(int64_t value);
+/* A `u64`, and an `f32` (widened to a double) as the shortest text that reads back as itself. */
+A0String *a0_string_from_uint(uint64_t value);
+A0String *a0_string_from_f32(double value);
 void a0_string_print(A0String *s);
 void a0_string_eprint(A0String *s);
 A0_NORETURN void a0_string_panic(A0String *message, uint64_t loc, void *frame);
@@ -315,11 +319,11 @@ A0_NORETURN void a0_string_panic(A0String *message, uint64_t loc, void *frame);
 A0String *a0_string_from_c(const char *s, int64_t required, uint64_t loc, void *frame);
 
 /* ---- Arrays ------------------------------------------------------------------------------------ *
- * Elements are 64-bit words traced as `elem_kind` (A0_WORD_*), or bytes (A0_ELEM_BYTE: untraced,
- * read as the byte zero-extended, written as the word's low byte; `array<bool>`). `data` points at
- * `len` of them. */
+ * Elements are 64-bit words traced as `elem_kind` (A0_WORD_*), or narrower raw numbers: bytes
+ * (A0_ELEM_BYTE, `array<bool>` and `array<u8>`), 16 or 32 bits (A0_ELEM_16, A0_ELEM_32), read
+ * zero-extended and written as the word's low bytes. `data` points at `len` of them. */
 
-enum { A0_ELEM_BYTE = 3 };
+enum { A0_ELEM_BYTE = 3, A0_ELEM_16 = 4, A0_ELEM_32 = 5 };
 
 typedef struct A0Array {
     int64_t len;

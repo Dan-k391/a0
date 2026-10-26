@@ -496,6 +496,9 @@ impl HirBuilder {
                     return self.map_type(k, v);
                 }
                 ("object", 0) => return TypeId::OBJECT,
+                (name, 0) if crate::text::numeric_type(name).is_some() => {
+                    return crate::text::numeric_type(name).unwrap();
+                }
                 _ => {}
             }
         }

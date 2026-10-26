@@ -173,6 +173,7 @@ impl Mono<'_> {
             TypeKind::Any => return TypeId::ANY,
             TypeKind::Never => return TypeId::NEVER,
             TypeKind::Object => return TypeId::OBJECT,
+            TypeKind::SizedInt(..) | TypeKind::F32 => return t,
             // A finished module has no inference variables; this is not reached.
             TypeKind::Var(_) | TypeKind::Error => return TypeId::UNIT,
             TypeKind::Param(owner, i) => {

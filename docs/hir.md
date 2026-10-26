@@ -26,6 +26,8 @@ IR plus calls into the default runtime (`a0rt`), so it runs in the interpreter a
 | `bool` | value | |
 | `int` | value | 64-bit signed, wrapping arithmetic |
 | `float` | value | IEEE double |
+| `i8` `i16` `i32` `u8` `u16` `u32` `u64` | value | sized integers, wrapping at their width; `i64` is `int` |
+| `f32` | value | IEEE single; `f64` is `float` |
 | `any` | value | holds any value; see "Dynamic values" |
 | `string` | reference | immutable bytes (UTF-8 by convention) |
 | `array<T>` | reference | growable, mutable; `array<bool>` keeps a byte per element, the others a 64-bit word |
@@ -136,7 +138,8 @@ fn main() -> int {
 - `global` variables start at the zero value of their type (`0`, `0.0`, `false`, `()`, and `()` for
   `any`); one of reference type must be nullable and starts as `null`.
 - `extern fn` declares a C function (D47). It takes `int` (`int64_t`), `float` (`double`), `bool`
-  (an `int64_t` 0 or 1), `string` (a NUL-terminated `const char *` to the string's own bytes, so a
+  (an `int64_t` 0 or 1), sized integers (`int8_t` .. `uint64_t`), `string` (a NUL-terminated
+  `const char *` to the string's own bytes, so a
   string with a NUL byte looks shorter) and arrays of `int`, `float` or `bool` (a pointer to the
   array's elements, `int64_t *`, `double *` or `bool *`, which the function may change but not add
   to), and `T?` of the last two
@@ -181,10 +184,22 @@ it has no trailing `;`, otherwise to `()`.
 | `throw e` | raises an exception holding `e` (of any type, as an `any`); type `never` |
 | `try { a } catch x { b }` | `a`, or if `a` raises an exception, `b` with its value in `x: any` |
 
-**Operators.** `+ - * / %` on two `int`s (wrapping; `/` and `%` by zero panic) or two `float`s (no
-`%`); `+` on two `string`s concatenates. `< <= > >=` on `int`, `float` or `string` (byte order).
-`==` and `!=` on any two values of the same type: by value for value types and strings, by identity
-for other references; on `any` see below. `&&`, `||` short-circuit; `!` negates a `bool`.
+**Operators.** `+ - * / %` on two integers of one type (wrapping at its width; `/` and `%` by zero
+panic, and are unsigned for unsigned types) or two floats of one type (no `%`); `+` on two
+`string`s concatenates. `< <= > >=` on numbers (unsigned compare for unsigned types) or strings
+(byte order). `&`, `|`, `^` on two integers or two `bool`s (no short-circuit), `~` flips an
+integer's bits, `shl` and `shr` (the text format's `<<` and `>>`, which would close two type
+argument lists in `array<array<int>>`) shift an integer by an amount of its own type modulo its
+width, `shr` keeping the sign of signed types. `==` and `!=` on any two values of the same type: by
+value for value types and strings, by identity for other references; on `any` see below. `&&`,
+`||` short-circuit; `!` negates a `bool`.
+
+**Sized numbers.** A number literal is an `int` or a `float`, unless a sized number type is
+expected of it: `let b: u8 = 200;`, `x + 1` with `x: i32`, an argument, a result, `[1, 2]` for an
+`array<u8>`, and expressions made only of literals and operators or branches ending in them (`if c
+{ 1 } else { 2 }`). It must fit (E2023). Arrays of sized numbers keep each element in its own width
+(`array<u8>` is bytes), which C sees as `uint8_t *` and so on. A sized number converted to `any`
+becomes an `int` (or a `float`); `any` does not convert back to a sized type directly.
 
 **Builtins** (called like functions):
 
@@ -219,7 +234,8 @@ Both styles of error handling are the HIR's, and work the same in both backends:
 
 ## Conversions and dynamic values
 
-`e as T`: `int` to `float` and back (truncating, saturating, NaN to 0); any value to `any`; `any` to
+`e as T`: between any two number types (integers wrap or extend by the source's sign, floats to
+integers truncate and saturate, NaN to 0, floats round to `f32`); any value to `any`; `any` to
 any type it holds (panics with `expected T` otherwise; `()` becomes null for `T?`); `T` to `T?`.
 
 `e is T` tests the type held by an `any`: `unit`, `bool`, `int`, `float`, `string`, a struct, or an
