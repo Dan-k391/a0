@@ -1,0 +1,7 @@
+pub fn twice(x: int) -> int {
+  return helper(x) * 2;
+}
+
+fn helper(x: int) -> int {
+  return x;
+}

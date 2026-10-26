@@ -288,7 +288,7 @@ fn check_and_fmt_report_diagnostics() {
     let out = run(Command::new(env!("CARGO_BIN_EXE_a0")).arg("fmt").arg(&good));
     assert_eq!(
         String::from_utf8_lossy(&out.stdout),
-        "module \"m\"\n\nfunc @f() -> i64 {\n  %x: i64 = iconst 1\n  return %x\n}\n"
+        "module \"m\" version 1\n\nfunc @f() -> i64 {\n  %x: i64 = iconst 1\n  return %x\n}\n"
     );
     std::fs::remove_dir_all(&dir).ok();
 }

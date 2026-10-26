@@ -1,0 +1,24 @@
+$ b0 run matches.b0
+--- stderr
+error[E2014]: `match` does not cover `Yellow`
+ --> matches.b0:5:16
+  |
+2 | enum Light { Red, Yellow, Green }
+  |                   ------ not covered
+...
+5 |   return match l {
+  |                ^ `Yellow` not covered
+  |
+  = help: add an arm for each, or one that matches anything
+
+error[E1004]: `Light` has no variant `Blue`
+  --> matches.b0:12:18
+   |
+ 2 | enum Light { Red, Yellow, Green }
+   |      ----- `Light` declared here
+...
+12 |   let l = Light::Blue;
+   |                  ^^^^ unknown variant
+   |
+   = note: the variants of `Light` are `Red`, `Yellow`, `Green`
+--- exit 1

@@ -11,10 +11,13 @@
 
 /// One code and what it means.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct CodeInfo {
+    /// The code, as `E2001`.
     pub code: &'static str,
     /// A short description, as in the codes' list.
     pub title: &'static str,
+    /// What the problem is and how to fix it, as `explain` prints it.
     pub explanation: &'static str,
 }
 
@@ -37,6 +40,8 @@ codes! {
         "These characters do not form any token of the language, for example an unknown symbol or a string that is never closed.";
     TOO_DEEP = "E0003", "nested too deeply",
         "The program nests deeper than the compiler goes: expressions inside expressions or blocks inside blocks, more than 10,000 levels (in a long chain of operators, each operator is a level). Name intermediate results with variables, or move inner parts into functions of their own.";
+    NEWER_FORMAT = "E0004", "written for a newer A0",
+        "The text says it is in a later version of its format than this A0 reads: a module of HIR or core IR text (`module \"m\" version 2;`) or a grammar (`grammar g version 2;`). Each A0 1.x reads version 1 of every format, which is also what text without a version is. Use the newer A0 that wrote the text, or write it in the version this one reads.";
 
     UNKNOWN_NAME = "E1001", "unknown name",
         "The name is not declared where it is used: no variable, function or global of that name is in scope. It may be misspelled, declared later in an inner block, or declared in a block that has ended.";
@@ -121,6 +126,9 @@ codes! {
         "A pointer can point at a variable, a field or an element that holds plain data: a number, a boolean, a pointer or an inline struct. Other values (references, `any`) have no address a pointer can hold, and a value that is not stored anywhere has none at all. Store it in a variable first.";
     MANUAL_ONLY = "E2026", "only without the collector",
         "Freeing memory is for programs that manage it themselves (`memory manual`): with the collector, an object lives as long as something refers to it, and freeing it would leave those references pointing at nothing.";
+
+    NEEDS_UNSAFE = "E2027", "needs `unsafe`",
+        "Raw pointers are unchecked: reading or writing through one, or taking or moving an address, can touch memory that is not what the program thinks it is. A language that offers them (B0) allows them only inside an `unsafe` block, which marks the code to check by hand. Move the operation into `unsafe { ... }`, or use arrays, which are checked.";
 
     OUTSIDE_LOOP = "E3001", "outside a loop",
         "Leaving or continuing a loop is only possible inside a loop.";

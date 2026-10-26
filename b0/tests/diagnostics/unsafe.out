@@ -1,0 +1,26 @@
+$ b0 run unsafe.b0
+--- stderr
+error[E2027]: `data` needs `unsafe`
+ --> unsafe.b0:4:11
+  |
+4 |   let p = data(nums);
+  |           ^^^^^^^^^^ unchecked
+  |
+  = help: raw pointers are unchecked: put this in an `unsafe { ... }` block
+
+error[E2027]: `offset` needs `unsafe`
+ --> unsafe.b0:5:11
+  |
+5 |   let q = offset(p, 1);
+  |           ^^^^^^^^^^^^ unchecked
+  |
+  = help: raw pointers are unchecked: put this in an `unsafe { ... }` block
+
+error[E2027]: indexing a raw pointer needs `unsafe`
+ --> unsafe.b0:6:9
+  |
+6 |   print(q[0]);
+  |         ^^^^ unchecked
+  |
+  = help: raw pointers are unchecked: put this in an `unsafe { ... }` block
+--- exit 1

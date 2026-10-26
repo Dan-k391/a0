@@ -653,7 +653,8 @@ pub unsafe extern "C" fn a0_hir_set_memory(b: *mut A0HirBuilder, mode: *const c_
 pub unsafe extern "C" fn a0_hir_set_struct_inline(b: *mut A0HirBuilder, s: u32) {
     unsafe {
         with_unit(b, |h| {
-            h.b.set_struct_inline(a0_hir::StructId(s));
+            let s = h.s(s)?;
+            h.b.set_struct_inline(s);
             Some(())
         })
     }

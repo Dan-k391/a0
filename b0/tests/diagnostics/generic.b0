@@ -1,0 +1,8 @@
+// Inside a generic function, a type parameter may be any type.
+fn sum<T>(a: T, b: T) -> T {
+  return a + b;
+}
+
+fn main() {
+  print(sum(1, 2));
+}

@@ -40,12 +40,29 @@ pub(crate) fn optimize(m: &mut HirModule) {
                 o.inline_calls(root, body, &inlinable, &mut budget);
             }
         }
+        // Inlining `fold(xs, 0, fn(a, b) { ... })` leaves `let f = fn(a, b) { ... }` and calls of
+        // `f` in the caller: those calls are of a known closure, and can be inlined in turn.
+        let known = o.known_closures(&bodies[f.index()]);
+        if known.is_empty() {
+            continue;
+        }
+        for &body in &bodies[f.index()] {
+            if let Some(root) = o.m.bodies[body.index()].root {
+                let size = o.size(root);
+                let mut budget = GROWN_SIZE.max(2 * size) - size;
+                o.inline_closure_calls(root, body, &known, &mut budget);
+            }
+        }
     }
     let bodies = o.bodies_by_function();
     for _ in 0..ROUNDS {
         for bodies in &bodies {
             o.simplify_function(bodies);
         }
+    }
+    // Closures dropped by the last round capture nothing either.
+    for bodies in &bodies {
+        o.drop_unused_closures(bodies);
     }
 }
 
@@ -357,6 +374,7 @@ impl Opt<'_> {
         // Stack traces show the copy as `f`, called from here.
         self.m.inline_sites.push(InlineSite {
             callee: f,
+            closure: None,
             call: self.m.exprs[e.index()].span,
             parent: self.m.inline_of.get(&e).copied(),
         });
@@ -372,6 +390,161 @@ impl Opt<'_> {
         let e_ty = self.ty(e);
         self.m.exprs[e.index()].kind = ExprKind::Block(items, Some(value));
         self.m.exprs[e.index()].ty = e_ty;
+    }
+
+    /// The locals of a function (in `bodies`) that always hold one closure: each is declared with
+    /// a closure, or with a copy of such a local, and never assigned. Calls of them call that
+    /// closure's body.
+    fn known_closures(&self, bodies: &[BodyId]) -> HashMap<LocalId, BodyId> {
+        let mut inits = HashMap::new();
+        let mut written = HashSet::new();
+        for &b in bodies {
+            let Some(root) = self.m.bodies[b.index()].root else {
+                continue;
+            };
+            self.walk(root, &mut |m, e| match &m.exprs[e.index()].kind {
+                ExprKind::Let(l, init) => {
+                    inits.insert(*l, *init);
+                }
+                ExprKind::SetLocal(l, _) => {
+                    written.insert(*l);
+                }
+                ExprKind::Builtin(Builtin::Addr, args) => {
+                    if let ExprKind::Local(l) = m.exprs[args[0].index()].kind {
+                        written.insert(l);
+                    }
+                }
+                _ => {}
+            });
+        }
+        let mut out = HashMap::new();
+        for &l in inits.keys() {
+            let mut at = l;
+            // A chain of copies ends at a closure, or at something else.
+            for _ in 0..16 {
+                if written.contains(&at) {
+                    break;
+                }
+                let Some(&init) = inits.get(&at) else {
+                    break;
+                };
+                match *self.kind(init) {
+                    ExprKind::Lambda(b) => {
+                        if self.closure_inlinable(b) {
+                            out.insert(l, b);
+                        }
+                        break;
+                    }
+                    ExprKind::Local(q) => at = q,
+                    _ => break,
+                }
+            }
+        }
+        out
+    }
+
+    /// Whether a closure's body can be inlined where it is called, as a function's can
+    /// ([`Opt::inlinable_functions`]).
+    fn closure_inlinable(&self, b: BodyId) -> bool {
+        let Some(root) = self.m.bodies[b.index()].root else {
+            return false;
+        };
+        let mut size = 0;
+        let mut ok = true;
+        self.walk(root, &mut |m, e| {
+            size += 1;
+            ok &= !matches!(m.exprs[e.index()].kind, ExprKind::Lambda(_));
+        });
+        let limit = if self.returns_early(root) {
+            INLINE_EARLY_RETURN_SIZE
+        } else {
+            INLINE_SIZE
+        };
+        ok && size <= limit && self.strippable(root)
+    }
+
+    /// Replaces calls of known closures under `e`, which belongs to `body`, by their bodies, while
+    /// the copies fit in `budget` nodes. Only closures made in `body` itself are inlined, so every
+    /// local they capture is one of `body`'s, the same variable inside the copy as in the closure.
+    fn inline_closure_calls(
+        &mut self,
+        e: ExprId,
+        body: BodyId,
+        known: &HashMap<LocalId, BodyId>,
+        budget: &mut usize,
+    ) {
+        for c in self.children(e) {
+            self.inline_closure_calls(c, body, known, budget);
+        }
+        let ExprKind::CallValue(callee, args) = self.kind(e).clone() else {
+            return;
+        };
+        let closure = match *self.kind(callee) {
+            ExprKind::Lambda(b) if self.closure_inlinable(b) => b,
+            ExprKind::Local(l) => match known.get(&l) {
+                Some(&b) => b,
+                None => return,
+            },
+            _ => return,
+        };
+        if self.m.bodies[closure.index()].parent != Some(body) {
+            return;
+        }
+        let root = self.m.body_root(closure).unwrap();
+        let size = self.size(root);
+        if size > *budget {
+            return;
+        }
+        *budget -= size;
+        let params = self.m.body_params(closure).to_vec();
+        let ret = self.m.body_ret(closure);
+        self.m.inline_sites.push(InlineSite {
+            callee: self.m.bodies[closure.index()].func,
+            closure: Some(closure),
+            call: self.m.exprs[e.index()].span,
+            parent: self.m.inline_of.get(&e).copied(),
+        });
+        let site = self.m.inline_sites.len() as u32 - 1;
+        let mut locals = HashMap::new();
+        let mut items = Vec::new();
+        for (&p, &a) in params.iter().zip(&args) {
+            let l = self.copy_local(p, body, &mut locals);
+            items.push(self.node(ExprKind::Let(l, a), TypeId::UNIT, a));
+        }
+        let copy = self.copy(root, body, &mut locals, site, &mut HashMap::new());
+        let value = self.strip_returns(copy, ret);
+        let e_ty = self.ty(e);
+        self.m.exprs[e.index()].kind = ExprKind::Block(items, Some(value));
+        self.m.exprs[e.index()].ty = e_ty;
+    }
+
+    /// Empties the closure bodies of a function that no closure expression makes any more (their
+    /// calls were all inlined and the closure dropped), so that the locals they used are no longer
+    /// captured: they need no box, and the simplifier may replace them.
+    fn drop_unused_closures(&mut self, bodies: &[BodyId]) {
+        let mut live = HashSet::new();
+        let mut stack: Vec<BodyId> = bodies
+            .iter()
+            .copied()
+            .filter(|b| self.m.bodies[b.index()].parent.is_none())
+            .collect();
+        while let Some(b) = stack.pop() {
+            if !live.insert(b) {
+                continue;
+            }
+            if let Some(root) = self.m.bodies[b.index()].root {
+                self.walk(root, &mut |m, e| {
+                    if let ExprKind::Lambda(inner) = m.exprs[e.index()].kind {
+                        stack.push(inner);
+                    }
+                });
+            }
+        }
+        for &b in bodies {
+            if !live.contains(&b) {
+                self.m.bodies[b.index()].root = None;
+            }
+        }
     }
 
     fn copy_local(
@@ -412,6 +585,7 @@ impl Opt<'_> {
         };
         self.m.inline_sites.push(InlineSite {
             callee: old.callee,
+            closure: old.closure,
             call: old.call,
             parent: Some(parent),
         });
@@ -436,10 +610,11 @@ impl Opt<'_> {
             Some(inner) => self.reroot(inner, site, sites),
         };
         let kind = match kind {
-            ExprKind::Local(l) => ExprKind::Local(locals[&l]),
+            // A local not in `locals` is from outside the code copied: a closure's captured local.
+            ExprKind::Local(l) => ExprKind::Local(*locals.get(&l).unwrap_or(&l)),
             ExprKind::SetLocal(l, v) => {
                 let v = self.copy(v, body, locals, site, sites);
-                ExprKind::SetLocal(locals[&l], v)
+                ExprKind::SetLocal(*locals.get(&l).unwrap_or(&l), v)
             }
             ExprKind::Let(l, init) => {
                 let init = self.copy(init, body, locals, site, sites);
@@ -499,6 +674,7 @@ impl Opt<'_> {
 
     /// Simplifies one function's bodies (its own and its closures').
     fn simplify_function(&mut self, bodies: &[BodyId]) {
+        self.drop_unused_closures(bodies);
         let uses = self.uses(bodies);
         self.split_boxed_lets(bodies, &uses);
         // The split made new locals; count again.

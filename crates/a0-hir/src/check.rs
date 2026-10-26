@@ -10,6 +10,10 @@ use crate::model::*;
 
 /// Checks a whole module. Typing nodes again may intern types, hence `&mut`.
 pub fn check(m: &mut HirModule) -> Diagnostics {
+    let shape = shape(m);
+    if shape.has_errors() {
+        return shape;
+    }
     let mut diags = retype(m);
     let m = &*m;
     let mut c = Checker {
@@ -83,6 +87,44 @@ fn retype(m: &mut HirModule) -> Diagnostics {
         };
         let span = m.exprs[at.index()].span;
         diags.push(problem.diagnostic(span, None));
+    }
+    diags
+}
+
+/// Checks, without recursion, that the bodies are trees, each closure made in the body it was
+/// declared in: every pass after this one recurses, and a builder's misuse could make a node its own
+/// child (a closure whose body makes the closure) or share one between places.
+fn shape(m: &HirModule) -> Diagnostics {
+    let mut diags = Diagnostics::new();
+    let mut seen = vec![false; m.exprs.len()];
+    for (b, body) in m.bodies.iter().enumerate() {
+        let Some(root) = body.root else { continue };
+        let mut stack = vec![root];
+        while let Some(e) = stack.pop() {
+            if std::mem::replace(&mut seen[e.index()], true) {
+                diags.push(
+                    Diagnostic::error(
+                        "hir.tree",
+                        "an expression is used in more than one place; build a new node instead",
+                    )
+                    .with_span_opt(m.exprs[e.index()].span),
+                );
+                return diags;
+            }
+            if let ExprKind::Lambda(inner) = m.expr(e).kind
+                && m.bodies[inner.index()].parent != Some(BodyId(b as u32))
+            {
+                diags.push(
+                    Diagnostic::error(
+                        "hir.tree",
+                        "a closure is made outside the body it was declared in",
+                    )
+                    .with_span_opt(m.exprs[e.index()].span),
+                );
+                return diags;
+            }
+            visit_children(m, e, &mut |c| stack.push(c));
+        }
     }
     diags
 }

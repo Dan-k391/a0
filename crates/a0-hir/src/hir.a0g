@@ -13,7 +13,8 @@ token NAME /[A-Za-z_][A-Za-z0-9_]*|`[^`\n]+`/;
 error "unterminated string" /"([^"\\\n]|\\.)*/;
 unknown "unexpected character";
 
-module = "module" name:STRING ~ "expected the module name as a string" ";" ~ "expected ';'"
+module = "module" name:STRING ~ "expected the module name as a string"
+         ("version" version:INT ~ "expected the format version, a number")? ";" ~ "expected ';'"
          memory:memory_decl? (!EOF item)* EOF;
 memory_decl = "memory" ~ "expected 'memory'" mode:NAME ~ "expected `gc` or `manual`" ";" ~ "expected ';'";
 

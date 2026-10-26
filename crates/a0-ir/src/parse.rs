@@ -524,6 +524,27 @@ impl Parser {
                 return self.unexpected("the module name as a string");
             }
         }
+        if matches!(self.peek(), Tok::Word(w) if w == "version") {
+            self.bump();
+            let span = self.span();
+            match self.bump() {
+                Tok::Int(1) => {}
+                Tok::Int(v) => {
+                    let v = u64::try_from(v).unwrap_or(u64::MAX);
+                    self.diags.push(Diagnostic::newer_format(
+                        "module",
+                        v,
+                        crate::FORMAT_VERSION,
+                        span,
+                    ));
+                    return Err(Abort);
+                }
+                _ => {
+                    self.pos -= 1;
+                    return self.unexpected("the format version, a number");
+                }
+            }
+        }
         self.end_of_line()?;
         loop {
             self.skip_newlines();

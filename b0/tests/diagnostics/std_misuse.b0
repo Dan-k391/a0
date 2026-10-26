@@ -1,0 +1,7 @@
+import std.str as s;
+
+fn main() {
+  print(s.find(1, "a"));
+  print(s.splitt("a,b", ","));
+  print(s.a0_std_find("a", "b", 0));
+}

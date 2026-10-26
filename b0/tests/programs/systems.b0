@@ -1,0 +1,66 @@
+// B0 as a systems language: no collector (`memory manual`), inline structs stored in place, raw
+// pointers inside `unsafe`, C functions, `sizeof`, sized numbers.
+// expect: copy 1.5, original kept 10
+// expect: in place: 12
+// expect: strlen 5, abs 7
+// expect: list 6, freed
+// expect: pointers 23
+// expect: sizes 8 4 1
+// expect: wraps 255 -> 0, i8 -128
+memory manual;
+
+inline struct Vec2 { x: f32, y: f32 }
+inline struct Pixel { r: u8, g: u8, b: u8, a: u8 }
+struct Node { value: int, next: Node? }
+
+extern fn strlen(s: string) -> u64;
+extern fn abs(x: i32) -> i32;
+
+fn sum(list: Node?) -> int {
+  let total = 0;
+  let n = list;
+  while let node = n {
+    total += node.value;
+    n = node.next;
+  }
+  return total;
+}
+
+fn release(list: Node?) {
+  let n = list;
+  while let node = n {
+    n = node.next;
+    free(node);
+  }
+}
+
+fn main() {
+  let v = new Vec2 { x: 10.0, y: 2.0 };
+  let w = v;
+  w.x = 1.5;
+  print("copy " + str(w.x) + ", original kept " + str(v.x));
+  let vs: [Vec2] = [v, w];
+  vs[1].y = 10.5;
+  print("in place: " + str(vs[1].x + vs[1].y));
+  print("strlen " + str(strlen("hello")) + ", abs " + str(abs(-7)));
+
+  let list: Node? = null;
+  for i in 1..4 {
+    list = new Node { value: i, next: list };
+  }
+  print("list " + str(sum(list)) + ", freed");
+  release(list);
+
+  let nums = [1, 2, 3];
+  unsafe {
+    let p = data(nums);
+    p[1] = 20;
+    print("pointers " + str(p[1] + offset(p, 2)[0]));
+  }
+  print("sizes " + str(sizeof(Vec2)) + " " + str(sizeof(Pixel)) + " " + str(sizeof(u8)));
+  let b: u8 = 255;
+  let c = b + 1;
+  let small: i8 = 127;
+  small += 1;
+  print("wraps " + str(b) + " -> " + str(c) + ", i8 " + str(small));
+}

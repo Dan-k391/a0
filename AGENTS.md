@@ -17,6 +17,10 @@ WASI_SDK=/path/to/wasi-sdk sh playground/build.sh && node playground/test.mjs ta
 python3 targets/build.py            # the target packs cross-compilation links against (docs/cross.md;
                                     # Linux, macOS); then `cargo test -p a0 --test programs pack`
 python3 bench/run.py                # the benchmark (docs/benchmarks.md; Linux, macOS; not in CI)
+A0_FUZZ_ITERATIONS=20000 cargo test --release -p a0 --test fuzz -- --test-threads 1 --nocapture
+                                    # fuzz IR and HIR text and grammars longer (D85); likewise
+                                    # `-p a0-capi --test fuzz` (the C API) and `-p a0-driver --lib
+                                    # mutated_manifests`
 cargo clippy --workspace --all-targets   # must report no warnings
 cargo fmt --all                     # run before committing
 ```
@@ -29,7 +33,7 @@ passes on one OS is a bug.
 Needs a C compiler: MSVC on Windows (found automatically), `cc` on Linux/macOS. Useful while
 debugging: `a0 run|build|fmt|check file.a0ir|file.hir`, `a0 lower file.hir` (the core IR a HIR
 module becomes), `a0 parse lang.a0g input`, `a0 lang calc.a0g hir|ir|run file` (a language
-defined by its grammar alone), `lox hir|ir file.lox`, `minnow hir|ir file.mn`, `kaleidoscope hir|ir file.k`, `tin hir|ir file.tin`, and
+defined by its grammar alone), `lox hir|ir file.lox`, `b0 hir|ir file.b0`, `minnow hir|ir file.mn`, `kaleidoscope hir|ir file.k`, `tin hir|ir file.tin`, and
 `A0_INTERP=1` (`run` interprets instead of compiling into memory with the JIT), `A0_TIME=1` (how
 long each stage of compiling takes), `A0_CODEGEN_UNITS=n` (compile into `n` objects, as large
 programs are),
@@ -54,6 +58,7 @@ the debugger (`docs/debugging.md`); the VS Code extension in `editors/vscode` st
 | backends | `a0-interp`, `a0-native`, `a0-wasm` (WebAssembly modules that link against a runtime instance, D78) | `a0-ir`, `a0-runtime`, `a0-target`, `a0-diag` |
 | tools | `a0` (CLI), `a0-build` (build-script helper), `a0-driver` (language drivers), `a0-playground` (the playground's engine; no native backend, builds for wasm32-wasip1) | anything |
 | C API | `a0-capi` (`include/a0.h`) | library crates and `a0-driver` (D67), not the other tools |
+| flagship | `b0` (B0, D87) | only the crates `docs/compatibility.md` covers (`b0/tests/public_api.rs`) |
 | examples | `examples/*` | anything |
 | editors | `editors/vscode` (an extension that starts `lang lsp`; JavaScript) | nothing in Rust |
 | bindings | `bindings/python` (the package `a0`, ctypes over the C API's shared library) | the C API |
@@ -73,6 +78,16 @@ layer, decision D17). A new crate goes into the table above and into `[workspace
   object). Anything public that C should reach gets a binding in `a0-capi` and its header, and a
   builder function also gets a line in the Python table (`bindings/python/a0/__init__.py`), which a
   test checks against the header (D56).
+- **Compatibility** (`docs/compatibility.md`, D86). From 1.0, nothing covered breaks before 2.0:
+  the command line, the text formats, the C header, the Python package, the Rust API of
+  `a0-diag`, `a0-syntax`, `a0-sema`, `a0-ir`, `a0-hir`, `a0-driver` and `a0-build`, and the part of
+  `a0rt.h` in `docs/runtime.md`. Add rather than change; a new public enum or struct that may grow
+  is `#[non_exhaustive]` (with a constructor), except enums A0's own crates must match
+  exhaustively, which say in their docs that they may grow. Retire things by deprecating them
+  (`#[deprecated]`, `A0_DEPRECATED`, `a0._deprecated`) and listing them under **Deprecated** in the
+  changelog. Languages use only the covered crates (`a0_driver::backend` for C runtimes); a text
+  format change keeps every version-1 text reading the same. The covered crates document every
+  public item (`#![warn(missing_docs)]`; CI builds their reference with `-D warnings`).
 - **Report, don't panic.** Libraries return `Diagnostics` (from `a0-diag`) for anything a user can
   cause. Builders record misuse as diagnostics. `panic!`/`unwrap` only for internal invariants.
 - **Diagnostics as good as rustc's.** A problem a program can have gets its own code in
@@ -131,6 +146,14 @@ layer, decision D17). A new crate goes into the table above and into `[workspace
   `A0_GC_STRESS=1` many times pinned to two and four processors (`taskset -c 0,1` on Linux), as
   CI's runners have; `examples/minnow/tests/parallel.rs` checks that threads really run at once.
 - HIR text must round-trip: `print(parse(print(m))) == print(m)` is tested for every corpus file.
+- **Fuzzing** (D85): every input A0 accepts is fuzzed from the corpus in every test run, a few
+  hundred inputs each: IR and HIR text and grammars (`crates/a0/tests/fuzz.rs`), the C API
+  (`crates/a0-capi/tests/fuzz.rs`, through Python) and manifests (`a0-driver`). Errors are fine; a
+  panic, a hang or an internal error is a bug. After changing a parser, the verifier, lowering or
+  the C API, fuzz longer (`A0_FUZZ_ITERATIONS`, `A0_FUZZ_SEED`), and give what it finds a
+  regression test where the bug is.
+- B0 (`b0/`) is tested like an example language, and its features each have a program in
+  `b0/tests/programs`; a change to A0 that B0 needs must not need anything outside the covered API.
 - Example languages test interpreted, JIT and native output (`examples/*/tests`), and the JIT
   under GC stress, optimized and not. The Lox suite must stay at all 241 passing in all eight modes, and the tests of A0's extensions to
   Lox (`examples/lox/tests/a0`) with it.
@@ -174,7 +197,8 @@ layer, decision D17). A new crate goes into the table above and into `[workspace
 | Diagnostics: rendering, codes (`a0_diag::codes`), the builder's reporting API | `docs/diagnostics.md` (its code table is tested) |
 | A design choice with alternatives | a new `D<n>` entry in `docs/decisions.md` |
 | A milestone ends | `docs/milestones.md` (done / changed / open questions); `CHANGELOG.md` (under Unreleased) |
-| A release | `CHANGELOG.md`, the version in `Cargo.toml`, `README.md` status, a `v<version>` tag |
+| A release (`docs/releases.md`) | `CHANGELOG.md`, the version in `Cargo.toml` (and the A0 crates' `=x.y.z` there), `A0_VERSION_*` in `a0.h`, `__version__` and `pyproject.toml` in `bindings/python`, `editors/vscode/package.json`, `README.md` status, `bench/run.py --record`, a `v<version>` tag |
+| The covered API (`docs/compatibility.md`) or what languages' C runtimes may use | `docs/compatibility.md`, `docs/runtime.md`, and the changelog (**Deprecated** for what is retired) |
 | What the benchmark measures, or anything that moves its numbers much (codegen, the optimizer, the collector, linking) | `docs/benchmarks.md`, rerunning `bench/run.py` |
 | A workflow or convention | this file and `.claude/skills/` |
 

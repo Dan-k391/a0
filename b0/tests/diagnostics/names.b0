@@ -1,0 +1,13 @@
+// Misspelled names get the closest one in scope.
+struct Point { x: int, y: int }
+
+fn distance(p: Point) -> int {
+  return p.x + p.yy;
+}
+
+fn main() {
+  let total = 1;
+  print(totl);
+  print(distanse(new Point { x: 1, y: 2 }));
+  let q: Pont = new Point { x: 0, y: 0 };
+}

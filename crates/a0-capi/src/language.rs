@@ -145,18 +145,13 @@ pub unsafe extern "C" fn a0_language_main(
             }
         })
         .collect();
-    let language = a0_driver::Language {
-        name: forever(&l.name),
-        compile,
-        exit_codes: a0_driver::ExitCodes::default(),
-        run_by_default: false,
-        host_symbols: None,
-        libraries: None,
-        grammar: l.grammar.as_deref().map(forever),
-        codes: a0_driver::Codes::A0,
-        modules: None,
-        repl_main: l.repl_main.as_deref().map(forever),
-    };
+    let mut language = a0_driver::Language::new(forever(&l.name), compile);
+    if let Some(g) = l.grammar.as_deref() {
+        language = language.grammar(forever(g));
+    }
+    if let Some(r) = l.repl_main.as_deref() {
+        language = language.repl_main(forever(r));
+    }
     let status = language.run_status(&args);
     a0_runtime::flush();
     status as c_int

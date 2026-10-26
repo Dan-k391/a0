@@ -26,30 +26,49 @@ impl KindId {
 pub struct FieldId(pub u32);
 
 impl FieldId {
+    /// No field.
     pub const NONE: FieldId = FieldId(u32::MAX);
 }
 
 /// What a grammar's `@def` rules declare, for editors (outline, highlighting, navigation).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[repr(u32)]
+///
+/// A minor release may add variants (`docs/compatibility.md`): code outside A0 matches it with
+/// a `_` arm. A0 itself matches it exhaustively, so that nothing misses a new one.
 pub enum SymbolKind {
+    /// A function (`fn f`).
     Function,
+    /// A method.
     Method,
+    /// A class.
     Class,
+    /// A struct.
     Struct,
+    /// An enum.
     Enum,
+    /// An interface.
     Interface,
+    /// A variant of an enum.
     Variant,
+    /// A field of a struct or class.
     Field,
+    /// A variable.
     Variable,
+    /// A constant.
     Constant,
+    /// A parameter of a function.
     Parameter,
+    /// A type parameter.
     TypeParameter,
+    /// Another kind of type.
     Type,
+    /// A module.
     Module,
 }
 
 impl SymbolKind {
+    /// Every kind, in the order `@def` names them.
     pub const ALL: [SymbolKind; 14] = [
         SymbolKind::Function,
         SymbolKind::Method,
@@ -87,6 +106,7 @@ impl SymbolKind {
         }
     }
 
+    /// The kind `@def(name)` names (`function`, `type_parameter`, ...).
     pub fn from_name(name: &str) -> Option<SymbolKind> {
         SymbolKind::ALL.into_iter().find(|k| k.name() == name)
     }
@@ -110,7 +130,9 @@ impl SymbolKind {
 
 /// A rule marked `@def`: its nodes declare names.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct Definition {
+    /// What the rule's nodes declare.
     pub kind: SymbolKind,
     /// The field that holds the name.
     pub field: FieldId,
@@ -242,6 +264,7 @@ impl Grammar {
         Builder::new(source).build(items)
     }
 
+    /// The grammar's name (`grammar lox;`), or empty.
     pub fn name(&self) -> &str {
         &self.name
     }
@@ -257,22 +280,27 @@ impl Grammar {
         self.literal_map.get(text).copied()
     }
 
+    /// The field named `name` in some rule (`name:NAME`).
     pub fn field(&self, name: &str) -> Option<FieldId> {
         self.field_map.get(name).copied()
     }
 
+    /// The name of a node kind: a rule's or a token's.
     pub fn kind_name(&self, kind: KindId) -> &str {
         &self.names.kinds[kind.0 as usize]
     }
 
+    /// The name of a field.
     pub fn field_name(&self, field: FieldId) -> &str {
         &self.names.fields[field.0 as usize]
     }
 
+    /// The number of node kinds (rules and tokens).
     pub fn kind_count(&self) -> u32 {
         self.names.kinds.len() as u32
     }
 
+    /// Whether nodes of this kind are tokens rather than rules.
     pub fn is_token_kind(&self, kind: KindId) -> bool {
         self.names.is_token[kind.0 as usize]
     }
@@ -309,6 +337,7 @@ impl Grammar {
 #[derive(Clone, Debug, PartialEq)]
 enum Tok {
     Ident(String),
+    Int(u64),
     Str(String),
     Regex(String),
     Attr(String),
@@ -321,6 +350,10 @@ struct DslToken {
     tok: Tok,
     span: Span,
 }
+
+/// The version of the grammar format this A0 reads and writes (`grammar g version 1;`,
+/// `docs/compatibility.md`).
+pub const FORMAT_VERSION: u32 = 1;
 
 const PUNCT: [&str; 15] = [
     "=>", "=", ";", "|", "(", ")", "*", "+", "?", "!", "&", ":", "~", "{", "}",
@@ -423,6 +456,17 @@ fn lex_dsl(text: &str, source: SourceId) -> Result<Vec<DslToken>, Diagnostics> {
             }
             toks.push(DslToken {
                 tok: Tok::Str(s),
+                span: span(start, i),
+            });
+            continue;
+        }
+        if c.is_ascii_digit() {
+            while i < bytes.len() && bytes[i].is_ascii_digit() {
+                i += 1;
+            }
+            let n = text[start..i].parse().unwrap_or(u64::MAX);
+            toks.push(DslToken {
+                tok: Tok::Int(n),
                 span: span(start, i),
             });
             continue;
@@ -550,6 +594,7 @@ impl DslParser {
     fn fail<T>(&self, what: &str) -> Result<T, Diagnostics> {
         let found = match self.peek() {
             Tok::Ident(s) => format!("'{s}'"),
+            Tok::Int(n) => format!("'{n}'"),
             Tok::Str(s) => format!("\"{s}\""),
             Tok::Regex(_) => "a pattern".to_string(),
             Tok::Attr(a) => format!("'@{a}'"),
@@ -618,6 +663,19 @@ impl DslParser {
         if self.is_word("grammar") {
             self.bump();
             let (name, _) = self.ident("the grammar name")?;
+            if self.is_word("version") {
+                self.bump();
+                let span = self.span();
+                let Tok::Int(version) = *self.peek() else {
+                    return self.fail("the format version, a number");
+                };
+                self.bump();
+                if version != u64::from(FORMAT_VERSION) {
+                    return Err(
+                        Diagnostic::newer_format("grammar", version, FORMAT_VERSION, span).into(),
+                    );
+                }
+            }
             self.punct(";")?;
             items.push(Item::Name(name));
         }

@@ -24,6 +24,7 @@
 
 use a0_diag::codes as code;
 use a0_diag::{Diagnostics, SourceId};
+use a0_driver::backend::{A0Symbol, HostSymbols, Library};
 use a0_hir::{
     BinOp, BodyId, Builtin, ExprId, FuncId, HirBuilder, HirModule, Item, Memory, TypeId, TypeTag,
     UnOp, Warning,
@@ -43,20 +44,20 @@ pub fn grammar() -> Grammar {
 
 /// The C library Tin programs link with: the runtime's few functions, cJSON, and the functions of
 /// structs by value the tests call.
-pub fn runtime_library() -> a0_native::Library {
-    a0_native::Library {
-        name: "tin_rt".to_string(),
-        bytes: include_bytes!(concat!(env!("OUT_DIR"), "/tin_rt.embedded")).to_vec(),
-    }
+pub fn runtime_library() -> Library {
+    Library::new(
+        "tin_rt",
+        include_bytes!(concat!(env!("OUT_DIR"), "/tin_rt.embedded")),
+    )
 }
 
 unsafe extern "C" {
-    static tin_symbols: a0_runtime::A0Symbol;
+    static tin_symbols: A0Symbol;
 }
 
 /// The C functions of [`runtime_library`], for the interpreter and the JIT.
-pub fn host_symbols() -> a0_interp::HostSymbols {
-    let mut symbols = a0_interp::HostSymbols::new();
+pub fn host_symbols() -> HostSymbols {
+    let mut symbols = HostSymbols::new();
     // SAFETY: `tin_symbols` is a NULL-terminated table defined in runtime/tin.c.
     unsafe { symbols.add_table(&raw const tin_symbols) };
     symbols

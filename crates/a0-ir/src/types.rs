@@ -3,18 +3,30 @@
 /// The type of an IR value.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[repr(u8)]
+///
+/// A minor release may add variants (`docs/compatibility.md`): code outside A0 matches it with
+/// a `_` arm. A0's backends match it exhaustively, so that none misses a new one.
 pub enum Type {
+    /// A boolean, the result of comparisons.
     I1,
+    /// An 8-bit integer.
     I8,
+    /// A 16-bit integer.
     I16,
+    /// A 32-bit integer.
     I32,
+    /// A 64-bit integer.
     I64,
+    /// A 32-bit float.
     F32,
+    /// A 64-bit float.
     F64,
+    /// A pointer, as wide as the target's.
     Ptr,
 }
 
 impl Type {
+    /// Every type.
     pub const ALL: [Type; 8] = [
         Type::I1,
         Type::I8,
@@ -26,6 +38,7 @@ impl Type {
         Type::Ptr,
     ];
 
+    /// The spelling used in the text format (`i64`).
     pub fn name(self) -> &'static str {
         match self {
             Type::I1 => "i1",
@@ -39,10 +52,12 @@ impl Type {
         }
     }
 
+    /// The type spelled `s` in the text format.
     pub fn from_name(s: &str) -> Option<Type> {
         Type::ALL.into_iter().find(|t| t.name() == s)
     }
 
+    /// Whether this is an integer type (`i1` included).
     pub fn is_int(self) -> bool {
         matches!(
             self,
@@ -50,6 +65,7 @@ impl Type {
         )
     }
 
+    /// Whether this is a float type.
     pub fn is_float(self) -> bool {
         matches!(self, Type::F32 | Type::F64)
     }
@@ -88,19 +104,30 @@ impl std::fmt::Display for Type {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[repr(u8)]
 pub enum IntCC {
+    /// Equal.
     Eq,
+    /// Not equal.
     Ne,
+    /// Less than, signed.
     Slt,
+    /// Less than or equal, signed.
     Sle,
+    /// Greater than, signed.
     Sgt,
+    /// Greater than or equal, signed.
     Sge,
+    /// Less than, unsigned.
     Ult,
+    /// Less than or equal, unsigned.
     Ule,
+    /// Greater than, unsigned.
     Ugt,
+    /// Greater than or equal, unsigned.
     Uge,
 }
 
 impl IntCC {
+    /// Every condition.
     pub const ALL: [IntCC; 10] = [
         IntCC::Eq,
         IntCC::Ne,
@@ -114,6 +141,7 @@ impl IntCC {
         IntCC::Uge,
     ];
 
+    /// The spelling used in the text format (`slt`).
     pub fn name(self) -> &'static str {
         match self {
             IntCC::Eq => "eq",
@@ -129,6 +157,7 @@ impl IntCC {
         }
     }
 
+    /// The condition spelled `s` in the text format.
     pub fn from_name(s: &str) -> Option<IntCC> {
         IntCC::ALL.into_iter().find(|c| c.name() == s)
     }
@@ -143,15 +172,22 @@ impl IntCC {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[repr(u8)]
 pub enum FloatCC {
+    /// Equal (false if either is NaN).
     Eq,
+    /// Not equal (true if either is NaN).
     Ne,
+    /// Less than.
     Lt,
+    /// Less than or equal.
     Le,
+    /// Greater than.
     Gt,
+    /// Greater than or equal.
     Ge,
 }
 
 impl FloatCC {
+    /// Every condition.
     pub const ALL: [FloatCC; 6] = [
         FloatCC::Eq,
         FloatCC::Ne,
@@ -161,6 +197,7 @@ impl FloatCC {
         FloatCC::Ge,
     ];
 
+    /// The spelling used in the text format (`olt`).
     pub fn name(self) -> &'static str {
         match self {
             FloatCC::Eq => "eq",
@@ -172,6 +209,7 @@ impl FloatCC {
         }
     }
 
+    /// The condition spelled `s` in the text format.
     pub fn from_name(s: &str) -> Option<FloatCC> {
         FloatCC::ALL.into_iter().find(|c| c.name() == s)
     }
@@ -194,11 +232,18 @@ macro_rules! opcodes {
         /// Instruction opcode. See `docs/ir.md` for the meaning of each.
         #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
         #[repr(u8)]
+        ///
+        /// A minor release may add variants (`docs/compatibility.md`): code outside A0 matches it with
+        /// a `_` arm. A0's backends match it exhaustively, so that none misses a new one.
         pub enum Opcode {
-            $($variant,)*
+            $(
+                #[doc = concat!("`", $name, "` (`docs/ir.md`).")]
+                $variant,
+            )*
         }
 
         impl Opcode {
+            /// Every opcode.
             pub const ALL: &'static [Opcode] = &[$(Opcode::$variant,)*];
 
             /// The spelling used in the text format.
@@ -208,6 +253,7 @@ macro_rules! opcodes {
                 }
             }
 
+            /// The opcode spelled `s` in the text format.
             pub fn from_name(s: &str) -> Option<Opcode> {
                 match s {
                     $($name => Some(Opcode::$variant),)*
@@ -223,12 +269,18 @@ macro_rules! opcodes {
 /// function's struct result goes (the function then returns nothing in the IR).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[repr(u8)]
+///
+/// A minor release may add variants (`docs/compatibility.md`): code outside A0 matches it with
+/// a `_` arm. A0's backends match it exhaustively, so that none misses a new one.
 pub enum StructPass {
+    /// The struct, passed by value; the pointer says where its bytes are.
     ByValue,
+    /// Where the function's struct result goes (parameter 0 only).
     Result,
 }
 
 impl StructPass {
+    /// The spelling used in the text format (`byval`, `sret`).
     pub fn name(self) -> &'static str {
         match self {
             StructPass::ByValue => "byval",
@@ -236,6 +288,7 @@ impl StructPass {
         }
     }
 
+    /// The kind spelled `s` in the text format.
     pub fn from_name(s: &str) -> Option<StructPass> {
         [StructPass::ByValue, StructPass::Result]
             .into_iter()
@@ -246,9 +299,13 @@ impl StructPass {
 /// A C struct's layout: its size and alignment, and its scalar fields with their offsets (nested
 /// structs flattened), which is what a C ABI looks at.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub struct CStruct {
+    /// The struct's size in bytes.
     pub size: u32,
+    /// Its alignment in bytes.
     pub align: u32,
+    /// Its scalar fields: each one's type and offset in bytes.
     pub fields: Vec<(Type, u32)>,
 }
 
@@ -326,10 +383,12 @@ impl Opcode {
         )
     }
 
+    /// One operand, result of the same type (`ineg`, `not`, `fneg`).
     pub fn is_unary(self) -> bool {
         matches!(self, Opcode::Ineg | Opcode::Not | Opcode::Fneg)
     }
 
+    /// A conversion between types (`sext`, `fptosi`, ...).
     pub fn is_cast(self) -> bool {
         use Opcode::*;
         matches!(
@@ -382,14 +441,17 @@ macro_rules! entity {
             /// Sentinel meaning "none".
             pub const NONE: $name = $name(u32::MAX);
 
+            /// The index, for tables indexed by this kind of handle.
             pub fn index(self) -> usize {
                 self.0 as usize
             }
 
+            /// Whether this is the sentinel.
             pub fn is_none(self) -> bool {
                 self.0 == u32::MAX
             }
 
+            /// Whether this is a real handle.
             pub fn is_some(self) -> bool {
                 self.0 != u32::MAX
             }
@@ -444,9 +506,15 @@ entity!(
 /// them: references are pointers to the runtime's objects.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[repr(u8)]
+///
+/// A minor release may add variants (`docs/compatibility.md`): code outside A0 matches it with
+/// a `_` arm. A0's backends match it exhaustively, so that none misses a new one.
 pub enum DebugKind {
+    /// A 64-bit integer.
     Int,
+    /// A 64-bit float.
     Float,
+    /// A boolean.
     Bool,
     /// A pointer to an `A0String`.
     String,
@@ -480,6 +548,7 @@ pub enum DebugKind {
 }
 
 impl DebugKind {
+    /// Every kind.
     pub const ALL: &'static [DebugKind] = &[
         DebugKind::Int,
         DebugKind::Float,
@@ -500,6 +569,7 @@ impl DebugKind {
         DebugKind::Pointer,
     ];
 
+    /// The spelling used in the text format.
     pub fn name(self) -> &'static str {
         match self {
             DebugKind::Int => "int",
@@ -522,6 +592,7 @@ impl DebugKind {
         }
     }
 
+    /// The kind spelled `s` in the text format.
     pub fn from_name(s: &str) -> Option<DebugKind> {
         DebugKind::ALL.iter().copied().find(|k| k.name() == s)
     }
@@ -531,18 +602,24 @@ impl DebugKind {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[repr(u8)]
 pub enum SymbolKind {
+    /// A function.
     Func,
+    /// A global or data item.
     Global,
 }
 
 /// A reference to a module item by kind and index.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub struct Symbol {
+    /// Whether it names a function or a global.
     pub kind: SymbolKind,
+    /// The function's or global's index.
     pub index: u32,
 }
 
 impl Symbol {
+    /// The symbol of function `f`.
     pub fn func(f: FuncId) -> Symbol {
         Symbol {
             kind: SymbolKind::Func,
@@ -550,6 +627,7 @@ impl Symbol {
         }
     }
 
+    /// The symbol of global `g`.
     pub fn global(g: GlobalId) -> Symbol {
         Symbol {
             kind: SymbolKind::Global,
@@ -557,10 +635,12 @@ impl Symbol {
         }
     }
 
+    /// The function it names, if it names one.
     pub fn as_func(self) -> Option<FuncId> {
         (self.kind == SymbolKind::Func).then_some(FuncId(self.index))
     }
 
+    /// The global it names, if it names one.
     pub fn as_global(self) -> Option<GlobalId> {
         (self.kind == SymbolKind::Global).then_some(GlobalId(self.index))
     }
@@ -584,6 +664,7 @@ impl Symbol {
 
 /// Canonical NaN bit patterns, printed as plain `nan`.
 pub const F64_CANONICAL_NAN: u64 = 0x7ff8_0000_0000_0000;
+/// The NaN every `f32` NaN is stored as, so that the interpreter and native code agree on its bits.
 pub const F32_CANONICAL_NAN: u32 = 0x7fc0_0000;
 
 /// Normalizes an integer constant to the canonical stored form for `ty`: sign-extended from the

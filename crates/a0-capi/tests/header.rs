@@ -52,3 +52,24 @@ fn the_header_matches_the_exports() {
         exported.len()
     );
 }
+
+#[test]
+fn the_header_names_the_version() {
+    // `A0_VERSION_*` must be the crate's version, which `a0_version()` returns.
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let header = std::fs::read_to_string(root.join("include/a0.h")).unwrap();
+    let get = |name: &str| {
+        let line = header
+            .lines()
+            .find(|l| l.starts_with(&format!("#define {name} ")))
+            .unwrap_or_else(|| panic!("no {name}"));
+        line.rsplit(' ').next().unwrap().to_string()
+    };
+    let version = format!(
+        "{}.{}.{}",
+        get("A0_VERSION_MAJOR"),
+        get("A0_VERSION_MINOR"),
+        get("A0_VERSION_PATCH")
+    );
+    assert_eq!(version, env!("CARGO_PKG_VERSION"));
+}

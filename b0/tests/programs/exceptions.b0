@@ -1,0 +1,64 @@
+// Exceptions for what should not happen: `throw` raises any value, `try ... catch` handles it
+// wherever it was raised below, and one that is not caught ends the program with a stack trace.
+// expect: caught: not a number: x1
+// expect: caught 42 after cleanup
+// expect: inner caught: deep, then outer caught: again
+// expect: a struct: 3
+// expect-stderr: panic: uncaught exception: the end
+// expect-stderr:     at finish (exceptions.b0:26:3)
+// expect-stderr:     at main (exceptions.b0:63:3)
+// expect-exit: 101
+struct Problem { code: int }
+
+fn parse(text: string) -> int {
+  let n = 0;
+  for i in 0..len(text) {
+    let c = byte_at(text, i);
+    if c < 48 || c > 57 {
+      throw "not a number: " + text;
+    }
+    n = n * 10 + (c - 48);
+  }
+  return n;
+}
+
+fn finish() {
+  throw "the end";
+}
+
+fn deep(n: int) {
+  if n == 0 {
+    throw "deep";
+  }
+  deep(n - 1);
+}
+
+fn main() {
+  try {
+    print(parse("12") + parse("x1"));
+  } catch e {
+    print("caught: " + (e as string));
+  }
+  let log = "";
+  try {
+    log = "cleanup";
+    throw 42;
+  } catch e {
+    print("caught " + str(e as int) + " after " + log);
+  }
+  try {
+    try {
+      deep(5);
+    } catch e {
+      print("inner caught: " + (e as string) + ", then outer caught: again");
+      throw "again";
+    }
+  } catch _e {
+  }
+  try {
+    throw new Problem { code: 3 };
+  } catch e {
+    if e is Problem { print("a struct: " + str((e as Problem).code)); }
+  }
+  finish();
+}

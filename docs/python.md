@@ -14,8 +14,10 @@ python bindings/python/examples/pebble/pebble.py run bindings/python/examples/pe
 python bindings/python/examples/pebble/pebble.py build bindings/python/examples/pebble/programs/arrays.pb -o arrays
 ```
 
-The package finds the library in `target/release` or `target/debug` of the checkout it is in, or
-wherever `A0_LIBRARY` says. To use it from elsewhere, put `bindings/python` on `PYTHONPATH` (or copy
+The package finds the library inside itself (`a0/lib/`, as a wheel or a release archive's
+`python/` directory has it: `pip install ./python`), in `target/release` or `target/debug` of the
+checkout it is in, or wherever `A0_LIBRARY` says. `a0.__version__` is the package's version; it
+refuses a library of another major version or an older minor one. To use it from elsewhere, put `bindings/python` on `PYTHONPATH` (or copy
 the `a0` directory) and set `A0_LIBRARY`.
 
 ## The API

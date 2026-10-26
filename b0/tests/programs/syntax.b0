@@ -1,0 +1,55 @@
+// What B0 adds to the syntax: map literals and types, ranges, `for` over a map's keys, compound
+// assignment, bitwise operators, hexadecimal literals and digit separators, `is`.
+// expect: ages: ada 36, alan 41
+// expect: 10 11 12
+// expect: total 105
+// expect: bits 15 1 10 -16 40 2
+// expect: hex 255 1000000
+// expect: any: true false 7
+// expect: counts: a 3, b 1
+fn main() {
+  let ages: {string: int} = {"ada": 36, "alan": 41};
+  let line = "ages:";
+  for name in ages {
+    line = line + " " + name + " " + str(ages[name]) + ",";
+  }
+  print(substr(line, 0, len(line) - 1));
+
+  let r = "";
+  for i in 10..13 {
+    r = r + str(i);
+    if i < 12 { r = r + " "; }
+  }
+  print(r);
+
+  let total = 0;
+  for i in 0..15 {
+    total += i;
+  }
+  print("total " + str(total));
+
+  let x = 0;
+  let a = 12;
+  let b = 7;
+  x = (a | b) & 15;
+  let y = a & b;
+  y ^= 15;
+  y &= ~1;
+  let s = 5;
+  s <<= 3;
+  print("bits " + str(a | 3) + " " + str(x & 1) + " " + str(y) + " " + str(~15) + " " + str(s) + " " + str(16 >> 3));
+  print("hex " + str(0xff) + " " + str(1_000_000));
+
+  let v: any = 7 as any;
+  print("any: " + str(v is int) + " " + str(v is string) + " " + str(v as int));
+
+  let counts: {string: int} = {};
+  for word in ["a", "b", "a", "a"] {
+    if has(counts, word) {
+      counts[word] += 1;
+    } else {
+      counts[word] = 1;
+    }
+  }
+  print("counts: a " + str(counts["a"]) + ", b " + str(counts["b"]));
+}

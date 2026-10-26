@@ -208,7 +208,9 @@ impl HirModule {
         let k = self.types[t.index()].clone();
         let s = |m: &mut HirModule, x: TypeId| m.subst(x, owner, args);
         let k = match k {
-            TypeKind::Param(item, i) if item == owner => return args[i as usize],
+            TypeKind::Param(item, i) if item == owner => {
+                return args.get(i as usize).copied().unwrap_or(TypeId::ERROR);
+            }
             TypeKind::Array(e) => TypeKind::Array(s(self, e)),
             TypeKind::Ptr(e) => TypeKind::Ptr(s(self, e)),
             TypeKind::Map(a, b) => TypeKind::Map(s(self, a), s(self, b)),

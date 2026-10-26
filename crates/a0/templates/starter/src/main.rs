@@ -9,23 +9,14 @@
 
 use std::process::ExitCode;
 
-use a0_driver::{Codes, CompileError, ExitCodes, Language, Program};
+use a0_driver::{CompileError, Language, Program};
 
 fn main() -> ExitCode {
-    Language {
-        name: "{{name}}",
-        compile: |text, source| match {{crate}}::compile(text, source) {
-            Ok(m) => Ok(Program::Hir(m)),
-            Err(d) => Err(CompileError::Diagnostics(d)),
-        },
-        exit_codes: ExitCodes::default(),
-        run_by_default: false,
-        host_symbols: None,
-        libraries: None,
-        grammar: Some({{crate}}::GRAMMAR),
-        codes: Codes::A0,
-        modules: None,
-        repl_main: Some("fn main() {\n{}}\n"),
-    }
+    Language::new("{{name}}", |text, source| match {{crate}}::compile(text, source) {
+        Ok(m) => Ok(Program::Hir(m)),
+        Err(d) => Err(CompileError::Diagnostics(d)),
+    })
+    .grammar({{crate}}::GRAMMAR)
+    .repl_main("fn main() {\n{}}\n")
     .main()
 }

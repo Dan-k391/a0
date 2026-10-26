@@ -1,0 +1,8 @@
+$ b0 run syntax.b0
+--- stderr
+error[E0001]: expected ')'
+ --> syntax.b0:3:17
+  |
+3 |   let x = (1 + 2;
+  |                 ^
+--- exit 1

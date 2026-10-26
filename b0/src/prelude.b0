@@ -1,0 +1,127 @@
+// B0's prelude: functions every program can call, written in B0. A closure passed to one of them
+// is inlined where the call is (D84), so they cost what a loop written out would.
+
+// The results of `f` on each element, in order.
+pub fn map<T, R>(xs: [T], f: fn(T) -> R) -> [R] {
+  let out: [R] = [];
+  for x in xs {
+    push(out, f(x));
+  }
+  return out;
+}
+
+// The elements for which `keep` is true, in order.
+pub fn filter<T>(xs: [T], keep: fn(T) -> bool) -> [T] {
+  let out: [T] = [];
+  for x in xs {
+    if keep(x) {
+      push(out, x);
+    }
+  }
+  return out;
+}
+
+// `f` applied to `init` and the first element, then to that and the second, and so on.
+pub fn fold<T, A>(xs: [T], init: A, f: fn(A, T) -> A) -> A {
+  let acc = init;
+  for x in xs {
+    acc = f(acc, x);
+  }
+  return acc;
+}
+
+// Calls `f` on each element, in order.
+pub fn each<T>(xs: [T], f: fn(T)) {
+  for x in xs {
+    f(x);
+  }
+}
+
+// Whether `f` is true of some element.
+pub fn any_of<T>(xs: [T], f: fn(T) -> bool) -> bool {
+  for x in xs {
+    if f(x) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// The numbers from `start` to `end - 1`.
+pub fn range(start: int, end: int) -> [int] {
+  let out: [int] = [];
+  for i in start..end {
+    push(out, i);
+  }
+  return out;
+}
+
+// Sorts `xs` in place, stably, by `less`: insertion sort for short arrays, merging runs for long
+// ones.
+pub fn sort<T>(xs: [T], less: fn(T, T) -> bool) {
+  let n = len(xs);
+  if n < 2 {
+    return;
+  }
+  let width = 1;
+  // Runs of 16 sorted by insertion, then merged in pairs.
+  let start = 0;
+  while start < n {
+    let end = start + 16;
+    if end > n {
+      end = n;
+    }
+    for i in start + 1..end {
+      let x = xs[i];
+      let j = i;
+      while j > start && less(x, xs[j - 1]) {
+        xs[j] = xs[j - 1];
+        j -= 1;
+      }
+      xs[j] = x;
+    }
+    start = end;
+  }
+  width = 16;
+  let from = xs;
+  let to: [T] = [];
+  for x in xs {
+    push(to, x);
+  }
+  while width < n {
+    let lo = 0;
+    while lo < n {
+      let mid = lo + width;
+      if mid > n {
+        mid = n;
+      }
+      let hi = mid + width;
+      if hi > n {
+        hi = n;
+      }
+      let i = lo;
+      let j = mid;
+      let k = lo;
+      while k < hi {
+        if i < mid && (j >= hi || !less(from[j], from[i])) {
+          to[k] = from[i];
+          i += 1;
+        } else {
+          to[k] = from[j];
+          j += 1;
+        }
+        k += 1;
+      }
+      lo = hi;
+    }
+    let swap = from;
+    from = to;
+    to = swap;
+    width *= 2;
+  }
+  if from != xs {
+    for i in 0..n {
+      xs[i] = from[i];
+    }
+  }
+}

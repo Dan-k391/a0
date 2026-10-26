@@ -23,7 +23,11 @@ from ctypes import POINTER, byref, c_char_p, c_double, c_int, c_int32, c_int64, 
 from ctypes import c_uint8, c_uint32, c_void_p
 
 __all__ = ["Builder", "Diagnostic", "Error", "Grammar", "Hir", "HirBuilder", "Module", "Node",
-           "Tree", "NONE", "version"]
+           "Tree", "NONE", "version", "__version__"]
+
+#: The version of this package, which the library it loads must match in its major version and be
+#: at least as new as in its minor one (`docs/compatibility.md`).
+__version__ = "1.0.0"
 
 #: The handle that stands for "none" (`A0_NONE`).
 NONE = 0xFFFFFFFF
@@ -42,6 +46,10 @@ def _library_path():
         name = "liba0_capi.dylib"
     else:
         name = "liba0_capi.so"
+    # An installed package (a wheel, a release archive) carries the library inside it.
+    bundled = os.path.join(os.path.dirname(os.path.abspath(__file__)), "lib", name)
+    if os.path.exists(bundled):
+        return bundled
     root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
     for profile in ("release", "debug"):
         candidate = os.path.join(root, "target", profile, name)
@@ -75,6 +83,23 @@ _version = _fn("a0_version", c_char_p)
 def version():
     """The version of the A0 library."""
     return _version().decode()
+
+
+def _check_library():
+    want = [int(x) for x in __version__.split(".")]
+    have = [int(x) for x in version().split(".")]
+    if have[0] != want[0] or have[1] < want[1]:
+        raise ImportError(f"the A0 library is version {version()}, and this package {__version__} "
+                          f"needs {want[0]}.{want[1]} or a later {want[0]}.x")
+
+
+_check_library()
+
+
+def _deprecated(what, instead):
+    """Warns that `what` is deprecated and will be removed in the next major version."""
+    import warnings
+    warnings.warn(f"{what} is deprecated; use {instead}", DeprecationWarning, stacklevel=3)
 
 
 # ---------------------------------------------------------------------------------- diagnostics

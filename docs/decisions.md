@@ -1157,7 +1157,8 @@ Every language with modules gets them from `a0-driver`, so the choices are the d
   build; now both go through the package.
 - **Reproducible means byte for byte**: compiling was already deterministic; file names in trace
   tables are the package-relative names (`json@<commit>/src/x.mn`, never the cache's path); linking
-  adds no time stamps (`/Brepro`). A test builds twice, a second apart, and compares.
+  adds no time stamps (`/Brepro`; on macOS `ZERO_AR_DATE=1` and, without `-g`, `-S`). A test
+  builds twice, a second apart, and compares.
 
 Versions and version requirements (semver resolution) are left out: with git, a tag or a commit
 says which version, and nothing reads `version` yet.
@@ -1202,3 +1203,140 @@ interpreter already ran on one), code generation's workers get 256 MB, and the p
 Programs keep their own stacks: they run on threads of their own sized as before, so a program
 behaves the same in every mode. Hosts that compile on their own threads through the C API or
 Python should give them a large stack too (`a0_driver::COMPILER_STACK`).
+
+## D84. Large programs at run time: known closures inlined, the collector measured and kept
+
+v0.9 asks that the collector and the optimizer hold up on large programs where measurements show
+the need, naming a generational collector and inlining calls to known closures as examples. Both
+were measured first.
+
+**Closures.** Code that passes a closure to a small function (`fold(xs, 0, fn(a, b) { a + b })`,
+the shape of most higher-order code) ran 3.1 times slower than the same loop calling a named
+function: 327 against 104 ms. The optimizer inlined `fold`, but the closure stayed a call through
+its pointer, with its captured variables in boxes. Now, after a function's calls are inlined, a
+call of a closure the function makes itself, through a local that is never assigned and holds it
+(directly or through copies), is inlined too, under the limits functions have (D37): 117 ms. The
+copy refers to the variables the closure captured, so it shares them with the closure, as a call
+would, whether the closure also escapes or not; only closures made in the same body are inlined,
+so those variables are in scope at the call. A closure that is no longer made afterwards is
+dropped, and its body emptied so that what it captured needs no box. Stack traces name the inlined
+closure as they name the closure (`main::{closure}`). Closures stored in data structures or
+passed to functions that are not inlined stay calls; doing better there would need specialization
+of the callee per closure, which no measurement asked for.
+
+**The collector.** A program keeping a tree of 2^21 nodes alive (134 MB) while making and dropping
+small trees spends 278 ms of 0.9 s of CPU time in the collector; with 2^15 nodes alive it spends
+209 ms of 0.7 s. The total grows by a third while the live heap grows 64 times, because the next
+collection comes when the heap has grown to three times what survived (D64), so a collection's
+cost, which is about what survives, is paid once per that much allocation whatever the heap's
+size. The longest pause is about 40 ms at 4 million live objects. A generational collector would
+lower both, but needs a write barrier on every store of a reference in three code generators and
+the interpreter, and with threads; these measurements do not show the need, so the collector stays
+as it is. Pauses on heaps of hundreds of megabytes are the case to measure again.
+
+## D85. Fuzzing: mutations of the corpus, in the test suite, with no new dependency
+
+v0.9 asks for fuzzing of every input A0 accepts: grammars, HIR and IR text, the C API. The usual
+tool, `cargo fuzz`, needs a nightly compiler and libFuzzer, runs only on some hosts, and would live
+outside the test suite that CI runs on six platforms. A0's inputs are text with a large corpus of
+valid examples, which a mutation fuzzer starts from well: most coverage-guided fuzzers spend their
+first hours rediscovering the syntax the corpus already has.
+
+So the fuzzers are tests, seeded and reproducible, like the random programs (D38):
+
+- `crates/a0/tests/fuzz.rs` mutates the IR corpus, the HIR corpus with the standard library, and
+  the example languages' grammars with their programs (deleting, duplicating and swapping spans and
+  lines, splicing in pieces of other files, inserting words from all of them and edge values), and
+  runs each input through everything that reads it: parsing, verifying, printing back, checking,
+  monomorphization, the optimizer and lowering (with and without it), both code generators, a
+  grammar's checks, parsing a program with it and compiling a DSL (D55). Every diagnostic is
+  rendered. Each input runs on the compiler's stack (D83) within ten seconds.
+- `crates/a0-capi/tests/fuzz_capi.py` reads `include/a0.h` and makes random sequences of calls to
+  all its functions through ctypes, keeping the header's contract (live objects or NULL, arrays as
+  long as their counts) and breaking everything else: handles of the wrong kind or object, out of
+  range or `A0_NONE`, unknown names, strings that are not UTF-8, calls in any order. It runs in a
+  process of its own, since a panic across the C boundary aborts; Python is already required for
+  the bindings' tests.
+- Manifests and lock files are fuzzed by a unit test of `a0-driver`.
+
+A failure is a panic, a hang, an internal code generator error, IR from lowering that the verifier
+rejects (`hir.lower`), or text that does not print back the same; errors are expected. Each test
+runs a few hundred inputs by default, so CI keeps finding regressions; `A0_FUZZ_ITERATIONS` and
+`A0_FUZZ_SEED` run longer. A failing input is saved and named, and gets a regression test where the
+bug was.
+
+What the first long runs (hundreds of thousands of inputs) found: diagnostics rendering panicked on
+a span that ends inside a multi-byte character; the C layer passed one struct handle to the builder
+unchecked; the IR builder trusted function and global handles in `func_addr` and `global_addr`; the
+HIR builder reported a wrong number of type arguments but kept the malformed type, which later
+indexed past its arguments; a type parameter used outside its item reached monomorphization; and a
+closure whose body made the closure itself sent the checker into unbounded recursion (the checker
+now checks the bodies' shape without recursion before any pass walks them); and a span could end
+before it started (`Span::new` now takes such an end as the start). The text parsers, verifier,
+lowering and code generators held.
+
+## D86. What 1.0 promises: the language-building surface, versioned text, and a deprecation path
+
+v1.0 asks for stable, documented public APIs in Rust, C and Python, versioned text formats, a
+written compatibility policy and a deprecation process (`docs/compatibility.md`). The question is
+where to draw the line. Everything `pub` in every crate would freeze the backends' internals, which
+change with every optimization; too little would leave languages depending on uncovered items.
+
+The line follows what a language uses. The example languages and B0 need the diagnostics, the
+grammar and syntax trees, scopes, the HIR and core IR builders, the driver, and the build-script
+helper: `a0-diag`, `a0-syntax`, `a0-sema`, `a0-ir`, `a0-hir`, `a0-driver` and `a0-build` are
+covered, all of their public items. Languages with a C runtime also needed three items from backend
+crates (`a0_native::Library`, `a0_interp::HostSymbols`, `a0_runtime::A0Symbol`); `a0-driver` now
+re-exports them (`a0_driver::backend`), so the backend crates stay free to change. The C header
+and the Python package are covered whole: they were designed as public surfaces (D2, D56).
+`a0rt.h` is mostly the contract between generated code and the runtime, which changes with
+codegen; only what a language's C runtime uses is covered, listed in `docs/runtime.md` (such a
+language keeps `a0-runtime` as a dependency, since Cargo tells only direct dependents where its
+header is).
+
+For Rust, growth must not break: public enums that can gain variants and structs that can gain
+fields are `#[non_exhaustive]` (Rust's own way, rather than a rule nobody checks), with
+constructors for what languages build (`Language::new` and its builder methods replace the struct
+literal every driver wrote). The exception is the few enums that A0's own crates translate
+exhaustively, the core IR's opcodes and types above all: marking them would force wildcard arms in
+the backends and lose the compiler's check that each backend handles every opcode, so they say in
+their documentation that they may grow instead. The minimum Rust version is stated in
+`Cargo.toml`. Text formats name their version in the module's header,
+optional and 1 when absent, so every file written before 1.0 is version 1 as it is; a text of a
+newer major version is refused with a code (`E0004`) rather than misread. Deprecation is the
+usual one: marked in a minor release in each language's own way, kept working for the rest of the
+major version, removed only in the next.
+
+## D87. B0: Minnow's compiler grown into the flagship, on the covered API, with a prelude in B0
+
+v1.0 asks for a flagship language, B0, that shows everything A0 can do, built only on public
+APIs. The choices were to design a new language from scratch or to grow one of the examples.
+Minnow already had what most languages need (modules, generics, interfaces, closures, nullable
+references, the standard library, packages), compiled in one walk with no checker of its own, so
+B0 starts from its compiler and adds what A0 offers that no single example used: inline structs,
+sized numbers and `f32`, maps with literals, exceptions, dynamic objects, threads, manual memory,
+raw pointers, C functions, bitwise operators and compound assignment. It is a crate at the top of
+the repository (`b0/`), not under `examples/`, because it is meant to be started from.
+
+- **Only the covered API.** B0 depends on `a0-diag`, `a0-syntax`, `a0-hir` and `a0-driver`; a test
+  reads its manifest and sources and fails on anything else. Building it needed no change to A0's
+  public API, which is the evidence that the API is enough for a full language.
+- **A prelude written in B0.** `map`, `filter`, `fold`, `each`, `any_of`, `range` and `sort` are B0
+  source compiled into a module of its own (`b0.prelude`), from which every file imports the
+  functions it does not declare itself. A0's prelude module (module 0) would have been simpler,
+  but the root module's items are not qualified, so a program's own `map` collided with the
+  prelude's; importing by name lets a program's functions take the prelude's place, as in Rust.
+  Inlining of known closures (D84) makes these functions as fast as loops written out.
+- **`unsafe` is B0's rule, not A0's.** A0 offers raw pointers to any language that asks (D71); B0
+  allows them only inside `unsafe { ... }`. It checks what it can see while building: the pointer
+  builtins by name, and indexing an expression whose type is already a pointer. A pointer whose
+  type is only inferred later is indexed unchecked by this rule, which the documentation says.
+  The code `E2027` is A0's, for any language with the same rule.
+- **Syntax where the HIR has a concept.** `inline struct` (HIR's term; `value` would have taken a
+  common variable name, since grammar keywords are reserved), `memory manual;`, `{K: V}` and
+  `{k: v}`, `for i in a..b`, `try`/`catch`/`throw`, `x is T`, `sizeof(T)`. Dynamic objects use
+  field syntax (`o.name`), which B0 turns into A0's `field` and `set_field` builtins when the
+  receiver is known to be an `object`.
+
+What B0 does not have is what the HIR does not have yet: generic interfaces, methods on arrays,
+type tests of arrays inside `any`, and `finally`.

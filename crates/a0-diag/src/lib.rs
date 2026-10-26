@@ -5,6 +5,8 @@
 //! [`Span`] is a byte range inside one registered source. Diagnostics render the way rustc's do
 //! (see [`RenderOptions`]).
 
+#![warn(missing_docs)]
+
 pub mod codes;
 mod render;
 mod similar;
@@ -24,14 +26,23 @@ pub struct SourceId(pub u32);
 /// A byte range `start..end` in one source.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Span {
+    /// The source the span is in.
     pub source: SourceId,
+    /// The byte offset of the first byte.
     pub start: u32,
+    /// The byte offset after the last byte (`start` for an empty span).
     pub end: u32,
 }
 
 impl Span {
+    /// A span from `start` to `end`; an `end` before `start` (a host's mistake through the C API)
+    /// is taken as `start`.
     pub fn new(source: SourceId, start: u32, end: u32) -> Span {
-        Span { source, start, end }
+        Span {
+            source,
+            start,
+            end: end.max(start),
+        }
     }
 
     /// The smallest span covering both `self` and `other` (which must share a source).
@@ -43,10 +54,12 @@ impl Span {
         }
     }
 
+    /// How many bytes the span covers.
     pub fn len(self) -> u32 {
-        self.end - self.start
+        self.end.saturating_sub(self.start)
     }
 
+    /// Whether the span covers no bytes (a position between two).
     pub fn is_empty(self) -> bool {
         self.start == self.end
     }
@@ -111,6 +124,7 @@ pub struct SourceMap {
 }
 
 impl SourceMap {
+    /// An empty map, which knows only the built-in sources.
     pub fn new() -> SourceMap {
         SourceMap::default()
     }
@@ -152,21 +166,26 @@ impl SourceMap {
         }
     }
 
+    /// Whether no source was added.
     pub fn is_empty(&self) -> bool {
         self.files.is_empty()
     }
 
+    /// The name a source was added with (usually its path).
     pub fn name(&self, id: SourceId) -> &str {
         &self.file(id).name
     }
 
+    /// The text of a source.
     pub fn text(&self, id: SourceId) -> &str {
         &self.file(id).text
     }
 
     /// The text covered by `span`.
     pub fn slice(&self, span: Span) -> &str {
-        &self.text(span.source)[span.start as usize..span.end as usize]
+        let text = self.text(span.source);
+        let start = text.floor_char_boundary(span.start as usize);
+        &text[start..text.ceil_char_boundary((span.end as usize).max(start))]
     }
 
     /// 1-based line number of a byte offset.
@@ -182,10 +201,12 @@ impl SourceMap {
     pub fn line_col(&self, id: SourceId, offset: u32) -> (u32, u32) {
         let line = self.line(id, offset);
         let start = self.file(id).line_starts[line as usize - 1];
-        let text = &self.text(id)[start as usize..offset as usize];
+        let text = self.text(id);
+        let text = &text[start as usize..text.floor_char_boundary(offset as usize)];
         (line, text.chars().count() as u32 + 1)
     }
 
+    /// The number of lines of a source.
     pub fn line_count(&self, id: SourceId) -> u32 {
         self.file(id).line_starts.len() as u32
     }
@@ -205,13 +226,20 @@ impl SourceMap {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 #[repr(u8)]
+///
+/// A minor release may add variants (`docs/compatibility.md`): code outside A0 matches it with
+/// a `_` arm. A0 itself matches it exhaustively, so that nothing misses a new one.
 pub enum Severity {
+    /// A problem that stops the program from compiling.
     Error,
+    /// A likely mistake that does not stop compiling.
     Warning,
+    /// Information that goes with another diagnostic.
     Note,
 }
 
 impl Severity {
+    /// The word rendered diagnostics start with: `error`, `warning` or `note`.
     pub fn as_str(self) -> &'static str {
         match self {
             Severity::Error => "error",
@@ -223,23 +251,51 @@ impl Severity {
 
 /// A secondary span with its own message: a related location, such as an earlier definition.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct Label {
+    /// Where the related location is.
     pub span: Span,
+    /// What it has to do with the problem ("first declared here").
     pub message: String,
+}
+
+impl Label {
+    /// A label saying `message` at `span`.
+    pub fn new(span: Span, message: &str) -> Label {
+        Label {
+            span,
+            message: message.to_string(),
+        }
+    }
 }
 
 /// A change to the source: replace `span` with `text` (insert when the span is empty).
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct Edit {
+    /// The text replaced.
     pub span: Span,
+    /// What replaces it.
     pub text: String,
+}
+
+impl Edit {
+    /// An edit replacing `span` with `text`.
+    pub fn new(span: Span, text: &str) -> Edit {
+        Edit {
+            span,
+            text: text.to_string(),
+        }
+    }
 }
 
 /// A suggested fix: edits that together resolve a diagnostic, which editors offer as a quick fix.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct Fix {
     /// What the fix does, as in "a local with a similar name exists".
     pub message: String,
+    /// The changes, which do not overlap.
     pub edits: Vec<Edit>,
 }
 
@@ -249,20 +305,30 @@ pub struct Fix {
 /// text, and `label` says what is wrong at `span` itself. `labels` point at related locations,
 /// `notes` and `helps` add explanations, and `fixes` suggest edits.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct Diagnostic {
+    /// Whether it is an error, a warning or a note.
     pub severity: Severity,
+    /// The code (`E2001`, from [`codes`]) or a descriptive one for misuse (`hir.builder`); empty for none.
     pub code: String,
+    /// The message, short and without a final period.
     pub message: String,
+    /// Where the problem is, if it is somewhere in a source.
     pub span: Option<Span>,
     /// The text under the primary span.
     pub label: String,
+    /// Related locations.
     pub labels: Vec<Label>,
+    /// Notes rendered after the snippet (`= note: ...`).
     pub notes: Vec<String>,
+    /// Suggestions rendered after the snippet (`= help: ...`).
     pub helps: Vec<String>,
+    /// Fixes an editor can apply.
     pub fixes: Vec<Fix>,
 }
 
 impl Diagnostic {
+    /// A diagnostic of the given severity, without a span yet.
     pub fn new(severity: Severity, code: &str, message: &str) -> Diagnostic {
         Diagnostic {
             severity,
@@ -277,19 +343,40 @@ impl Diagnostic {
         }
     }
 
+    /// An error.
     pub fn error(code: &str, message: &str) -> Diagnostic {
         Diagnostic::new(Severity::Error, code, message)
     }
 
+    /// A warning.
     pub fn warning(code: &str, message: &str) -> Diagnostic {
         Diagnostic::new(Severity::Warning, code, message)
     }
 
+    /// `E0004`: a text (`what`: "grammar", "module") in `version` of its format, which this A0,
+    /// reading `reads`, does not read. `span` is the version number.
+    pub fn newer_format(what: &str, version: u64, reads: u32, span: Span) -> Diagnostic {
+        Diagnostic::error(
+            codes::NEWER_FORMAT,
+            &format!(
+                "this {what} is in version {version} of its format, which this A0 does not read"
+            ),
+        )
+        .with_span(span)
+        .with_primary_label(&format!("version {version}"))
+        .with_note(&format!(
+            "A0 {} reads version {reads}; text without a version is version 1",
+            env!("CARGO_PKG_VERSION")
+        ))
+    }
+
+    /// The same diagnostic at `span`.
     pub fn with_span(mut self, span: Span) -> Diagnostic {
         self.span = Some(span);
         self
     }
 
+    /// The same diagnostic at `span`, if there is one.
     pub fn with_span_opt(mut self, span: Option<Span>) -> Diagnostic {
         self.span = span;
         self
@@ -318,11 +405,13 @@ impl Diagnostic {
         self
     }
 
+    /// The same diagnostic with a note.
     pub fn with_note(mut self, note: &str) -> Diagnostic {
         self.notes.push(note.to_string());
         self
     }
 
+    /// The same diagnostic with a suggestion.
     pub fn with_help(mut self, help: &str) -> Diagnostic {
         self.helps.push(help.to_string());
         self
@@ -348,6 +437,7 @@ impl Diagnostic {
         self
     }
 
+    /// Whether this is an error.
     pub fn is_error(&self) -> bool {
         self.severity == Severity::Error
     }
@@ -357,6 +447,7 @@ impl Diagnostic {
         self.render_with(sources, &RenderOptions::default())
     }
 
+    /// The diagnostic as text, with the source lines it points at, rendered as `options` say.
     pub fn render_with(&self, sources: &SourceMap, options: &RenderOptions) -> String {
         render::render(self, sources, options)
     }
@@ -369,10 +460,12 @@ pub struct Diagnostics {
 }
 
 impl Diagnostics {
+    /// An empty list.
     pub fn new() -> Diagnostics {
         Diagnostics::default()
     }
 
+    /// Adds a diagnostic at the end.
     pub fn push(&mut self, d: Diagnostic) {
         self.items.push(d);
     }
@@ -382,18 +475,22 @@ impl Diagnostics {
         self.push(Diagnostic::error(code, message).with_span_opt(span));
     }
 
+    /// Adds all of `other`'s diagnostics, in order.
     pub fn extend(&mut self, other: Diagnostics) {
         self.items.extend(other.items);
     }
 
+    /// The number of diagnostics.
     pub fn len(&self) -> usize {
         self.items.len()
     }
 
+    /// Whether there are none.
     pub fn is_empty(&self) -> bool {
         self.items.is_empty()
     }
 
+    /// The diagnostic at `index`.
     pub fn get(&self, index: usize) -> &Diagnostic {
         &self.items[index]
     }
@@ -403,18 +500,22 @@ impl Diagnostics {
         self.items.last_mut()
     }
 
+    /// The diagnostics, in order.
     pub fn as_slice(&self) -> &[Diagnostic] {
         &self.items
     }
 
+    /// The diagnostics, in order, taken out of the list.
     pub fn into_vec(self) -> Vec<Diagnostic> {
         self.items
     }
 
+    /// Whether any of them is an error.
     pub fn has_errors(&self) -> bool {
         self.items.iter().any(Diagnostic::is_error)
     }
 
+    /// How many of them are errors.
     pub fn error_count(&self) -> usize {
         self.items.iter().filter(|d| d.is_error()).count()
     }
@@ -433,6 +534,7 @@ impl Diagnostics {
         self.render_with(sources, &RenderOptions::default())
     }
 
+    /// The diagnostics as text, rendered one after the other as `options` say.
     pub fn render_with(&self, sources: &SourceMap, options: &RenderOptions) -> String {
         let mut out = String::new();
         for (i, d) in self.items.iter().enumerate() {

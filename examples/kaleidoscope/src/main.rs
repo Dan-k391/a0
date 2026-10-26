@@ -2,23 +2,18 @@
 
 use std::process::ExitCode;
 
-use a0_driver::{Codes, CompileError, ExitCodes, Language, Program};
+use a0_driver::{CompileError, Language, Program};
 
 fn main() -> ExitCode {
-    Language {
-        name: "kaleidoscope",
-        compile: |text, source| match kaleidoscope::compile(text, source) {
+    Language::new("kaleidoscope", |text, source| {
+        match kaleidoscope::compile(text, source) {
             Ok(m) => Ok(Program::Hir(m)),
             Err(d) => Err(CompileError::Diagnostics(d)),
-        },
-        exit_codes: ExitCodes::default(),
-        run_by_default: false,
-        host_symbols: Some(kaleidoscope::host_symbols),
-        libraries: Some(|| vec![kaleidoscope::runtime_library()]),
-        grammar: Some(kaleidoscope::GRAMMAR),
-        codes: Codes::A0,
-        modules: None,
-        repl_main: None,
-    }
+        }
+    })
+    .grammar(kaleidoscope::GRAMMAR)
+    .runtime(kaleidoscope::host_symbols, || {
+        vec![kaleidoscope::runtime_library()]
+    })
     .main()
 }

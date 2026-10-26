@@ -77,6 +77,16 @@ class Bindings(unittest.TestCase):
         self.assertEqual(a0.HIR_FUNCTIONS, header_functions("a0_hir_", "A0HirBuilder *"))
         self.assertEqual(a0.IR_FUNCTIONS, header_functions("a0_builder_", "A0Builder *"))
 
+    def test_the_versions_match(self):
+        # The package, the library and the header are released together.
+        self.assertEqual(a0.__version__, a0.version())
+        header = open(os.path.join(ROOT, "crates", "a0-capi", "include", "a0.h")).read()
+        parts = [re.search(rf"#define A0_VERSION_{p} (\d+)", header).group(1)
+                 for p in ("MAJOR", "MINOR", "PATCH")]
+        self.assertEqual(".".join(parts), a0.__version__)
+        pyproject = open(os.path.join(ROOT, "bindings", "python", "pyproject.toml")).read()
+        self.assertIn(f'version = "{a0.__version__}"', pyproject)
+
     def test_grammars_and_trees(self):
         with self.assertRaises(a0.Error) as e:
             a0.Grammar("program = missing;")

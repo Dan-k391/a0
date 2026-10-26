@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "a0"
-version = "0.8.0"
+version = "1.0.0"
 dependencies = [
  "a0-diag",
  "a0-driver",
@@ -14,20 +14,21 @@ dependencies = [
  "a0-native",
  "a0-runtime",
  "a0-syntax",
+ "a0-wasm",
  "gimli",
  "object",
 ]
 
 [[package]]
 name = "a0-build"
-version = "0.8.0"
+version = "1.0.0"
 dependencies = [
  "cc",
 ]
 
 [[package]]
 name = "a0-capi"
-version = "0.8.0"
+version = "1.0.0"
 dependencies = [
  "a0-diag",
  "a0-driver",
@@ -42,11 +43,11 @@ dependencies = [
 
 [[package]]
 name = "a0-diag"
-version = "0.8.0"
+version = "1.0.0"
 
 [[package]]
 name = "a0-driver"
-version = "0.8.0"
+version = "1.0.0"
 dependencies = [
  "a0-diag",
  "a0-hir",
@@ -59,7 +60,7 @@ dependencies = [
 
 [[package]]
 name = "a0-hir"
-version = "0.8.0"
+version = "1.0.0"
 dependencies = [
  "a0-diag",
  "a0-interp",
@@ -71,7 +72,7 @@ dependencies = [
 
 [[package]]
 name = "a0-interp"
-version = "0.8.0"
+version = "1.0.0"
 dependencies = [
  "a0-diag",
  "a0-ir",
@@ -80,14 +81,14 @@ dependencies = [
 
 [[package]]
 name = "a0-ir"
-version = "0.8.0"
+version = "1.0.0"
 dependencies = [
  "a0-diag",
 ]
 
 [[package]]
 name = "a0-native"
-version = "0.8.0"
+version = "1.0.0"
 dependencies = [
  "a0-diag",
  "a0-interp",
@@ -106,7 +107,7 @@ dependencies = [
 
 [[package]]
 name = "a0-playground"
-version = "0.8.0"
+version = "1.0.0"
 dependencies = [
  "a0-diag",
  "a0-hir",
@@ -119,32 +120,32 @@ dependencies = [
 
 [[package]]
 name = "a0-runtime"
-version = "0.8.0"
+version = "1.0.0"
 dependencies = [
  "cc",
 ]
 
 [[package]]
 name = "a0-sema"
-version = "0.8.0"
+version = "1.0.0"
 dependencies = [
  "a0-diag",
 ]
 
 [[package]]
 name = "a0-syntax"
-version = "0.8.0"
+version = "1.0.0"
 dependencies = [
  "a0-diag",
 ]
 
 [[package]]
 name = "a0-target"
-version = "0.8.0"
+version = "1.0.0"
 
 [[package]]
 name = "a0-wasm"
-version = "0.8.0"
+version = "1.0.0"
 dependencies = [
  "a0-diag",
  "a0-hir",
@@ -177,6 +178,16 @@ name = "arbitrary"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3bc62ac97cc33321f50863d514c3bc38a453947a8f9e781137e47c7401020aed"
+
+[[package]]
+name = "b0"
+version = "1.0.0"
+dependencies = [
+ "a0-diag",
+ "a0-driver",
+ "a0-hir",
+ "a0-syntax",
+]
 
 [[package]]
 name = "bitflags"
@@ -493,15 +504,13 @@ dependencies = [
 
 [[package]]
 name = "kaleidoscope"
-version = "0.8.0"
+version = "1.0.0"
 dependencies = [
  "a0-build",
  "a0-diag",
  "a0-driver",
  "a0-hir",
- "a0-interp",
  "a0-ir",
- "a0-native",
  "a0-runtime",
  "a0-syntax",
 ]
@@ -532,7 +541,7 @@ checksum = "f9f8bd3e56ce4dfc153cf470fffbfa98c7620958b312ca5c3a4b8d5181fd13c6"
 
 [[package]]
 name = "lox"
-version = "0.8.0"
+version = "1.0.0"
 dependencies = [
  "a0-diag",
  "a0-driver",
@@ -585,7 +594,7 @@ dependencies = [
 
 [[package]]
 name = "minnow"
-version = "0.8.0"
+version = "1.0.0"
 dependencies = [
  "a0-diag",
  "a0-driver",
@@ -744,13 +753,12 @@ checksum = "adb6935a6f5c20170eeceb1a3835a49e12e19d792f6dd344ccc76a985ca5a6ca"
 
 [[package]]
 name = "tin"
-version = "0.8.0"
+version = "1.0.0"
 dependencies = [
  "a0-build",
  "a0-diag",
  "a0-driver",
  "a0-hir",
- "a0-interp",
  "a0-native",
  "a0-runtime",
  "a0-syntax",

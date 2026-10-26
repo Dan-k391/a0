@@ -46,6 +46,12 @@ grammar ──a0-syntax──▶ syntax tree ──your compiler──▶ HIR �
 - **A C API**, for hosts that are not written in Rust: a C program can build HIR with the same
   builder, run it and compile it. **Python bindings** over it, for languages written in Python.
 
+[B0](b0) is A0's flagship language: static types with inference, structs and inline structs,
+enums, generics, interfaces, closures, maps, exceptions, dynamic objects, threads, manual memory
+with raw pointers in `unsafe`, C functions, modules and packages, with a prelude written in B0
+itself. Its compiler is about 1350 lines including its grammar and uses only A0's public API
+([docs/compatibility.md](docs/compatibility.md)), as anyone's language would.
+
 The example languages show the scale. [Kaleidoscope](examples/kaleidoscope), the language of
 LLVM's tutorial, is about 580 lines including its grammar and is what the tutorial builds;
 [Minnow](examples/minnow), a typed language with modules, structs, enums, generics, interfaces,
@@ -95,6 +101,7 @@ Then:
 - **[The tutorial](docs/tutorial.md)** builds Kaleidoscope (LLVM's tutorial language) step by step.
   Its listings are cut from the example's code and its commands are run by a test, so what you read
   is what runs.
+- **[B0](b0)** shows everything at once, and is the model to start a full language from.
 - **[Minnow](examples/minnow)** is the model for a typed language, **[Lox](examples/lox)** for a
   dynamically typed one, **[Tin](examples/tin)** for a systems language without a collector, on
   the high-level IR.
@@ -190,6 +197,7 @@ a0 lower prog.hir                         # print the core IR a HIR module lower
 kaleidoscope run examples/kaleidoscope/tests/programs/mandelbrot.k
 lox script.lox                            # like jlox; `lox build script.lox` for an executable
 minnow run examples/minnow/tests/programs/closures.mn
+b0 run b0/tests/programs/prelude.b0
 lox lsp                                   # the language server, for editors
 ```
 
@@ -214,6 +222,7 @@ allocation.
 | `crates/a0-capi` | The C API: a static and a shared library, and `include/a0.h` |
 | `bindings/python` | The Python package `a0` over the C API, and Pebble, a language in Python |
 | `crates/a0` | The `a0` command-line tool |
+| `b0` | B0, the flagship language, on the public API only |
 | `examples/kaleidoscope`, `examples/lox`, `examples/minnow`, `examples/tin` | The example languages |
 | `examples/calc`, `examples/lispy` | Languages defined by their grammars alone, run by `a0 lang` |
 | `crates/a0-playground`, `playground` | The browser playground: its engine (built for WebAssembly) and its page |
@@ -237,7 +246,9 @@ packs.
 
 ## Status
 
-Version 0.8.0 (`CHANGELOG.md`). Builds for x86-64 and aarch64 Linux, macOS and Windows, and for
-WebAssembly in the playground; cross-compiles to Linux and Windows from any host with target packs
-(`docs/cross.md`). Not yet: large-program tooling (manifests, dependencies, incremental
-compilation), stable APIs. A0 is MIT-licensed.
+Version 1.0.0 (`CHANGELOG.md`), stable: from 1.0 on, A0 follows Semantic Versioning and keeps
+its command line, text formats, C API, Python package and the Rust API for languages compatible
+until 2.0 ([docs/compatibility.md](docs/compatibility.md)). Builds for x86-64 and aarch64 Linux,
+macOS and Windows, and for WebAssembly in the playground; cross-compiles to Linux and Windows from
+any host; programs are packages with dependencies; every input A0 reads is fuzzed. Releases are
+described in [docs/releases.md](docs/releases.md). A0 is MIT-licensed.

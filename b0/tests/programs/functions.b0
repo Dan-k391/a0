@@ -1,0 +1,40 @@
+// Recursion, higher-order functions and function values.
+fn fib(n: int) -> int {
+  if n < 2 { return n; }
+  return fib(n - 1) + fib(n - 2);
+}
+
+fn apply_twice(f: fn(int) -> int, x: int) -> int {
+  return f(f(x));
+}
+
+fn map(xs: [int], f: fn(int) -> int) -> [int] {
+  let out: [int] = [];
+  for x in xs { push(out, f(x)); }
+  return out;
+}
+
+fn sum(xs: [int]) -> int {
+  let total = 0;
+  for x in xs { total = total + x; }
+  return total;
+}
+
+fn main() -> int {
+  print(fib(20));
+  print(apply_twice(fn(n: int) -> int { return n * 3; }, 7));
+  let squares = map([1, 2, 3, 4], fn(n: int) -> int { return n * n; });
+  print(sum(squares));
+  let f = fib;
+  print(f(10) + 17 % 5 - 10 / 3);
+  print(7.0 / 2.0);
+  print(-(2 + 3) * 4);
+  return 3;
+}
+// expect: 6765
+// expect: 63
+// expect: 30
+// expect: 54
+// expect: 3.5
+// expect: -20
+// expect-exit: 3

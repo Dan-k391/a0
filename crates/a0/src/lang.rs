@@ -8,7 +8,7 @@ use std::process::ExitCode;
 use std::sync::OnceLock;
 
 use a0_diag::{RenderOptions, SourceId, SourceMap};
-use a0_driver::{Codes, CompileError, ExitCodes, Language, Program};
+use a0_driver::{CompileError, Language, Program};
 use a0_syntax::Grammar;
 
 /// The grammar and the language's name, set once before the driver runs; the driver takes plain
@@ -44,18 +44,7 @@ pub fn lang(args: &[String]) -> ExitCode {
         .unwrap_or_else(|| "lang".to_string());
     let name: &'static str = Box::leak(stem.into_boxed_str());
     GRAMMAR.set((grammar, name)).ok();
-    let language = Language {
-        name,
-        compile,
-        exit_codes: ExitCodes::default(),
-        run_by_default: false,
-        host_symbols: None,
-        libraries: None,
-        grammar: Some(Box::leak(text.into_boxed_str())),
-        codes: Codes::A0,
-        modules: None,
-        repl_main: None,
-    };
+    let language = Language::new(name, compile).grammar(Box::leak(text.into_boxed_str()));
     language.run(rest)
 }
 

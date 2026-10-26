@@ -11,6 +11,14 @@ languages: a calculator compiled to core IR, and a language with variables compi
 whose unknown names the builder reports. CI compiles it with the system C compiler and runs it on
 every platform, and a test keeps the header and the library's exports identical.
 
+## Versions
+
+`A0_VERSION_MAJOR`, `A0_VERSION_MINOR` and `A0_VERSION_PATCH` name the header's version, and
+`a0_version()` the library's ("1.0.0"). Within a major version nothing in the header changes or
+goes away (`docs/compatibility.md`): a host built with one header works with a library of the
+same major version that is at least as new. Declarations that are to be retired are marked
+`A0_DEPRECATED("use ...")`, which compilers warn about, and kept until the next major version.
+
 ## Building and linking
 
 ```

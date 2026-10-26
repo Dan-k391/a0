@@ -1,0 +1,60 @@
+// The prelude, written in B0: map, filter, fold, each, any_of, range and sort, with closures that
+// the optimizer inlines.
+// expect: 25
+// expect: 2 6 10 14 18
+// expect: 9 7 5
+// expect: sum of squares 285
+// expect: has a seven: true
+// expect: 1 3 5 7 9
+// expect: sorted 300 elements: true
+// expect: stable: b1 b2 a1 a2
+struct Pair { key: string, rank: int }
+
+fn main() {
+  let xs = [5, 3, 9, 1, 7];
+  print(fold(xs, 0, fn(a: int, b: int) -> int { return a + b; }));
+  let doubled = map(range(1, 10), fn(x: int) -> int { return x * 2; });
+  let odd = filter(doubled, fn(x: int) -> bool { return x % 4 == 2; });
+  print(fold(odd, "", fn(s: string, x: int) -> string {
+    if len(s) == 0 { return str(x); }
+    return s + " " + str(x);
+  }));
+  let big = filter(xs, fn(x: int) -> bool { return x > 4; });
+  sort(big, fn(a: int, b: int) -> bool { return a > b; });
+  let line = "";
+  each(big, fn(x: int) { line = line + str(x) + " "; });
+  print(substr(line, 0, len(line) - 1));
+  let k = 0;
+  let squares = map(range(0, 10), fn(x: int) -> int { k += 1; return x * x; });
+  print("sum of squares " + str(fold(squares, 0, fn(a: int, b: int) -> int { return a + b; }) - 120 + k * 12));
+  print("has a seven: " + str(any_of(xs, fn(x: int) -> bool { return x == 7; })));
+  sort(xs, fn(a: int, b: int) -> bool { return a < b; });
+  print(fold(xs, "", fn(s: string, x: int) -> string {
+    if len(s) == 0 { return str(x); }
+    return s + " " + str(x);
+  }));
+
+  // Long enough to merge runs: a pseudo-random sequence.
+  let many: [int] = [];
+  let seed = 7;
+  for _n in 0..300 {
+    seed = (seed * 1103515245 + 12345) % 2147483648;
+    push(many, seed % 1000);
+  }
+  sort(many, fn(a: int, b: int) -> bool { return a < b; });
+  let ok = true;
+  for i in 1..len(many) {
+    if many[i - 1] > many[i] { ok = false; }
+  }
+  print("sorted " + str(len(many)) + " elements: " + str(ok));
+
+  let pairs = [
+    new Pair { key: "a1", rank: 2 }, new Pair { key: "b1", rank: 1 },
+    new Pair { key: "a2", rank: 2 }, new Pair { key: "b2", rank: 1 },
+  ];
+  sort(pairs, fn(p: Pair, q: Pair) -> bool { return p.rank < q.rank; });
+  print("stable: " + fold(pairs, "", fn(s: string, p: Pair) -> string {
+    if len(s) == 0 { return p.key; }
+    return s + " " + p.key;
+  }));
+}

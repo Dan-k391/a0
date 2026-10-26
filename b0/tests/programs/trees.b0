@@ -1,0 +1,32 @@
+// Many short-lived structs and arrays: exercises the garbage collector.
+struct Node { value: int, children: [Node] }
+
+fn build(depth: int) -> Node {
+  let node = new Node { children: [], value: depth };
+  if depth > 0 {
+    push(node.children, build(depth - 1));
+    push(node.children, build(depth - 1));
+  }
+  return node;
+}
+
+fn count(n: Node) -> int {
+  let total = 1;
+  for c in n.children { total = total + count(c); }
+  return total;
+}
+
+fn main() {
+  let sum = 0;
+  let i = 0;
+  while i < 20 {
+    sum = sum + count(build(8));
+    i = i + 1;
+  }
+  print(sum);
+  let label = "";
+  for k in [1, 2, 3] { label = label + str(k) + ":" + str(k as float / 2.0) + " "; }
+  print(label);
+}
+// expect: 10220
+// expect: 1:0.5 2:1 3:1.5 

@@ -56,14 +56,13 @@ a0-driver.workspace = true
 a0-diag.workspace = true
 a0-hir.workspace = true
 a0-syntax.workspace = true
-a0-interp.workspace = true
-a0-native.workspace = true
+# Only for its C header, which a0-build compiles the runtime against (docs/runtime.md).
 a0-runtime.workspace = true
 ```
 
 Inside the A0 repository a crate says `workspace = true`. Elsewhere, depend on A0 from git, pinned
-to a release (A0 is not on crates.io): `a0-hir = { git = "https://github.com/Dan-k391/a0", tag =
-"v0.1.0" }`, and the same for the others.
+to a release: `a0-hir = { git = "https://github.com/Dan-k391/a0", tag = "v1.0.0" }`, and the same
+for the others (`docs/compatibility.md` says what stays compatible).
 
 The pieces are:
 
@@ -72,8 +71,8 @@ The pieces are:
 - `a0-hir` is A0's high-level IR: the compiler builds it and A0 does the rest, from checking types to
   garbage collection (chapter 2);
 - `a0-driver` gives the language its command (chapter 3);
-- `a0-runtime`, `a0-interp` and `a0-native` run programs and link executables; Kaleidoscope needs them
-  directly only for its two C functions (chapter 3).
+- `a0-runtime` is the runtime programs run with; Kaleidoscope names it only so that its own two C
+  functions compile against the runtime's header (`a0rt.h`, chapter 3).
 
 ## 1. The grammar
 
@@ -182,6 +181,7 @@ reports errors, and the compiler only translates. Its imports:
 use std::collections::{HashMap, HashSet};
 
 use a0_diag::{Diagnostics, SourceId};
+use a0_driver::backend::{A0Symbol, HostSymbols, Library};
 use a0_hir::{BinOp, BodyId, ExprId, FuncId, HirBuilder, HirModule, TypeId, UnOp};
 use a0_syntax::{Grammar, NodeId, Operand, SyntaxTree, resolve_precedence};
 ```
@@ -515,7 +515,7 @@ LLVM's chapter 4 adds a JIT. On A0, `a0-driver` gives a language its command: `r
 program into memory with Cranelift's JIT and runs it at once (`A0_INTERP=1` interprets it), `build` compiles it to a native executable through Cranelift and the system linker, `hir`
 and `ir` print what the compiler built, `lsp` is a language server, `dap` a debugger, `repl` a
 read-eval-print loop (Kaleidoscope's top-level expressions run where they are typed, so
-`repl_main` is `None`) and `explain` explains an error code. Errors are rendered with the source,
+it sets no `repl_main`) and `explain` explains an error code. Errors are rendered with the source,
 with A0's codes (`codes` can hide them or give the language's own); the interpreter, the JIT and
 native executables give the same output, errors and exit codes.
 
@@ -524,24 +524,19 @@ native executables give the same output, errors and exit codes.
 
 use std::process::ExitCode;
 
-use a0_driver::{Codes, CompileError, ExitCodes, Language, Program};
+use a0_driver::{CompileError, Language, Program};
 
 fn main() -> ExitCode {
-    Language {
-        name: "kaleidoscope",
-        compile: |text, source| match kaleidoscope::compile(text, source) {
+    Language::new("kaleidoscope", |text, source| {
+        match kaleidoscope::compile(text, source) {
             Ok(m) => Ok(Program::Hir(m)),
             Err(d) => Err(CompileError::Diagnostics(d)),
-        },
-        exit_codes: ExitCodes::default(),
-        run_by_default: false,
-        host_symbols: Some(kaleidoscope::host_symbols),
-        libraries: Some(|| vec![kaleidoscope::runtime_library()]),
-        grammar: Some(kaleidoscope::GRAMMAR),
-        codes: Codes::A0,
-        modules: None,
-        repl_main: None,
-    }
+        }
+    })
+    .grammar(kaleidoscope::GRAMMAR)
+    .runtime(kaleidoscope::host_symbols, || {
+        vec![kaleidoscope::runtime_library()]
+    })
     .main()
 }
 ```
@@ -593,20 +588,20 @@ and the compiler hands it to the driver: `host_symbols` lets the interpreter cal
 
 ```rust file=examples/kaleidoscope/src/lib.rs anchor=runtime
 /// The Kaleidoscope runtime library (`putchard`, `printd`), for linking native executables.
-pub fn runtime_library() -> a0_native::Library {
-    a0_native::Library {
-        name: "kaleidoscope_rt".to_string(),
-        bytes: include_bytes!(concat!(env!("OUT_DIR"), "/kaleidoscope_rt.embedded")).to_vec(),
-    }
+pub fn runtime_library() -> Library {
+    Library::new(
+        "kaleidoscope_rt",
+        include_bytes!(concat!(env!("OUT_DIR"), "/kaleidoscope_rt.embedded")),
+    )
 }
 
 unsafe extern "C" {
-    static kaleidoscope_symbols: a0_runtime::A0Symbol;
+    static kaleidoscope_symbols: A0Symbol;
 }
 
 /// Host symbols for the interpreter: the A0 runtime, the C library and Kaleidoscope's runtime.
-pub fn host_symbols() -> a0_interp::HostSymbols {
-    let mut symbols = a0_interp::HostSymbols::new();
+pub fn host_symbols() -> HostSymbols {
+    let mut symbols = HostSymbols::new();
     // SAFETY: `kaleidoscope_symbols` is a NULL-terminated table defined in runtime/kaleidoscope.c.
     unsafe { symbols.add_table(&raw const kaleidoscope_symbols) };
     symbols
@@ -621,7 +616,7 @@ read back. `main` comes first because the compiler declares it first.
 
 ```console
 $ kaleidoscope hir add.k
-module "kaleidoscope";
+module "kaleidoscope" version 1;
 
 fn main() -> int {
   printd(add(1.0, 2.0) * 3.0);

@@ -18,25 +18,35 @@ use crate::tree::{NodeId, SyntaxTree};
 /// What a token is, for highlighting.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[repr(u32)]
+///
+/// A minor release may add variants (`docs/compatibility.md`): code outside A0 matches it with
+/// a `_` arm. A0 itself matches it exhaustively, so that nothing misses a new one.
 pub enum TokenClass {
     /// A literal token that looks like a word (`while`, `fun`).
     Keyword,
     /// Any other literal token (`+`, `{`), or a named token that matches operator characters.
     Operator,
+    /// A number literal.
     Number,
+    /// A string literal.
     String,
     /// Skipped text other than whitespace.
     Comment,
     /// The token the grammar uses for identifiers.
     Name,
+    /// Any other token.
     Other,
 }
 
 /// A token of an indexed file. `start..end` are byte offsets.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct IndexedToken {
+    /// The byte offset of its first byte.
     pub start: u32,
+    /// The byte offset after its last byte.
     pub end: u32,
+    /// What kind of token it is, for highlighting.
     pub class: TokenClass,
     /// The symbol whose name this token is, if it is one.
     pub declares: Option<u32>,
@@ -163,10 +173,12 @@ impl SyntaxIndex {
         }
     }
 
+    /// The number of tokens of the file.
     pub fn token_count(&self) -> u32 {
         self.tokens.len() as u32
     }
 
+    /// The token at index `i`, in order.
     pub fn token(&self, i: u32) -> IndexedToken {
         self.tokens[i as usize]
     }
@@ -202,14 +214,17 @@ impl SyntaxIndex {
         &self.targets[token as usize]
     }
 
+    /// The number of names the file declares.
     pub fn symbol_count(&self) -> u32 {
         self.symbols.len() as u32
     }
 
+    /// The name declared by symbol `s`.
     pub fn symbol_name(&self, s: u32) -> &str {
         &self.symbols[s as usize].name
     }
 
+    /// What symbol `s` declares.
     pub fn symbol_kind(&self, s: u32) -> SymbolKind {
         self.symbols[s as usize].kind
     }

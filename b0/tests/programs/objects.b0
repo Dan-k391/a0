@@ -1,0 +1,34 @@
+// Dynamic data: `object`s whose fields are named at run time, and `any`, which holds any value.
+// expect: Ada, 36
+// expect: fields: age name
+// expect: has email: false
+// expect: 1 two 3.5 point(1, 2) other
+struct Point { x: int, y: int }
+
+fn describe(v: any) -> string {
+  if v is int { return str(v as int); }
+  if v is string { return v as string; }
+  if v is float { return str(v as float); }
+  if v is Point {
+    let p = v as Point;
+    return "point(" + str(p.x) + ", " + str(p.y) + ")";
+  }
+  return "other";
+}
+
+fn main() {
+  let person = new object;
+  person.name = "Ada";
+  person.age = 36;
+  print((person.name as string) + ", " + str(person.age as int));
+  let names = field_names(person);
+  sort(names, fn(a: string, b: string) -> bool { return a < b; });
+  print("fields: " + names[0] + " " + names[1]);
+  print("has email: " + str(has_field(person, "email")));
+  let things: [any] = [1 as any, "two" as any, 3.5 as any, new Point { x: 1, y: 2 } as any, true as any];
+  let out = "";
+  for t in things {
+    out = out + describe(t) + " ";
+  }
+  print(substr(out, 0, len(out) - 1));
+}

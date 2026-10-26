@@ -13,8 +13,10 @@ use crate::grammar::{FieldId, KindId, Names};
 pub struct NodeId(pub u32);
 
 impl NodeId {
+    /// No node (a missing child or field).
     pub const NONE: NodeId = NodeId(u32::MAX);
 
+    /// Whether this is [`NodeId::NONE`].
     pub fn is_none(self) -> bool {
         self.0 == u32::MAX
     }
@@ -43,6 +45,7 @@ pub struct SyntaxTree {
 }
 
 impl SyntaxTree {
+    /// The root node: the start rule's.
     pub fn root(&self) -> NodeId {
         self.root
     }
@@ -52,10 +55,12 @@ impl SyntaxTree {
         self.nodes.len() as u32
     }
 
+    /// The name of a field.
     pub fn field_name(&self, field: FieldId) -> &str {
         &self.names.fields[field.0 as usize]
     }
 
+    /// The source the tree was parsed from.
     pub fn source(&self) -> SourceId {
         self.source
     }
@@ -71,22 +76,27 @@ impl SyntaxTree {
         &self.text
     }
 
+    /// The kind of node `n`: its rule's or its token's.
     pub fn kind(&self, n: NodeId) -> KindId {
         self.nodes[n.0 as usize].kind
     }
 
+    /// The name of node `n`'s kind.
     pub fn kind_name(&self, n: NodeId) -> &str {
         &self.names.kinds[self.kind(n).0 as usize]
     }
 
+    /// Whether node `n` is a token.
     pub fn is_token(&self, n: NodeId) -> bool {
         self.nodes[n.0 as usize].is_token
     }
 
+    /// Whether node `n` stands for text the parser could not make sense of.
     pub fn is_error(&self, n: NodeId) -> bool {
         self.kind(n) == KindId::ERROR
     }
 
+    /// Where the text of node `n` is.
     pub fn span(&self, n: NodeId) -> Span {
         let d = &self.nodes[n.0 as usize];
         Span::new(self.source, d.start, d.end)
@@ -98,10 +108,12 @@ impl SyntaxTree {
         &self.text[d.start as usize..d.end as usize]
     }
 
+    /// The number of children of node `n`.
     pub fn child_count(&self, n: NodeId) -> u32 {
         self.nodes[n.0 as usize].children_len
     }
 
+    /// Child `i` of node `n`.
     pub fn child(&self, n: NodeId, i: u32) -> NodeId {
         self.child_entry(n, i).0
     }
@@ -160,6 +172,7 @@ impl SyntaxTree {
         }
     }
 
+    /// The field named `name`, if the grammar has one.
     pub fn field_id(&self, name: &str) -> Option<FieldId> {
         self.names
             .fields

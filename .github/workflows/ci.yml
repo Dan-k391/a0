@@ -93,6 +93,12 @@ jobs:
         run: cargo fmt --all --check
       - name: clippy
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: API reference
+        # The covered crates (docs/compatibility.md) document every public item, and their
+        # reference builds without warnings.
+        run: cargo doc --no-deps --locked -p a0-diag -p a0-syntax -p a0-sema -p a0-ir -p a0-hir -p a0-driver -p a0-build
+        env:
+          RUSTDOCFLAGS: -D warnings
 
   # The browser playground: A0's engine (crates/a0-playground) built for WebAssembly with wasi-sdk,
   # then run by Node the way the page runs it. pages.yml publishes it.

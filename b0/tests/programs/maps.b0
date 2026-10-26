@@ -1,0 +1,24 @@
+// Maps: `map<K, V>` types, `new map {}`, reading and assigning entries, `has`, `remove`, `keys`.
+fn count(words: [string]) -> map<string, int> {
+  let counts: map<string, int> = new map {};
+  for w in words {
+    if has(counts, w) { counts[w] = counts[w] + 1; } else { counts[w] = 1; }
+  }
+  return counts;
+}
+
+fn main() {
+  let counts = count(["a", "b", "a", "c", "a", "b"]);
+  for k in keys(counts) { print(k + " " + str(counts[k])); }
+  remove(counts, "b");
+  print(len(counts));
+  let squares = new map {};
+  let i = 1;
+  while i <= 3 { squares[i] = i * i; i = i + 1; }
+  print(squares[3]);
+}
+// expect: a 3
+// expect: b 2
+// expect: c 1
+// expect: 2
+// expect: 9

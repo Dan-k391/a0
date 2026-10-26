@@ -29,6 +29,7 @@ pub(crate) struct FuncData {
 /// A place where a source-level function was inlined: instructions that came from its body name it
 /// in stack traces, followed by the function that called it, at `call`.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct InlineSite {
     /// The inlined function, as traces name it.
     pub callee: String,
@@ -124,8 +125,13 @@ pub(crate) struct RegionData {
 
 /// Kinds of module items, in declaration order.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+///
+/// A minor release may add variants (`docs/compatibility.md`): code outside A0 matches it with
+/// a `_` arm. A0's backends match it exhaustively, so that none misses a new one.
 pub enum Item {
+    /// A function, defined or external.
     Func(FuncId),
+    /// A global or data item.
     Global(GlobalId),
 }
 
@@ -153,6 +159,7 @@ pub struct Module {
 }
 
 impl Module {
+    /// An empty module named `name`.
     pub fn new(name: &str) -> Module {
         Module {
             name: name.to_string(),
@@ -180,32 +187,39 @@ impl Module {
         self.sources = Some(sources);
     }
 
+    /// The sources spans point into, if they were set.
     pub fn sources(&self) -> Option<&SourceMap> {
         self.sources.as_ref()
     }
 
+    /// An inline site: where code inlined from a function was called.
     pub fn inline_site(&self, id: InlineId) -> &InlineSite {
         &self.inlines[id.index()]
     }
 
+    /// The number of inline sites.
     pub fn inline_count(&self) -> u32 {
         self.inlines.len() as u32
     }
 
     // ---------------------------------------------------------------- module
 
+    /// The module's name.
     pub fn name(&self) -> &str {
         &self.name
     }
 
+    /// The functions and globals, in the order they were declared.
     pub fn items(&self) -> &[Item] {
         &self.items
     }
 
+    /// The number of functions.
     pub fn func_count(&self) -> u32 {
         self.funcs.len() as u32
     }
 
+    /// The number of globals.
     pub fn global_count(&self) -> u32 {
         self.globals.len() as u32
     }
@@ -215,14 +229,17 @@ impl Module {
         self.symbols.get(name).copied()
     }
 
+    /// The function named `name`.
     pub fn lookup_func(&self, name: &str) -> Option<FuncId> {
         self.lookup(name).and_then(Symbol::as_func)
     }
 
+    /// The global named `name`.
     pub fn lookup_global(&self, name: &str) -> Option<GlobalId> {
         self.lookup(name).and_then(Symbol::as_global)
     }
 
+    /// The name of the function or global `sym` names.
     pub fn symbol_name(&self, sym: Symbol) -> &str {
         match sym.kind {
             SymbolKind::Func => &self.funcs[sym.index as usize].name,
@@ -232,16 +249,19 @@ impl Module {
 
     // ---------------------------------------------------------------- signatures
 
+    /// The parameter types of a signature.
     pub fn sig_params(&self, sig: SigId) -> &[Type] {
         &self.sigs[sig.index()].params
     }
 
+    /// The result type of a signature, if it has one.
     pub fn sig_ret(&self, sig: SigId) -> Option<Type> {
         self.sigs[sig.index()].ret
     }
 
     // ---------------------------------------------------------------- functions
 
+    /// A function's name.
     pub fn func_name(&self, f: FuncId) -> &str {
         &self.funcs[f.index()].name
     }
@@ -251,18 +271,22 @@ impl Module {
         self.funcs[f.index()].trace_name.as_deref()
     }
 
+    /// A function's signature.
     pub fn func_sig(&self, f: FuncId) -> SigId {
         self.funcs[f.index()].sig
     }
 
+    /// A function's parameter types.
     pub fn func_params(&self, f: FuncId) -> &[Type] {
         self.sig_params(self.func_sig(f))
     }
 
+    /// A function's result type, if it has one.
     pub fn func_ret(&self, f: FuncId) -> Option<Type> {
         self.sig_ret(self.func_sig(f))
     }
 
+    /// Whether a function is declared without a body (defined in C).
     pub fn func_is_extern(&self, f: FuncId) -> bool {
         self.funcs[f.index()].body.is_none()
     }
@@ -288,12 +312,14 @@ impl Module {
         self.funcs[f.index()].body.as_ref().map(|b| b.entry)
     }
 
+    /// Where a function was declared in its source, if known.
     pub fn func_span(&self, f: FuncId) -> Option<Span> {
         self.funcs[f.index()].span
     }
 
     // ---------------------------------------------------------------- globals
 
+    /// A global's name.
     pub fn global_name(&self, g: GlobalId) -> &str {
         &self.globals[g.index()].name
     }
@@ -327,20 +353,24 @@ impl Module {
         }
     }
 
+    /// Where a global was declared in its source, if known.
     pub fn global_span(&self, g: GlobalId) -> Option<Span> {
         self.globals[g.index()].span
     }
 
     // ---------------------------------------------------------------- values and variables
 
+    /// A value's type.
     pub fn value_type(&self, v: Value) -> Type {
         self.values[v.index()].ty
     }
 
+    /// A value's name in the text format, if it has one.
     pub fn value_name(&self, v: Value) -> Option<&str> {
         self.values[v.index()].name.as_deref()
     }
 
+    /// The function a value belongs to.
     pub fn value_func(&self, v: Value) -> FuncId {
         self.values[v.index()].func
     }
@@ -361,14 +391,17 @@ impl Module {
         }
     }
 
+    /// A variable's type.
     pub fn var_type(&self, v: Var) -> Type {
         self.vars[v.index()].ty
     }
 
+    /// A variable's name, if it has one.
     pub fn var_name(&self, v: Var) -> Option<&str> {
         self.vars[v.index()].name.as_deref()
     }
 
+    /// The function a variable belongs to.
     pub fn var_func(&self, v: Var) -> FuncId {
         self.vars[v.index()].func
     }
@@ -389,10 +422,12 @@ impl Module {
         self.vars[v.index()].debug.as_ref().and_then(|d| d.2)
     }
 
+    /// The number of debug types.
     pub fn debug_type_count(&self) -> u32 {
         self.debug_types.len() as u32
     }
 
+    /// What a debug type describes.
     pub fn debug_type_kind(&self, t: DebugType) -> DebugKind {
         self.debug_types[t.index()].kind
     }
@@ -407,10 +442,12 @@ impl Module {
         &self.debug_types[t.index()].elems
     }
 
+    /// The number of fields of a struct's debug type.
     pub fn debug_type_field_count(&self, t: DebugType) -> u32 {
         self.debug_types[t.index()].fields.len() as u32
     }
 
+    /// Field `i` of a struct's debug type: its name and type.
     pub fn debug_type_field(&self, t: DebugType, i: u32) -> (&str, DebugType) {
         let (n, ty, _) = &self.debug_types[t.index()].fields[i as usize];
         (n, *ty)
@@ -424,10 +461,12 @@ impl Module {
             .unwrap_or((8 * i, 8))
     }
 
+    /// The number of variants of an enum's debug type.
     pub fn debug_type_variant_count(&self, t: DebugType) -> u32 {
         self.debug_types[t.index()].variants.len() as u32
     }
 
+    /// Variant `i` of an enum's debug type: its name and the types of its payload.
     pub fn debug_type_variant(&self, t: DebugType, i: u32) -> (&str, &[DebugType]) {
         let (n, fields) = &self.debug_types[t.index()].variants[i as usize];
         (n, fields)
@@ -443,6 +482,7 @@ impl Module {
 
     // ---------------------------------------------------------------- regions and instructions
 
+    /// The instructions of a region, in order.
     pub fn region_insts(&self, r: Region) -> &[Inst] {
         &self.regions[r.index()].insts
     }
@@ -452,19 +492,23 @@ impl Module {
         self.regions[r.index()].owner.option()
     }
 
+    /// An instruction's opcode.
     pub fn inst_opcode(&self, i: Inst) -> Opcode {
         self.insts[i.index()].opcode
     }
 
+    /// An instruction's operands.
     pub fn inst_args(&self, i: Inst) -> &[Value] {
         let d = &self.insts[i.index()];
         &self.args[d.args_start as usize..(d.args_start + d.args_len) as usize]
     }
 
+    /// An instruction's result, if it has one.
     pub fn inst_result(&self, i: Inst) -> Option<Value> {
         self.insts[i.index()].result.option()
     }
 
+    /// The function an instruction belongs to.
     pub fn inst_func(&self, i: Inst) -> FuncId {
         self.insts[i.index()].func
     }
@@ -474,6 +518,7 @@ impl Module {
         self.insts[i.index()].parent
     }
 
+    /// Where an instruction came from in the source, if known.
     pub fn inst_span(&self, i: Inst) -> Option<Span> {
         self.insts[i.index()].span
     }
@@ -498,10 +543,12 @@ impl Module {
         Symbol::from_imm(self.insts[i.index()].imm)
     }
 
+    /// The condition of an `icmp`.
     pub fn inst_int_cc(&self, i: Inst) -> IntCC {
         int_cc_from_imm(self.insts[i.index()].imm)
     }
 
+    /// The condition of an `fcmp`.
     pub fn inst_float_cc(&self, i: Inst) -> FloatCC {
         float_cc_from_imm(self.insts[i.index()].imm)
     }

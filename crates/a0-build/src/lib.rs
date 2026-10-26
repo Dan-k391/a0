@@ -22,6 +22,8 @@
 //! The crate must depend on `a0-runtime` directly, which provides the header path through Cargo's
 //! `DEP_A0RT_INCLUDE` variable.
 
+#![warn(missing_docs)]
+
 use std::env;
 use std::fs;
 use std::path::PathBuf;

@@ -1,0 +1,19 @@
+$ b0 run warnings.b0
+--- stdout
+42
+--- stderr
+warning[W0001]: unused variable: `doubled`
+ --> warnings.b0:3:7
+  |
+3 |   let doubled = n * 2;
+  |       ^^^^^^^ help: if this is intentional, start its name with an underscore: `_doubled`
+
+warning[W0002]: unreachable code
+ --> warnings.b0:5:3
+  |
+4 |   return n;
+  |   --------- any code following this expression is unreachable
+5 |   print("never");
+  |   ^^^^^^^^^^^^^^ unreachable
+
+--- exit 0

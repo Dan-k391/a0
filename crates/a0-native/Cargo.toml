@@ -4,6 +4,11 @@ description = "Native code for A0 IR through Cranelift, linked by the system lin
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
 
 [dependencies]
 a0-diag.workspace = true

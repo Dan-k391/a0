@@ -30,6 +30,8 @@
 //! );
 //! ```
 
+#![warn(missing_docs)]
+
 mod grammar;
 mod imports;
 mod index;
@@ -39,7 +41,7 @@ mod precedence;
 mod regex;
 mod tree;
 
-pub use grammar::{Definition, FieldId, Grammar, KindId, SymbolKind};
+pub use grammar::{Definition, FORMAT_VERSION, FieldId, Grammar, KindId, SymbolKind};
 pub use imports::{Import, imports, module_path};
 pub use index::{IndexedToken, SyntaxIndex, TokenClass};
 pub use literal::unquote;

@@ -42,7 +42,7 @@ fn corpus_round_trips_through_text() {
 
 #[test]
 fn canonical_text_is_stable() {
-    let text = r#"module "m";
+    let text = r#"module "m" version 1;
 
 struct P { x: int, next: P? }
 
@@ -81,7 +81,7 @@ fn main() -> int {
 
 #[test]
 fn precedence_survives_printing() {
-    let text = "module \"m\";\n\nfn main() -> int {\n  let a: int = (1 + 2) * 3;\n  let b: int = 1 + 2 * 3;\n  let c: int = 1 - (2 - 3);\n  let d: bool = !(a < b) || a == b && c > 0;\n  let e: float = -(1 as float) * 2.0;\n  0\n}\n";
+    let text = "module \"m\" version 1;\n\nfn main() -> int {\n  let a: int = (1 + 2) * 3;\n  let b: int = 1 + 2 * 3;\n  let c: int = 1 - (2 - 3);\n  let d: bool = !(a < b) || a == b && c > 0;\n  let e: float = -(1 as float) * 2.0;\n  0\n}\n";
     let m = parse_ok(text);
     assert_eq!(print_module(&m), text);
 }
@@ -411,6 +411,62 @@ fn builder_checks_structure() {
 }
 
 #[test]
+fn builder_misuse_found_by_fuzzing_is_reported() {
+    // A closure whose body makes the closure: no pass may loop or overflow its stack on it.
+    let mut b = HirBuilder::new("m");
+    let main = b.declare_function("main", &[], &[], TypeId::INT);
+    let body = b.function_body(main);
+    let inner = b.new_closure_body(body, &[], &[], TypeId::UNIT);
+    let lambda = b.lambda(inner);
+    b.set_root(inner, lambda);
+    let zero = b.int(0);
+    b.set_root(body, zero);
+    let err = b.finish().unwrap_err().summary();
+    assert!(
+        err.contains("made outside the body it was declared in"),
+        "{err}"
+    );
+
+    // Too many or too few type arguments are reported, and the types made stay usable.
+    let mut b = HirBuilder::new("m");
+    let s = b.declare_generic_struct("Box", &["T"]);
+    let t = b.type_param(Item::Struct(s), 0);
+    b.add_field(s, "value", t);
+    let bad = b.type_param(Item::Struct(s), 3);
+    assert_eq!(bad, TypeId::ERROR);
+    let main = b.declare_function("main", &[], &[], TypeId::INT);
+    let body = b.function_body(main);
+    let one = b.int(1);
+    let made = b.new_struct_generic(s, &[TypeId::INT, TypeId::INT], &[one]);
+    let boxed = b.struct_type_args(s, &[TypeId::INT]);
+    let l = b.new_local(body, "b", boxed);
+    let let_ = b.let_(l, made);
+    let zero = b.int(0);
+    let block = b.block(&[let_], Some(zero));
+    b.set_root(body, block);
+    let err = b.finish().unwrap_err().summary();
+    assert!(
+        err.contains("`Box` takes 1 type argument but 2 were given"),
+        "{err}"
+    );
+
+    // A type parameter used outside its item.
+    let mut b = HirBuilder::new("m");
+    let s = b.declare_generic_struct("Box", &["T"]);
+    let t = b.type_param(Item::Struct(s), 0);
+    b.declare_global("g", t);
+    let main = b.declare_function("main", &[], &[], TypeId::INT);
+    let body = b.function_body(main);
+    let zero = b.int(0);
+    b.set_root(body, zero);
+    let err = b.finish().unwrap_err().summary();
+    assert!(
+        err.contains("a type parameter is used outside the item"),
+        "{err}"
+    );
+}
+
+#[test]
 fn lowering_needs_an_entry_point() {
     let m = parse_ok("module \"m\";\nfn helper() -> int { 1 }\n");
     let err = lower(&m).unwrap_err().summary();
@@ -422,7 +478,8 @@ fn lowered_closures_take_their_environment_first() {
     let m = parse_ok(
         "module \"m\";\nfn main() -> int {\n  let n = 1;\n  let f = fn(x: int) -> int { x + n };\n  f(41)\n}\n",
     );
-    let ir = lower(&m).unwrap();
+    // Unoptimized: the optimizer would inline the call of the known closure (D84).
+    let ir = lower_with(&m, LowerOptions::optimized(false)).unwrap();
     let text = ir.to_string();
     assert!(
         text.contains("func @hir.main.closure0(%0: ptr, %1: i64) -> i64"),
@@ -466,7 +523,7 @@ fn builders_infer_types_and_generics_are_monomorphized() {
     assert_eq!(m.type_name(m.local_type(xs)), "array<int>");
 
     // Without inlining, so that the instances are still called (lowering skips unused functions).
-    let ir = lower_with(&m, LowerOptions { optimize: false })
+    let ir = lower_with(&m, LowerOptions::optimized(false))
         .unwrap()
         .to_string();
     assert!(ir.contains("func @\"hir.id<int>\"("), "{ir}");
@@ -497,7 +554,7 @@ fn the_optimizer_inlines_small_functions_and_folds_any_tests() {
         "module \"m\";\nfn truthy(v: any) -> bool {\n  if v is unit { false } else if v is bool { v as bool } else { true }\n}\nfn main() -> int {\n  let n = 3;\n  if truthy((n > 2) as any) { 1 } else { 0 }\n}\n",
     );
     let main_of = |optimize: bool| {
-        let ir = lower_with(&m, LowerOptions { optimize })
+        let ir = lower_with(&m, LowerOptions::optimized(optimize))
             .unwrap()
             .to_string();
         let start = ir.find("func @hir.main(").unwrap();
@@ -519,7 +576,7 @@ fn functions_that_end_in_return_are_inlined() {
     let m = parse_ok(
         "module \"m\";\nfn peek(xs: array<int>, i: int) -> int {\n  if i < len(xs) { return xs[i]; }\n  return -1;\n}\nfn main() -> int {\n  peek([1, 2], 1) + peek([3], 5)\n}\n",
     );
-    let ir = lower_with(&m, LowerOptions { optimize: true })
+    let ir = lower_with(&m, LowerOptions::optimized(true))
         .unwrap()
         .to_string();
     assert!(!ir.contains("call @hir.peek"), "{ir}");
@@ -563,7 +620,7 @@ fn h0(x: int) -> int { x + 1 }
 ";
     let m = parse_ok(&text);
     let size = |optimize: bool| {
-        lower_with(&m, LowerOptions { optimize })
+        lower_with(&m, LowerOptions::optimized(optimize))
             .unwrap()
             .to_string()
             .lines()
@@ -584,7 +641,7 @@ fn casts_guarded_by_a_type_test_are_not_checked_again() {
         )
     };
     let get_of = |src: &str, optimize: bool| {
-        let ir = lower_with(&parse_ok(src), LowerOptions { optimize })
+        let ir = lower_with(&parse_ok(src), LowerOptions::optimized(optimize))
             .unwrap()
             .to_string();
         let start = ir.find("func @hir.get(").unwrap();
@@ -743,4 +800,16 @@ fn the_standard_library_loads_on_import_and_round_trips() {
         panic!("a private C function was reachable");
     };
     assert!(err.summary().contains("private"), "{}", err.summary());
+}
+
+#[test]
+fn modules_name_their_format_version() {
+    let m = parse_ok("module \"m\";\nfn main() -> int { 0 }\n");
+    assert!(
+        m.to_string().starts_with("module \"m\" version 1;\n"),
+        "{m}"
+    );
+    parse_ok("module \"m\" version 1;\nfn main() -> int { 0 }\n");
+    let e = errors("module \"m\" version 2;\nfn main() -> int { 0 }\n");
+    assert!(e.contains("[E0004]") && e.contains("version 2"), "{e}");
 }

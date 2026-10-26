@@ -4,6 +4,11 @@ description = "The A0 command-line driver"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
 
 [[bin]]
 name = "a0"
@@ -20,5 +25,6 @@ a0-hir.workspace = true
 a0-driver.workspace = true
 
 [dev-dependencies]
+a0-wasm.workspace = true
 gimli = { version = "0.33", default-features = false, features = ["read", "std"] }
 object = { version = "0.40", default-features = false, features = ["read", "std"] }

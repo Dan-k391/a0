@@ -250,7 +250,7 @@ fn prepare(lang: &Language, args: &Json) -> Result<Prepared, String> {
     let mut module = match compiled {
         Ok(Program::Ir(m)) => m,
         Ok(Program::Hir(m)) => {
-            let options = a0_hir::LowerOptions { optimize: false };
+            let options = a0_hir::LowerOptions::optimized(false);
             a0_hir::lower_with(&m, options).map_err(|d| render(&d, &sources))?
         }
         Err(CompileError::Diagnostics(d)) => return Err(render(&d, &sources)),

@@ -23,6 +23,8 @@
 //! assert!(ir.lookup_func("main").is_some());
 //! ```
 
+#![warn(missing_docs)]
+
 mod builder;
 mod check;
 pub mod dsl;
@@ -37,6 +39,10 @@ mod print;
 mod stdlib;
 mod text;
 mod types;
+
+/// The version of the HIR text format this A0 reads and prints (`module "m" version 1;`,
+/// `docs/compatibility.md`).
+pub const FORMAT_VERSION: u32 = 1;
 
 pub use builder::{HirBuilder, KEYWORDS};
 pub use check::{check, check_entry};

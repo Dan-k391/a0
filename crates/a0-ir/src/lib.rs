@@ -23,6 +23,8 @@
 //! assert!(module.to_string().contains("fcmp gt"));
 //! ```
 
+#![warn(missing_docs)]
+
 mod builder;
 mod debug;
 mod module;
@@ -30,6 +32,10 @@ mod parse;
 mod print;
 mod types;
 mod verify;
+
+/// The version of the core IR text format this A0 reads and prints (`module "m" version 1`,
+/// `docs/compatibility.md`).
+pub const FORMAT_VERSION: u32 = 1;
 
 pub use builder::Builder;
 pub use debug::{Location, Locations};

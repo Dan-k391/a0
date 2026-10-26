@@ -13,6 +13,7 @@ use crate::{Diagnostic, Fix, Severity, SourceId, SourceMap, Span};
 
 /// How diagnostics are rendered.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct RenderOptions {
     /// Color with ANSI escapes, for terminals.
     pub color: bool,
@@ -207,7 +208,7 @@ fn shown(text: &str) -> String {
 
 /// The display column of byte `offset` within `line`.
 fn display_col(line: &str, offset: usize) -> usize {
-    line[..offset.min(line.len())]
+    line[..line.floor_char_boundary(offset)]
         .chars()
         .map(|c| if c == '\t' { TAB } else { 1 })
         .sum()
@@ -223,17 +224,19 @@ fn position(sources: &SourceMap, id: SourceId, offset: u32) -> (u32, usize) {
 
 fn annotation(sources: &SourceMap, span: Span, primary: bool, message: &str) -> Ann {
     let text = sources.text(span.source);
-    let start = span.start.min(text.len() as u32);
-    let mut end = span.end.clamp(start, text.len() as u32);
+    // Spans from a language's code may cut through a character; draw the whole character.
+    let start = text.floor_char_boundary(span.start as usize) as u32;
+    let mut end = text.ceil_char_boundary((span.end as usize).max(start as usize)) as u32;
     // A span that ends with a line break ends on the line it breaks.
     while end > start && matches!(text.as_bytes()[end as usize - 1], b'\n' | b'\r') {
         end -= 1;
     }
     let (start_line, start_col) = position(sources, span.source, start);
     let (end_line, end_col) = if end > start {
-        let (l, c) = position(sources, span.source, end - 1);
+        let last_start = text.floor_char_boundary(end as usize - 1);
+        let (l, c) = position(sources, span.source, last_start as u32);
         // One past the last character, which may be a tab.
-        let last = text[end as usize - 1..].chars().next();
+        let last = text[last_start..].chars().next();
         (l, c + if last == Some('\t') { TAB } else { 1 })
     } else {
         (start_line, start_col + 1)
@@ -554,7 +557,7 @@ fn fixed_lines(sources: &SourceMap, fix: &Fix) -> Option<FixedLines> {
         let mut at = 0;
         for e in edits {
             let (s, t) = (e.span.start as usize - start, e.span.end as usize - start);
-            if s < at || t > text.len() {
+            if s < at || t > text.len() || !text.is_char_boundary(s) || !text.is_char_boundary(t) {
                 return None;
             }
             fixed.push_str(&text[at..s]);
@@ -1000,5 +1003,23 @@ help: add the missing argument
             d.render(&sm),
             "error[E1]: expected an expression\n --> main.mn:1:8\n  |\n1 | let x =\n  |        ^ expected an expression\n"
         );
+    }
+
+    #[test]
+    fn spans_through_a_character_draw_all_of_it() {
+        // A language's span may end, or start, inside a character (found by fuzzing).
+        let text = "x = \u{e9}\u{e9};\n";
+        let (sm, id) = sm(text);
+        for (start, end) in [(4, 5), (5, 6), (5, 7), (4, 7)] {
+            let d = Diagnostic::error("E1", "here").with_span(Span::new(id, start, end));
+            let caret = if end > 6 { "^^" } else { "^" };
+            assert_eq!(
+                d.render(&sm),
+                format!(
+                    "error[E1]: here\n --> main.mn:1:5\n  |\n1 | x = \u{e9}\u{e9};\n  |     {caret}\n"
+                ),
+                "{start}..{end}"
+            );
+        }
     }
 }

@@ -18,30 +18,35 @@ members = [
     "examples/kaleidoscope",
     "examples/lox",
     "examples/minnow",
+    "b0",
     "examples/tin",
     "crates/a0",
 ]
 
 [workspace.package]
-version = "0.8.0"
+version = "1.0.0"
 edition = "2024"
 license = "MIT"
+rust-version = "1.97"
 repository = "https://github.com/Dan-k391/a0"
+homepage = "https://github.com/Dan-k391/a0"
+keywords = ["compiler", "language", "jit", "cranelift", "interpreter"]
+categories = ["compilers", "development-tools"]
 
 [workspace.dependencies]
-a0-diag = { path = "crates/a0-diag" }
-a0-ir = { path = "crates/a0-ir" }
-a0-runtime = { path = "crates/a0-runtime" }
-a0-interp = { path = "crates/a0-interp" }
-a0-wasm = { path = "crates/a0-wasm" }
-a0-target = { path = "crates/a0-target" }
-a0-native = { path = "crates/a0-native" }
-a0-syntax = { path = "crates/a0-syntax" }
-a0-sema = { path = "crates/a0-sema" }
-a0-hir = { path = "crates/a0-hir" }
-a0-build = { path = "crates/a0-build" }
-a0-driver = { path = "crates/a0-driver" }
-a0-capi = { path = "crates/a0-capi" }
+a0-diag = { path = "crates/a0-diag", version = "=1.0.0" }
+a0-ir = { path = "crates/a0-ir", version = "=1.0.0" }
+a0-runtime = { path = "crates/a0-runtime", version = "=1.0.0" }
+a0-interp = { path = "crates/a0-interp", version = "=1.0.0" }
+a0-wasm = { path = "crates/a0-wasm", version = "=1.0.0" }
+a0-target = { path = "crates/a0-target", version = "=1.0.0" }
+a0-native = { path = "crates/a0-native", version = "=1.0.0" }
+a0-syntax = { path = "crates/a0-syntax", version = "=1.0.0" }
+a0-sema = { path = "crates/a0-sema", version = "=1.0.0" }
+a0-hir = { path = "crates/a0-hir", version = "=1.0.0" }
+a0-build = { path = "crates/a0-build", version = "=1.0.0" }
+a0-driver = { path = "crates/a0-driver", version = "=1.0.0" }
+a0-capi = { path = "crates/a0-capi", version = "=1.0.0" }
 
 [profile.dev]
 opt-level = 1

@@ -1122,6 +1122,115 @@ Nothing in A0 changed for the benchmark. What it found along the way:
   playground provides, so the command line has no wasm32 target. A WASI build of the runtime to
   link with would give it standalone modules.
 
+## M27. v0.9: large programs and ecosystems
+
+**Done**
+
+- Packages (D81, `docs/packages.md`): a manifest named after the language (`minnow.toml`) with the
+  program's main file and dependencies, from directories or git repositories fetched with `git`
+  into a shared cache and pinned in a lock file; `run`, `build`, `ir`, `hir` take the package,
+  `update` refreshes the lock file and `--locked` refuses to change it. Every language with modules
+  gets this from the driver; the language server and debugger resolve imports the same way.
+  Builds are reproducible byte for byte (a test builds twice, a second apart, and compares).
+- Large programs build fast (D82). On a generated program of 100,000 lines in 175 modules
+  (`bench/large/gen.py`), the build took 2.3 s on the first machine and now 1.2 s: the lexer runs a
+  DFA, the HIR optimizer is linear, the location table is interned, and code generation splits a
+  large program into objects compiled at once on the machine's processors (reproducibly).
+  Rebuilding after a small change compiles everything again in that time; caching was measured
+  against and left out (D82). On this release's benchmark machine: 4.8 s for v0.8.0, 2.7 s now.
+- The language server on that program: an edit to the next answer takes 370 ms instead of
+  2.0 s (benchmark machine), as unchanged files keep their syntax trees and indexes; hover,
+  definition and completion answer in under 5 ms.
+- Deep nesting (D83): compiling happens on a thread with a 1 GB stack and the parser stops at
+  10,000 levels with `E0003`, so no input overflows the compiler's stack.
+- The optimizer on large programs (D84): calls of known closures are inlined, which makes
+  higher-order code 5.8 times faster (`closures`: 823 to 141 ms). The collector was measured with a
+  live heap 64 times larger and its time grew by a third, so it stays as it is.
+- Fuzzing (D85) of every input A0 accepts: IR and HIR text, grammars with their programs (and
+  DSLs), the C API through Python, manifests and lock files; seeded mutation tests in the suite,
+  run longer with `A0_FUZZ_ITERATIONS`. The first runs, hundreds of thousands of inputs, found
+  seven bugs, all fixed with regression tests: diagnostics rendering on spans inside a character,
+  three unchecked handles in the C API and the IR builder, malformed generic types after a wrong
+  number of type arguments, type parameters outside their items, closures that make themselves,
+  and spans ending before they start.
+- The benchmark (`docs/benchmarks.md`) rerun on a new machine for v0.8.0 and v0.9.0, with a
+  `closures` program and a section on large programs.
+
+**Changed**
+
+- A module's imports resolve from its package's source directory; MSVC and lld-link link with
+  `/Brepro`.
+- `HirBuilder` makes generic types with as many type arguments as the item has, whatever it was
+  given (it still reports the difference); the checker rejects a closure made outside the body it
+  was declared in; `Span::new` takes an end before the start as the start.
+- `InlineSite` (HIR) knows when the inlined code was a closure; stack traces name it as before.
+
+**Open questions**
+
+- Lowering to IR is now the largest stage of a large build (894 ms of 2.7 s on the benchmark
+  machine); it is linear but allocates per instruction.
+- The large-program generator's run time is exponential in its modules (each `check` calls its
+  imports'), so the program's run is not a measurement of A0; it should call one import. (Done in
+  M28.)
+- The collector's pauses grow with the live heap (about 40 ms at 4 million objects); a
+  generational or incremental collector is the answer if programs with large heaps need short
+  pauses.
+- Closures stored in data structures, or passed to functions too large to inline, stay indirect
+  calls.
+
+## M28. v1.0: stable
+
+**Done**
+
+- A compatibility promise (`docs/compatibility.md`, D86) for the command line, the HIR, IR and
+  grammar text formats, the C header, the Python package, the Rust API a language is written
+  against (the covered crates `a0-diag`, `a0-syntax`, `a0-sema`, `a0-ir`, `a0-hir`, `a0-driver`,
+  `a0-build`) and the documented part of `a0rt.h` (`docs/runtime.md`): semantic versioning, what
+  each kind of change may do, and deprecation across at least one minor release before removal in
+  a major one (`#[deprecated]`, `A0_DEPRECATED`, a Python warning).
+- Versioned text formats: each starts with an optional `version 1`, a later version is refused
+  with `E0004`, and HIR and IR are printed with it. The C header and the Python package carry the
+  version and check that the library they load agrees.
+- The Rust API made able to grow: `Language` and its parts are built with constructors and
+  methods; structs and enums that may grow are `#[non_exhaustive]`, and those A0 itself matches
+  exhaustively say that they may grow; `a0_driver::backend` gathers what a language with its own C
+  runtime needs.
+- B0 (`b0/`, D87), the flagship language, written only against the covered crates (a test reads
+  its sources to keep it so): static types with inference, inline structs, sized numbers, enums,
+  generics, interfaces, closures, maps, exceptions, dynamic objects, threads, raw pointers in
+  `unsafe` (its own rule, `E2027`), C functions, modules and packages, and a prelude written in
+  B0. It has every test an example language has (eight modes, diagnostics snapshots, language
+  server, debugger, REPL, packages, threads) and a fuzz test; `examples/wordfreq` is a program of
+  two modules in it.
+- Documentation: the book (`docs/book/`, `docs/SUMMARY.md` for mdBook) from getting started to
+  building a full language, memory, concurrency and dynamic languages, with a guide per example
+  language (each one's README); an API reference with every public item of the covered crates
+  documented, built in CI with warnings as errors; a test that keeps every relative link valid.
+- Releases (`docs/releases.md`): an archive per platform with the tools, `rust-lld`, the target
+  packs, the C API, the Python package and its library, the editor extension and the docs
+  (`release/package.py`, checked alone by `release/check.py`); crates, a wheel and a `.vsix` ready
+  to publish; a workflow that drafts a GitHub release on a tag and publishes nothing.
+- Performance from release to release: `bench/run.py --record` and `bench/history.csv`, printed
+  by `bench/history.py` into `docs/benchmarks.md`. v1.0.0 was measured beside v0.9.0, both built
+  from their tags: they differ by the machine's noise, as nothing in v1.0 touches code generation.
+
+**Changed**
+
+- `Language { .. }`, `Modules { .. }`, `ExitCodes { .. }` and the other struct literals of the
+  driver became constructors and methods; Kaleidoscope and Tin depend only on covered crates.
+- `bench/large/gen.py` calls one import's `check`, so the large program's run time is linear in
+  its modules (M27's open question); its 0.8.0 and 0.9.0 numbers stay apart in the history.
+- Every crate states `rust-version` 1.97, the oldest Rust that builds Cranelift 0.137.
+
+**Open questions**
+
+- `a0-native` from crates.io cannot write aarch64-windows objects until Cranelift takes the change
+  in `vendor/cranelift-object` (D77); the archives, built from the repository, can.
+- The core IR's opcodes and types are open enums by documentation, not `#[non_exhaustive]`: a
+  language that matches on them must keep a fallback arm, which the compiler does not enforce.
+- The benchmark's single runs on a shared machine have outliers of 30%; the history would be
+  steadier with more runs, or the minimum, per number.
+
 ## Overall open questions
 
 None at the moment.

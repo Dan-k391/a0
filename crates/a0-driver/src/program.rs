@@ -21,12 +21,15 @@ use crate::Modules;
 use crate::package::{Package, Packages};
 
 /// One file of a program.
+#[non_exhaustive]
 pub struct ProgramFile {
     /// Absolute, without `.` and `..`.
     pub path: PathBuf,
+    /// Its id in the driver's source map.
     pub source: SourceId,
     /// The module's name: the path from the root file's directory, with `.` between segments.
     pub module: String,
+    /// Its syntax tree.
     pub tree: SyntaxTree,
     /// Its imports, each with the index of the file it imports.
     pub imports: Vec<(Import, usize)>,
@@ -51,7 +54,9 @@ impl TreeCache {
 
 /// The files of a program, in the order they are compiled: every file after the files it imports,
 /// so the root file last.
+#[non_exhaustive]
 pub struct Program {
+    /// The files, each after the files it imports; the root file is last.
     pub files: Vec<ProgramFile>,
 }
 

@@ -1,0 +1,17 @@
+[package]
+name = "b0"
+description = "B0, A0's flagship language, built only on A0's public API"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+a0-diag.workspace = true
+a0-syntax.workspace = true
+a0-hir.workspace = true
+a0-driver.workspace = true

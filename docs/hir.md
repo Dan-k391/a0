@@ -103,7 +103,7 @@ the sub-expression they are about, in source terms (`mismatched types: expected 
 ## Module
 
 ```
-module "example";
+module "example" version 1;
 
 struct Point { x: float, y: float }
 enum Shape { Circle(float), Rect(float, float), Empty }
@@ -136,6 +136,10 @@ fn main() -> int {
   0
 }
 ```
+
+`version 1` names the version of the text format (`docs/compatibility.md`); it is optional, 1 when
+absent, and the printer always writes it. A0 1.x reads version 1 and refuses a later one with
+`E0004`.
 
 - `global` variables start at the zero value of their type (`0`, `0.0`, `false`, `()`, and `()` for
   `any`); one of reference type must be nullable and starts as `null`.
@@ -461,6 +465,12 @@ It complements Cranelift, which optimizes within each function:
   in the middle of an inlined function becomes the value of an `if` (`if c { return a } rest` is
   `if c { a } else { rest }`); functions with other `return`s stay calls. The copies remember where
   they were inlined, so stack traces show the inlined functions.
+- **Inlining of known closures** (D84): after a function's calls are inlined, a call of a closure
+  it makes, through a local bound to it and never assigned (`let f = fn(...) {...}`, or the
+  parameter of an inlined `fold(xs, 0, fn(a, b) { a + b })`), is inlined under the same limits. The
+  copy uses the variables the closure captures, so it shares them with the closure as a call
+  would. A closure no longer made after that is dropped, and the variables it captured need no
+  box.
 - **`any` folding.** `(x as any) is T` and `(x as any) as T` are decided from `x`'s type, also through
   a local: `let v = <... x as any>` (never reassigned) becomes `let raw = <... x>; let v = raw as
   any`, so tests of `v` fold and `v as T` reads `raw`.

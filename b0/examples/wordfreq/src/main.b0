@@ -1,0 +1,85 @@
+// wordfreq: the most frequent words of the files given, counted on several threads.
+//
+//   b0 run -- [-n 10] file...
+import std;
+import std.env;
+import std.fs;
+import std.str;
+import text.count;
+
+interface Row {
+  fn render(self) -> string;
+}
+
+struct Entry { word: string, count: int }
+
+impl Row for Entry {
+  fn render(self) -> string {
+    let pad = str.repeat(" ", 16 - len(self.word));
+    return self.word + pad + str(self.count);
+  }
+}
+
+fn load(paths: [string]) -> std.Result<string, string> {
+  let text = "";
+  for p in paths {
+    let part = fs.read(p)?;
+    if len(part) > 0 && !str.ends_with(part, "\n") {
+      part = part + "\n";
+    }
+    text = text + part;
+  }
+  return std.Result::Ok(text);
+}
+
+fn main() -> int {
+  let args = env.args();
+  let top = 10;
+  let paths: [string] = [];
+  let i = 0;
+  while i < len(args) {
+    if args[i] == "-n" && i + 1 < len(args) {
+      match str.parse_int(args[i + 1]) {
+        Ok(n) => { top = n; }
+        Err(e) => {
+          print("wordfreq: -n: " + e);
+          return 2;
+        }
+      }
+      i += 2;
+    } else {
+      push(paths, args[i]);
+      i += 1;
+    }
+  }
+  if len(paths) == 0 {
+    print("usage: wordfreq [-n count] file...");
+    return 2;
+  }
+  let text = match load(paths) {
+    Ok(t) => t,
+    Err(e) => {
+      print("wordfreq: " + e);
+      return 1;
+    }
+  };
+  let counts = count.count(text, 4);
+  let entries: [Entry] = [];
+  for w in counts {
+    push(entries, new Entry { word: w, count: counts[w] });
+  }
+  sort(entries, fn(a: Entry, b: Entry) -> bool {
+    return a.count > b.count || (a.count == b.count && a.word < b.word);
+  });
+  let rows: [Row] = map(filter(entries, fn(e: Entry) -> bool { return len(e.word) > 2; }),
+                        fn(e: Entry) -> Row { return e; });
+  let shown = 0;
+  for r in rows {
+    if shown == top { break; }
+    print(r.render());
+    shown += 1;
+  }
+  let t = count.totals(text, counts);
+  print(str(t.lines) + " lines, " + str(t.words) + " words, " + str(len(entries)) + " different");
+  return 0;
+}

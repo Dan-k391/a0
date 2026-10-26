@@ -10,7 +10,7 @@ labeled with fields. Frontends walk that tree directly.
 ## File layout
 
 ```
-grammar lox;                                    // optional name
+grammar lox version 1;                          // optional name, and the format's version
 
 skip /[ \t\r\n]+/;                              // text the lexer drops
 skip /\/\/[^\n]*/;
@@ -23,7 +23,8 @@ program = (!EOF declaration)* EOF;              // the first rule is the start r
 ...
 ```
 
-Comments are `// ...` and `/* ... */`.
+Comments are `// ...` and `/* ... */`. The version of the grammar format (`docs/compatibility.md`) is
+optional and 1 when absent; A0 1.x reads version 1 and refuses a later one with `E0004`.
 
 ## Lexing
 

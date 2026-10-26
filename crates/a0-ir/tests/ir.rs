@@ -62,7 +62,7 @@ fn non_canonical_text_is_normalized() {
     let m = parse_text(text);
     assert_eq!(
         print_module(&m),
-        "module \"m\"\n\nfunc @f(%x: i8) -> i8 {\n  %y: i8 = iconst -1\n  %z: i8 = iadd %x, %y\n  return %z\n}\n"
+        "module \"m\" version 1\n\nfunc @f(%x: i8) -> i8 {\n  %y: i8 = iconst -1\n  %z: i8 = iadd %x, %y\n  return %z\n}\n"
     );
 }
 
@@ -110,7 +110,7 @@ fn build_sample() -> Module {
 #[test]
 fn builder_output_is_canonical() {
     let m = build_sample();
-    let expected = "module \"sample\"
+    let expected = "module \"sample\" version 1
 
 extern func @printd(f64) -> f64
 
@@ -175,6 +175,27 @@ fn builder_reports_misuse_instead_of_panicking() {
     assert!(text.contains("break_ outside a loop"), "{text}");
     assert!(text.contains("end_if without a matching if_"), "{text}");
     assert!(text.contains("ended with unclosed if/loop"), "{text}");
+}
+
+#[test]
+fn builder_reports_bad_symbols() {
+    // Found by fuzzing the C API: handles that name no function or global.
+    let mut b = Builder::new("bad");
+    let f = b.declare_function("f", &[], None);
+    b.begin_function(f);
+    b.func_addr(FuncId(7));
+    b.global_addr(GlobalId(u32::MAX));
+    b.ret(None);
+    b.end_function();
+    let text = b.finish().unwrap_err().summary();
+    assert!(
+        text.contains("func_addr called with an invalid function"),
+        "{text}"
+    );
+    assert!(
+        text.contains("global_addr called with an invalid global"),
+        "{text}"
+    );
 }
 
 #[test]
@@ -437,4 +458,14 @@ fn quoted_names_round_trip() {
     );
     let again = parse_text(&text);
     assert_eq!(print_module(&again), text);
+}
+
+#[test]
+fn modules_name_their_format_version() {
+    let m =
+        parse_text("module \"m\"\n\nfunc @main() -> i32 {\n  %0: i32 = iconst 0\n  return %0\n}\n");
+    assert!(m.to_string().starts_with("module \"m\" version 1\n"), "{m}");
+    assert_eq!(parse_text(&m.to_string()).to_string(), m.to_string());
+    let e = errors_of("module \"m\" version 3\n");
+    assert!(e.contains("[E0004]") && e.contains("version 3"), "{e}");
 }

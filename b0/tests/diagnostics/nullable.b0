@@ -1,0 +1,12 @@
+// Values that may be null must be checked first.
+struct Node { value: int, next: Node? }
+
+fn second(n: Node) -> int {
+  return n.next.value;
+}
+
+fn main() {
+  let n = new Node { value: 1, next: null };
+  let v: int = n.value!;
+  print(second(n));
+}

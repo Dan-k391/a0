@@ -119,7 +119,7 @@ Natively, the backend emits the C `main` symbol as a small wrapper, and the IR `
 ## Text format
 
 ```
-module "fib"
+module "fib" version 1
 
 extern func @printd(f64) -> f64
 
@@ -142,6 +142,10 @@ func @fib(%n: f64) -> f64 {
   return %res
 }
 ```
+
+`version 1` names the version of the text format (`docs/compatibility.md`); it is optional, 1 when
+absent, and the printer always writes it. A0 1.x reads version 1 and refuses a later one with
+`E0004`.
 
 - Comments run from `;` to the end of the line.
 - Names: `@sym`, `%value`, `$var`. A bare name matches `[A-Za-z_][A-Za-z0-9_.]*`; anything else is

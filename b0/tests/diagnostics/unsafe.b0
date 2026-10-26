@@ -1,0 +1,10 @@
+// Raw pointers outside `unsafe`.
+fn main() {
+  let nums = [1, 2, 3];
+  let p = data(nums);
+  let q = offset(p, 1);
+  print(q[0]);
+  unsafe {
+    print(p[2]);
+  }
+}

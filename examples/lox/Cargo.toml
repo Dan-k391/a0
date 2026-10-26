@@ -4,6 +4,13 @@ description = "Lox (Crafting Interpreters) built on A0"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+rust-version.workspace = true
+# An example, not a library to depend on.
+publish = false
+repository.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
 
 [dependencies]
 a0-driver.workspace = true

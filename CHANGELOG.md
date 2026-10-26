@@ -6,6 +6,76 @@ APIs. `docs/milestones.md` has the details of each step, with measurements.
 
 ## [Unreleased]
 
+### Fixed
+
+- Builds on macOS are reproducible: two builds of a package differed, because Apple's linker
+  recorded the temporary paths and times of the objects it read. It now gets `ZERO_AR_DATE=1`, and
+  `-S` without `-g`.
+- The tests that threads speed programs up no longer count the time every run takes whatever its
+  work (in `run`, compiling), which made them fail on fast machines.
+
+## [1.0.0] - 2026-10-26
+
+Stable: a compatibility promise with versioned text formats and a deprecation process, B0 (the
+flagship language, built only on the public API), the book and an API reference, release
+archives for every platform and packages ready to publish, and performance tracked from release
+to release. Milestone M28 in `docs/milestones.md`.
+
+### Added
+
+- **B0, the flagship language** (`b0/`, D87): static types with inference, structs and inline
+  structs, sized numbers, enums, generics, interfaces, closures, maps, exceptions, dynamic objects,
+  threads, manual memory with raw pointers in `unsafe`, C functions, modules and packages, and a
+  prelude written in B0. Built only on the covered API, which a test checks; tested like the
+  example languages in every mode, with `examples/wordfreq`, a program of two modules. The VS Code
+  extension knows `.b0` files, and its compiler is fuzzed with mutated programs. New code
+  `E2027` (needs `unsafe`).
+- **The A0 book** (`docs/book/README.md`, `docs/SUMMARY.md` for mdBook): from getting started
+  and the tutorial through the language's parts and its tools to a full language (B0), memory,
+  concurrency, dynamic languages, other platforms and hosting, with a guide to each language. A
+  test keeps every relative link in the documentation valid.
+- **An API reference**: every public item of the covered crates is documented
+  (`#![warn(missing_docs)]`), and CI builds the reference with warnings as errors.
+- **Releases** (`docs/releases.md`): `release/package.py` makes an archive per platform (the
+  tools, `rust-lld`, the target packs, the C API, the Python package with its library, the editor
+  extension, the docs) and the packages to publish (crates, a Python wheel, the `.vsix`);
+  `release/check.py` checks an archive alone; `.github/workflows/release.yml` drafts a GitHub
+  release on a tag, publishing nothing. The crates have the metadata crates.io needs, the
+  examples `publish = false`, and the repository a `LICENSE`.
+- **Performance from release to release**: `bench/run.py --record` keeps headline numbers in
+  `bench/history.csv`; `bench/history.py` prints them by machine. v1.0.0, measured beside v0.9.0,
+  runs as fast (`docs/benchmarks.md`).
+- **A compatibility promise** for 1.0 (`docs/compatibility.md`, D86): what is covered (the command
+  line, the text formats, the C header, the Python package, the Rust API for languages, the part of
+  `a0rt.h` in the new `docs/runtime.md`), the rules for each, and how things are deprecated.
+- **Versioned text formats**: `module "m" version 1;` (HIR), `module "m" version 1` (core IR) and
+  `grammar g version 1;`, optional and 1 when absent; HIR and IR are printed with it. A later
+  version is refused with the new code `E0004`. `a0_hir::FORMAT_VERSION`, `a0_ir::FORMAT_VERSION`,
+  `a0_syntax::FORMAT_VERSION`.
+- `a0_driver::backend` re-exports what a language with a C runtime needs (`Library`,
+  `HostSymbols`, `A0Symbol`); `Library::new`.
+- `A0_VERSION_MAJOR`, `A0_VERSION_MINOR`, `A0_VERSION_PATCH` and `A0_DEPRECATED` in `a0.h`;
+  `a0.__version__` in Python, which checks the library's version when imported.
+- `rust-version` (1.97, what Cranelift needs) in every crate.
+
+### Changed
+
+- `Language` is built with `Language::new(name, compile)` and methods (`grammar`, `modules`,
+  `repl_main`, `codes`, `exit_codes`, `run_by_default`, `runtime`) instead of a struct literal;
+  `Modules::new`, `ExitCodes::new`, `LowerOptions::optimized`, `Label::new` and `Edit::new` replace
+  theirs. Public enums and structs that may grow are `#[non_exhaustive]`; the core IR's opcodes
+  and types, and a few other enums A0 matches exhaustively, say in their documentation that they
+  may grow.
+- Kaleidoscope and Tin depend only on covered crates (and `a0-runtime` for its header).
+- `bench/large/gen.py` makes a program whose run time is linear in its modules.
+- `a0 run`'s usage says it compiles into memory (it has since 0.5).
+
+## [0.9.0] - 2026-10-26
+
+Large programs and ecosystems: packages with dependencies, fast builds of large programs, a fast
+language server on them, closures inlined, and every input fuzzed. Milestone M27 in
+`docs/milestones.md`.
+
 ### Added
 
 - **Packages** (D81, `docs/packages.md`): a manifest named after the language (`minnow.toml`)
@@ -14,11 +84,37 @@ APIs. `docs/milestones.md` has the details of each step, with measurements.
   file take the package, `update` refreshes the lock file and `--locked` refuses to change it.
   The language server and the debugger resolve imports through packages. Builds are reproducible,
   byte for byte. New diagnostic codes `E5001`–`E5006`.
+- **Fast builds of large programs** (D82): a 100,000-line program builds in about half the time
+  (the lexer runs a DFA, the HIR optimizer is linear, the location table is interned), and large
+  programs compile into several objects at once on the machine's processors. `A0_TIME=1` prints
+  how long each stage takes; `A0_CODEGEN_UNITS=n` sets the number of objects.
+- **Fuzzing** (D85): IR and HIR text, grammars with their programs, the C API and manifests are
+  fuzzed in the test suite, from the corpus (`A0_FUZZ_ITERATIONS`, `A0_FUZZ_SEED` to run longer).
+- **Inlining of known closures** (D84): a call of a closure through a local that always holds it,
+  such as the parameter of an inlined `fold(xs, 0, fn(a, b) { a + b })`, is inlined; such code
+  runs about 5.8 times faster (`docs/benchmarks.md`).
+- `bench/large/` generates a large package and measures building it and the language server on it;
+  the benchmark gains a `closures` program.
 
 ### Changed
 
 - A module's imports resolve from its package's source directory, so a file analyzed on its own
   (in the editor) resolves them as the build does. MSVC and lld-link link with `/Brepro`.
+- The language server keeps each file's syntax tree and index between analyses and reuses those of
+  files that did not change.
+- Drivers and `a0` compile on a thread with a 1 GB stack, and the parser stops at 10,000 levels of
+  nesting with `E0003` instead of overflowing the stack (D83).
+- The HIR builder makes types with the right number of type arguments even when given the wrong
+  number (it still reports it), and the checker rejects a closure made outside the body it was
+  declared in.
+
+### Fixed
+
+- Rendering a diagnostic whose span starts or ends inside a multi-byte character panicked.
+- `a0_hir_set_struct_inline` and the IR builder's `func_addr` and `global_addr` did not check
+  their handles; a type parameter used outside its item, or a closure whose body makes the closure,
+  crashed the compiler instead of being reported. A span whose end is before its start (from the
+  C API) overflowed in debug builds.
 
 ## [0.8.0] - 2026-10-26
 
@@ -352,7 +448,9 @@ three example languages, editor support and a C API.
   IR, the HIR, editors and the C API; design decisions and milestone summaries.
 - **CI** on x86-64 and aarch64 Linux, aarch64 macOS and x86-64 Windows, with rustfmt and clippy.
 
-[Unreleased]: https://github.com/Dan-k391/a0/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/Dan-k391/a0/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/Dan-k391/a0/compare/v0.9.0...v1.0.0
+[0.9.0]: https://github.com/Dan-k391/a0/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/Dan-k391/a0/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/Dan-k391/a0/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/Dan-k391/a0/compare/v0.5.0...v0.6.0
