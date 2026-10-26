@@ -62,6 +62,8 @@ list matches it.
 | E1011 | private item |
 | E1012 | import cycle |
 | E1013 | unknown method |
+| E1015 | inline struct holds a reference |
+| E1016 | inline struct contains itself |
 | E2001 | mismatched types |
 | E2002 | wrong number of arguments |
 | E2003 | not a function |
@@ -85,6 +87,7 @@ list matches it.
 | E2021 | interface not implemented |
 | E2022 | not callable through an interface value |
 | E2023 | literal out of range |
+| E2024 | not possible with an inline value |
 | E3001 | outside a loop |
 | E4001 | no entry point |
 | E4002 | invalid entry point |

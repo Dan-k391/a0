@@ -585,7 +585,13 @@ impl Opt<'_> {
     /// their reads can use the original.
     fn replacements(&self, bodies: &[BodyId], uses: &Uses) -> HashMap<LocalId, Replace> {
         let mut out = HashMap::new();
-        let fixed = |l: LocalId| !uses.writes.contains_key(&l) && !uses.captured.contains(&l);
+        // An inline struct's fields can change without an assignment to the local (`v.x = 1`), so
+        // its locals are never replaced by others.
+        let fixed = |l: LocalId| {
+            !uses.writes.contains_key(&l)
+                && !uses.captured.contains(&l)
+                && self.m.inline_struct(self.m.locals[l.index()].ty).is_none()
+        };
         for &b in bodies {
             let Some(root) = self.m.bodies[b.index()].root else {
                 continue;

@@ -304,6 +304,7 @@ impl Mono<'_> {
         let name = self.instance_name(&def.name, args);
         self.out.structs.push(StructDef {
             name: name.clone(),
+            inline: def.inline,
             type_params: Vec::new(),
             fields: Vec::new(),
             field_spans: def.field_spans.clone(),

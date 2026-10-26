@@ -616,6 +616,16 @@ pub unsafe extern "C" fn a0_hir_report_fix(
 // ---------------------------------------------------------------------------------- declarations
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn a0_hir_set_struct_inline(b: *mut A0HirBuilder, s: u32) {
+    unsafe {
+        with_unit(b, |h| {
+            h.b.set_struct_inline(a0_hir::StructId(s));
+            Some(())
+        })
+    }
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn a0_hir_declare_struct(
     b: *mut A0HirBuilder,
     name: *const c_char,

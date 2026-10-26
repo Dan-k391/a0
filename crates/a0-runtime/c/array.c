@@ -10,6 +10,7 @@ static A0Array *check(A0Array *a) {
 }
 
 static size_t elem_size(int64_t elem_kind) {
+    if (elem_kind >= A0_ELEM_BYTES) return (size_t)(elem_kind - A0_ELEM_BYTES);
     switch (elem_kind) {
     case A0_ELEM_BYTE: return 1;
     case A0_ELEM_16: return 2;
@@ -115,6 +116,50 @@ uint64_t a0_array_pop(A0Array *a, uint64_t loc, void *frame) {
     check(a);
     if (a->len == 0) a0_rt_fail("pop from an empty array", loc, frame);
     return load(a, --a->len);
+}
+
+/* Elements of A0_ELEM_BYTES + size bytes each (inline structs): appended, removed and filled by
+ * address. */
+static void *element(A0Array *a, int64_t index) { return (char *)a->data + bytes_of(a, index); }
+
+static void grow(A0Array *a) {
+    int64_t cap = a->cap < 8 ? 8 : a->cap * 2;
+    if (is_inline(a)) {
+        uint64_t *data = (uint64_t *)a0_gc_buffer_alloc(bytes_of(a, cap));
+        memcpy(data, a->data, bytes_of(a, a->len));
+        a->data = data;
+    } else {
+        a->data = (uint64_t *)a0_gc_buffer_realloc(a->data, bytes_of(a, a->cap), bytes_of(a, cap));
+    }
+    a->cap = cap;
+}
+
+void a0_array_push_bytes(A0Array *a, const void *value) {
+    check(a);
+    if (a->len == a->cap) grow(a);
+    memmove(element(a, a->len), value, bytes_of(a, 1));
+    a->len++;
+}
+
+void *a0_array_pop_bytes(A0Array *a, uint64_t loc, void *frame) {
+    check(a);
+    if (a->len == 0) a0_rt_fail("pop from an empty array", loc, frame);
+    a->len--;
+    return element(a, a->len);
+}
+
+A0Array *a0_array_filled_bytes(int64_t elem_kind, int64_t count, const void *value, uint64_t loc,
+                               void *frame) {
+    if (count < 0) {
+        char message[96];
+        snprintf(message, sizeof message, "negative array length: %lld", (long long)count);
+        a0_rt_fail(message, loc, frame);
+    }
+    A0Array *a = a0_array_new(elem_kind, count);
+    a->len = count;
+    size_t size = elem_size(elem_kind);
+    for (int64_t i = 0; i < count; i++) memcpy(element(a, i), value, size);
+    return a;
 }
 
 void a0_array_trace(A0Array *a) {

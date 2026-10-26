@@ -430,6 +430,8 @@ pub enum DebugKind {
     UInt,
     /// A 32-bit float (in the low 32 bits of a word).
     Float32,
+    /// The address of an inline struct's bytes, whose fields are at their offsets.
+    Inline,
 }
 
 impl DebugKind {
@@ -449,6 +451,7 @@ impl DebugKind {
         DebugKind::Opaque,
         DebugKind::UInt,
         DebugKind::Float32,
+        DebugKind::Inline,
     ];
 
     pub fn name(self) -> &'static str {
@@ -468,6 +471,7 @@ impl DebugKind {
             DebugKind::Opaque => "opaque",
             DebugKind::UInt => "uint",
             DebugKind::Float32 => "float32",
+            DebugKind::Inline => "inline",
         }
     }
 

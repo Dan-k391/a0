@@ -883,3 +883,31 @@ a C function's parameter type: the interpreter's call trampoline (D7) has no sin
 calls through compiled thunks will lift (step five of v0.6). Values of sized types convert to
 `any` as `int` or `float`. The debugger shows unsigned and single-float values (`DebugKind::UInt`,
 `Float32`).
+
+## D70. Inline structs are bytes in place, copied when consumed
+
+v0.6 asks that values can live inline: structs by value in locals, fields and arrays. The HIR's
+structs are references, so a struct can be declared `inline` (`set_struct_inline`): its value is
+its fields, laid out as C lays them out (natural alignment), so that the same layout can be handed
+to C. Lowering represents an inline value as the address of its bytes: a local's stack slot (the
+core IR gained `stack_slot`), a field inside an object (which takes the struct's bytes as raw
+words), an element of an array (whose element kind gives the size, `A0_ELEM_BYTES + n`), or a
+global's memory, allocated at startup. A value is copied wherever it is consumed: a `let` or an
+assignment copies into the destination, an argument is copied into memory of the caller's that the
+callee then owns, a result is written through a pointer the caller passes (the function returns
+nothing in the IR), and an operand that names a place (a local, a field, an element) is copied
+before later operands run, so that they cannot change it. Places are not copied where they are
+written: `v.x = 1` and `a[i].x = 1` store at the address. The optimizer never replaces an inline
+local by another, since its fields change without an assignment to it.
+
+The alternatives were scalar replacement (a variable per field: fast, but every call, array and
+object would need the fields spread and gathered again) and boxing (an object per value, which is
+what structs already are). Memory in the frame keeps one representation for every place; Cranelift
+keeps small copies in registers within a function.
+
+To keep the collector precise, inline structs hold only numbers, booleans and other inline structs
+(E1015) and take no type parameters, and an inline value cannot become an `any` (E2024), which is
+also why it cannot be thrown or compared with `==`. A mode without the collector (D71) can relax
+the first. The debugger shows inline values by their fields at their offsets (`DebugKind::Inline`,
+fields with offsets and sizes); an inline payload of an enum variant shifts the words of the fields
+after it, which the debugger does not know yet.

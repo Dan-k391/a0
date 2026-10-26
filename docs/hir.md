@@ -34,6 +34,7 @@ IR plus calls into the default runtime (`a0rt`), so it runs in the interpreter a
 | `map<K, V>` | reference | hash map; `K` is `int`, `bool` or `string` |
 | `object` | reference | a dynamic object: `any` fields added by name at run time; see "Dynamic objects" |
 | `S`, `S<T, ...>` | reference | a declared struct: named, mutable fields; possibly generic |
+| `S` (`inline struct`) | value | an inline struct: its fields live where it is used; see "Inline structs" |
 | `E`, `E<T, ...>` | reference | a declared enum: variants with positional payloads; possibly generic |
 | `fn(T, ...) -> R` | reference | a closure |
 | `I` | reference | a declared interface: any struct or enum that implements it; see "Methods and interfaces" |
@@ -248,6 +249,23 @@ enum (true for every variant).
 booleans are special NaN patterns, references are tagged pointers, `int`s that fit in 48 bits are
 stored inline, and larger `int`s are boxed on the heap.
 Boxing a null reference yields `()`.
+
+## Inline structs
+
+`inline struct Vec2 { x: f32, y: f32 }` declares a struct whose values are their fields (D70):
+a local, a field of an object, an array element or a global holds the bytes, laid out as C lays out
+the struct, and assigning, passing or returning one copies them. `v.x = 1.0` changes `v` and
+nothing else; `a[i].x = 1.0` changes the element in place; `let w = v;` makes a copy. Arrays of
+them keep each element's bytes in a row (`filled(n, v)`, `push`, `pop`), and objects that hold one
+hold its bytes in their words. Methods, generics (`array<Vec2>`, `fn id<T>(x: T) -> T`), enum
+payloads and closures that capture one all work.
+
+An inline struct holds only numbers, booleans and other inline structs (E1015), never itself
+(E1016), and takes no type parameters, so the collector never needs to look inside one. Its values
+have no identity and no type information of their own: they cannot be compared with `==`,
+converted to `any` or thrown, be a map's value or a field of a dynamic object, nor be used as
+interfaces (E2024); they can satisfy bounds of generic functions. Builder: `set_struct_inline`
+after `declare_struct`; text: `inline struct`.
 
 ## Dynamic objects
 

@@ -323,7 +323,7 @@ A0String *a0_string_from_c(const char *s, int64_t required, uint64_t loc, void *
  * (A0_ELEM_BYTE, `array<bool>` and `array<u8>`), 16 or 32 bits (A0_ELEM_16, A0_ELEM_32), read
  * zero-extended and written as the word's low bytes. `data` points at `len` of them. */
 
-enum { A0_ELEM_BYTE = 3, A0_ELEM_16 = 4, A0_ELEM_32 = 5 };
+enum { A0_ELEM_BYTE = 3, A0_ELEM_16 = 4, A0_ELEM_32 = 5, A0_ELEM_BYTES = 16 };
 
 typedef struct A0Array {
     int64_t len;
@@ -340,6 +340,13 @@ uint64_t a0_array_get(A0Array *a, int64_t index, uint64_t loc, void *frame);
 void a0_array_set(A0Array *a, int64_t index, uint64_t value, uint64_t loc, void *frame);
 void a0_array_push(A0Array *a, uint64_t value);
 uint64_t a0_array_pop(A0Array *a, uint64_t loc, void *frame);
+/* Arrays whose elements are A0_ELEM_BYTES + n bytes each (inline structs), by address: append a
+ * copy of the n bytes at `value`; remove the last element and return its address (valid until
+ * the next push); make `count` copies. */
+void a0_array_push_bytes(A0Array *a, const void *value);
+void *a0_array_pop_bytes(A0Array *a, uint64_t loc, void *frame);
+A0Array *a0_array_filled_bytes(int64_t elem_kind, int64_t count, const void *value, uint64_t loc,
+                               void *frame);
 
 /* ---- Maps -------------------------------------------------------------------------------------- *
  * Hash maps that remember insertion order. Keys are raw words (ints, booleans) or strings compared by

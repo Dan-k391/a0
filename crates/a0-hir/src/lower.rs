@@ -151,6 +151,10 @@ struct Runtime {
     map_keys: IrFunc,
     string_from_c: IrFunc,
     alloc: IrFunc,
+    memmove: IrFunc,
+    array_push_bytes: IrFunc,
+    array_pop_bytes: IrFunc,
+    array_filled_bytes: IrFunc,
     throw: IrFunc,
     uncaught: IrFunc,
     exit: IrFunc,
@@ -211,6 +215,10 @@ impl Runtime {
             map_keys: f("a0_map_keys", &[Ptr], Some(Ptr)),
             string_from_c: f("a0_string_from_c", &[Ptr, I64], Some(Ptr)),
             alloc: f("a0_alloc", &[I64], Some(Ptr)),
+            memmove: f("memmove", &[Ptr, Ptr, I64], Some(Ptr)),
+            array_push_bytes: f("a0_array_push_bytes", &[Ptr, Ptr], None),
+            array_pop_bytes: f("a0_array_pop_bytes", &[Ptr], Some(Ptr)),
+            array_filled_bytes: f("a0_array_filled_bytes", &[I64, I64, Ptr], Some(Ptr)),
             throw: f("a0_rt_throw", &[], None),
             uncaught: f("a0_rt_uncaught", &[I64], None),
             exit: f("a0_rt_exit", &[I32], None),
@@ -228,6 +236,8 @@ enum Storage {
     Rooted(Var, u32),
     /// A captured local: the pointer to its heap box, rooted by a frame slot.
     Boxed(Var, u32),
+    /// A local of an inline struct type: the address of its bytes, in a stack slot.
+    Inline(Var),
 }
 
 /// The result of lowering an expression.
@@ -257,6 +267,8 @@ struct TypeDesc {
 
 struct FnState {
     body: BodyId,
+    /// Where a body whose result is an inline struct writes it (the caller's memory).
+    sret: Option<Value>,
     /// The shadow-stack frame, or `None` for a body with nothing to root (see `needs_frame`).
     frame: Option<Value>,
     slot_count: Value,
@@ -314,10 +326,32 @@ struct Lowerer<'a> {
     closures_raise: bool,
     /// The pending exception, if the program throws: a flag, and its value (an `any`).
     exception: Option<(IrGlobal, IrGlobal)>,
+    /// `operands` leaves its first operand where it is: it is the place an assignment writes to.
+    place_first: bool,
     /// The caches of the places that name an object's field (`A0FieldCache`, three words each),
     /// allocated together at startup: their number, and the global that points at them.
     field_caches: u32,
     field_cache_base: IrGlobal,
+    /// Per struct: for an inline one, its C layout (size, alignment, the byte offset of each
+    /// field); for others, the word of each field in the object (inline fields take several).
+    layouts: Vec<Layout>,
+    /// The word of each field of each enum variant (after the tag, word 0).
+    variant_words: Vec<Vec<Vec<u32>>>,
+    /// Descriptors of boxes holding a captured inline local, by its number of words.
+    inline_boxes: HashMap<u32, IrGlobal>,
+    /// Globals of inline types: their memory is allocated at startup, of this many bytes.
+    inline_globals: Vec<(IrGlobal, u32)>,
+}
+
+/// Where a struct's fields are.
+#[derive(Clone)]
+enum Layout {
+    Inline {
+        size: u32,
+        align: u32,
+        offsets: Vec<u32>,
+    },
+    Words(Vec<u32>),
 }
 
 impl<'a> Lowerer<'a> {
@@ -354,8 +388,13 @@ impl<'a> Lowerer<'a> {
             descs,
             strings: HashMap::new(),
             string_list: Vec::new(),
+            place_first: false,
             field_caches: 0,
             field_cache_base,
+            layouts: Vec::new(),
+            variant_words: Vec::new(),
+            inline_boxes: HashMap::new(),
+            inline_globals: Vec::new(),
             type_names: HashMap::new(),
             captured: Vec::new(),
             captures: HashMap::new(),
@@ -424,39 +463,321 @@ impl<'a> Lowerer<'a> {
 
     /// How an array stores elements of type `t`: numbers narrower than a word in as many bytes
     /// as they take, booleans as bytes, everything else as words.
-    fn elem_kind(&self, t: TypeId) -> u8 {
-        match self.m.kind(t) {
+    fn elem_kind(&self, t: TypeId) -> i64 {
+        if self.m.inline_struct(t).is_some() {
+            return Self::bytes_kind(self.size_align(t).0);
+        }
+        (match self.m.kind(t) {
             TypeKind::Bool | TypeKind::SizedInt(8, _) => ELEM_BYTE,
             TypeKind::SizedInt(16, _) => ELEM_16,
             TypeKind::SizedInt(32, _) | TypeKind::F32 => ELEM_32,
             _ => self.word_kind(t),
-        }
+        }) as i64
     }
 
     fn is_gc(&self, t: TypeId) -> bool {
         self.m.is_reference(t) || t == TypeId::ANY
     }
 
+    /// A function's IR signature: the closure's environment if `env`, then where to write a
+    /// result of an inline struct type (the function then returns nothing), then the parameters
+    /// (inline structs by address).
     fn signature(&self, body: BodyId, env: bool) -> (Vec<Type>, Option<Type>) {
-        let mut params = Vec::new();
+        let params: Vec<TypeId> = self
+            .m
+            .body_params(body)
+            .iter()
+            .map(|&p| self.m.local_type(p))
+            .collect();
+        self.ir_signature(&params, self.m.body_ret(body), env)
+    }
+
+    fn ir_signature(&self, params: &[TypeId], ret: TypeId, env: bool) -> (Vec<Type>, Option<Type>) {
+        let mut out = Vec::new();
         if env {
-            params.push(Type::Ptr);
+            out.push(Type::Ptr);
         }
-        for &p in self.m.body_params(body) {
-            params.extend(self.ir_type(self.m.local_type(p)));
+        if self.m.inline_struct(ret).is_some() {
+            out.push(Type::Ptr);
         }
-        (params, self.ir_type(self.m.body_ret(body)))
+        out.extend(params.iter().filter_map(|&p| self.ir_type(p)));
+        let ret = match self.m.inline_struct(ret) {
+            Some(_) => None,
+            None => self.ir_type(ret),
+        };
+        (out, ret)
     }
 
     fn fn_signature(&self, t: TypeId) -> (Vec<Type>, Option<Type>) {
         match self.m.kind(t) {
-            TypeKind::Fn(ps, r) => {
-                let mut params = vec![Type::Ptr];
-                params.extend(ps.iter().filter_map(|&p| self.ir_type(p)));
-                (params, self.ir_type(*r))
-            }
+            TypeKind::Fn(ps, r) => self.ir_signature(ps, *r, true),
             _ => (vec![Type::Ptr], None),
         }
+    }
+
+    // ---------------------------------------------------------------- inline structs
+
+    /// The C size and alignment of a value of type `t` in memory.
+    fn size_align(&self, t: TypeId) -> (u32, u32) {
+        match self.m.kind(t) {
+            TypeKind::Bool | TypeKind::SizedInt(8, _) => (1, 1),
+            TypeKind::SizedInt(16, _) => (2, 2),
+            TypeKind::SizedInt(32, _) | TypeKind::F32 => (4, 4),
+            TypeKind::Unit | TypeKind::Never => (0, 1),
+            TypeKind::Struct(s, _) => match &self.layouts[s.index()] {
+                Layout::Inline { size, align, .. } => (*size, *align),
+                Layout::Words(_) => (8, 8),
+            },
+            _ => (8, 8),
+        }
+    }
+
+    /// The words a value of type `t` takes in an object: one, or an inline struct's bytes.
+    fn words_of(&self, t: TypeId) -> u32 {
+        match self.m.inline_struct(t) {
+            Some(_) => self.size_align(t).0.div_ceil(8).max(1),
+            None => 1,
+        }
+    }
+
+    /// Lays out every struct: inline ones as C does, the others' fields in words.
+    fn compute_layouts(&mut self) {
+        let m = self.m;
+        self.layouts = vec![Layout::Words(Vec::new()); m.structs.len()];
+        let mut done = vec![false; m.structs.len()];
+        // Inline structs first, those inside others before them.
+        fn lay(me: &mut Lowerer, s: usize, done: &mut Vec<bool>) {
+            if done[s] {
+                return;
+            }
+            done[s] = true;
+            let def = &me.m.structs[s];
+            if !def.inline {
+                return;
+            }
+            let (mut size, mut align) = (0u32, 1u32);
+            let mut offsets = Vec::new();
+            for &(_, t) in &def.fields {
+                if let Some(inner) = me.m.inline_struct(t) {
+                    lay(me, inner.index(), done);
+                }
+                let (fs, fa) = me.size_align(t);
+                size = size.div_ceil(fa) * fa;
+                offsets.push(size);
+                size += fs;
+                align = align.max(fa);
+            }
+            size = size.div_ceil(align) * align;
+            me.layouts[s] = Layout::Inline {
+                size,
+                align,
+                offsets,
+            };
+        }
+        for s in 0..m.structs.len() {
+            lay(self, s, &mut done);
+        }
+        for (s, def) in m.structs.iter().enumerate() {
+            if !def.inline {
+                let words =
+                    self.word_offsets(&def.fields.iter().map(|f| f.1).collect::<Vec<_>>(), 0);
+                self.layouts[s] = Layout::Words(words);
+            }
+        }
+        self.variant_words = m
+            .enums
+            .iter()
+            .map(|e| {
+                e.variants
+                    .iter()
+                    .map(|v| self.word_offsets(&v.fields, 1))
+                    .collect()
+            })
+            .collect();
+    }
+
+    /// The word of each of fields of types `types` in an object, from word `first`.
+    fn word_offsets(&self, types: &[TypeId], first: u32) -> Vec<u32> {
+        let mut at = first;
+        types
+            .iter()
+            .map(|&t| {
+                let w = at;
+                at += self.words_of(t);
+                w
+            })
+            .collect()
+    }
+
+    /// An object's layout of words for fields of types `types`: an inline struct takes raw words.
+    fn object_layout(&self, types: &[TypeId]) -> Vec<u8> {
+        let mut out = Vec::new();
+        for &t in types {
+            match self.m.inline_struct(t) {
+                Some(_) => out.extend(std::iter::repeat_n(WORD_RAW, self.words_of(t) as usize)),
+                None => out.push(self.word_kind(t)),
+            }
+        }
+        out
+    }
+
+    /// The byte offset of field `f` of the inline struct `s`.
+    fn inline_offset(&self, s: StructId, f: u32) -> u32 {
+        match &self.layouts[s.index()] {
+            Layout::Inline { offsets, .. } => offsets[f as usize],
+            Layout::Words(_) => unreachable!("not an inline struct"),
+        }
+    }
+
+    /// The word of field `f` of an object of the struct `s`.
+    fn field_word(&self, s: StructId, f: u32) -> u32 {
+        match &self.layouts[s.index()] {
+            Layout::Words(words) => words[f as usize],
+            Layout::Inline { .. } => unreachable!("an inline struct is not an object"),
+        }
+    }
+
+    /// Fresh memory in the frame for a value of the inline type `t`.
+    fn temp(&mut self, t: TypeId) -> Value {
+        let (size, align) = self.size_align(t);
+        self.b.stack_slot(size.max(1), align)
+    }
+
+    fn at_offset(&mut self, base: Value, offset: u32) -> Value {
+        if offset == 0 {
+            return base;
+        }
+        let off = self.b.iconst(Type::I64, offset as i64);
+        self.b.ptradd(base, off)
+    }
+
+    /// Copies the `size` bytes at `src` to `dst` (which may be the same memory).
+    fn copy_bytes(&mut self, dst: Value, src: Value, size: u32) {
+        if size > 128 {
+            let n = self.b.iconst(Type::I64, size as i64);
+            self.b.call(self.rt.memmove, &[dst, src, n]);
+            return;
+        }
+        // All loads first, so that overlapping memory copies right.
+        let mut parts = Vec::new();
+        let mut at = 0;
+        for (width, ty) in [
+            (8, Type::I64),
+            (4, Type::I32),
+            (2, Type::I16),
+            (1, Type::I8),
+        ] {
+            while size - at >= width {
+                let s = self.at_offset(src, at);
+                parts.push((at, self.b.load(ty, s)));
+                at += width;
+            }
+        }
+        for (at, v) in parts {
+            let d = self.at_offset(dst, at);
+            self.b.store(v, d);
+        }
+    }
+
+    /// The value of type `t` in memory at `addr`: an inline struct is the address itself.
+    fn load_at(&mut self, addr: Value, t: TypeId) -> V {
+        if self.m.inline_struct(t).is_some() {
+            return V::Val(addr);
+        }
+        match self.m.kind(t) {
+            TypeKind::Unit => V::Unit,
+            TypeKind::Never => V::Never,
+            TypeKind::Bool => {
+                let b = self.b.load(Type::I8, addr);
+                let zero = self.b.iconst(Type::I8, 0);
+                V::Val(self.b.icmp(IntCC::Ne, b, zero))
+            }
+            _ => {
+                let ty = self.ir_type(t).unwrap();
+                V::Val(self.b.load(ty, addr))
+            }
+        }
+    }
+
+    /// Stores `v` of type `t` at `addr`, copying an inline struct's bytes.
+    fn store_at(&mut self, addr: Value, v: V, t: TypeId) {
+        let V::Val(v) = v else { return };
+        if self.m.inline_struct(t).is_some() {
+            let size = self.size_align(t).0;
+            self.copy_bytes(addr, v, size);
+            return;
+        }
+        if t == TypeId::BOOL {
+            let b = self.b.cast(Opcode::Zext, v, Type::I8);
+            self.b.store(b, addr);
+        } else {
+            self.b.store(v, addr);
+        }
+    }
+
+    /// Field `f` (of type `ft`) of an object at word `word`: an inline struct is its address.
+    fn object_field(&mut self, obj: Value, word: u32, ft: TypeId) -> V {
+        if self.m.inline_struct(ft).is_some() {
+            return V::Val(self.at_offset(obj, 8 * word));
+        }
+        let w = self.load_word(obj, word);
+        self.word_decode(w, ft)
+    }
+
+    fn set_object_field(&mut self, obj: Value, word: u32, v: V, ft: TypeId) {
+        if self.m.inline_struct(ft).is_some() {
+            let at = self.at_offset(obj, 8 * word);
+            self.store_at(at, v, ft);
+            return;
+        }
+        let w = self.word_of(v, ft);
+        self.store_word(obj, word, w);
+    }
+
+    /// Whether `e` makes a fresh inline value (in memory nothing else refers to), rather than
+    /// naming one a later operand could change.
+    fn fresh(&self, e: ExprId) -> bool {
+        matches!(
+            self.m.expr(e).kind,
+            ExprKind::New(..)
+                | ExprKind::Call(..)
+                | ExprKind::CallValue(..)
+                | ExprKind::InterfaceCall(..)
+                | ExprKind::Builtin(Builtin::Pop, _)
+        )
+    }
+
+    /// Appends `v` to an array of `elem`s.
+    fn push_element(&mut self, arr: Value, v: V, elem: TypeId) {
+        if self.m.inline_struct(elem).is_some() {
+            if let V::Val(p) = v {
+                self.b.call(self.rt.array_push_bytes, &[arr, p]);
+            }
+            return;
+        }
+        let w = self.word_of(v, elem);
+        self.b.call(self.rt.array_push, &[arr, w]);
+    }
+
+    /// A copy of the inline value `v` of type `t` in fresh memory.
+    fn copy_of(&mut self, v: Value, t: TypeId) -> Value {
+        let tmp = self.temp(t);
+        let size = self.size_align(t).0;
+        self.copy_bytes(tmp, v, size);
+        tmp
+    }
+
+    /// Where a call writes a result of the inline type `ty`, inserted into `args` at `at`.
+    fn result_memory(&mut self, ty: TypeId, args: &mut Vec<Value>, at: usize) -> Option<Value> {
+        self.m.inline_struct(ty)?;
+        let tmp = self.temp(ty);
+        args.insert(at, tmp);
+        Some(tmp)
+    }
+
+    /// The array element kind of inline structs of `size` bytes (`A0_ELEM_BYTES` in `a0rt.h`).
+    fn bytes_kind(size: u32) -> i64 {
+        16 + size as i64
     }
 
     // ---------------------------------------------------------------- setup
@@ -471,11 +792,12 @@ impl<'a> Lowerer<'a> {
             let value = self.b.add_global_int("hir.exception.value", Type::I64, 0);
             self.exception = Some((pending, value));
         }
+        self.compute_layouts();
         for (i, s) in m.structs.iter().enumerate() {
             let g = self
                 .b
                 .add_global_int(&format!("hir.type.{}", s.name), Type::Ptr, 0);
-            let layout = s.fields.iter().map(|&(_, t)| self.word_kind(t)).collect();
+            let layout = self.object_layout(&s.fields.iter().map(|f| f.1).collect::<Vec<_>>());
             self.descs.push(TypeDesc {
                 global: g,
                 name: s.name.clone(),
@@ -501,7 +823,7 @@ impl<'a> Lowerer<'a> {
                     self.b
                         .add_global_int(&format!("hir.type.{}.{}", e.name, v.name), Type::Ptr, 0);
                 let mut layout = vec![WORD_RAW];
-                layout.extend(v.fields.iter().map(|&t| self.word_kind(t)));
+                layout.extend(self.object_layout(&v.fields));
                 self.descs.push(TypeDesc {
                     global: g,
                     name: format!("{}::{}", e.name, v.name),
@@ -525,6 +847,15 @@ impl<'a> Lowerer<'a> {
                     Type::I64,
                     ANY_UNIT,
                 )),
+                // The global holds the address of its bytes, allocated at startup.
+                _ if m.inline_struct(g.ty).is_some() => {
+                    let ir = self
+                        .b
+                        .add_global_int(&format!("hir.global.{}", g.name), Type::Ptr, 0);
+                    let size = self.size_align(g.ty).0;
+                    self.inline_globals.push((ir, size));
+                    Some(ir)
+                }
                 _ => {
                     let t = self.ir_type(g.ty).unwrap();
                     Some(
@@ -819,6 +1150,12 @@ impl<'a> Lowerer<'a> {
             let k = self.b.iconst(Type::I64, WORD_ANY as i64);
             self.b.call(self.rt.add_root, &[a, k]);
         }
+        for (g, size) in self.inline_globals.clone() {
+            let n = self.b.iconst(Type::I64, size.max(1) as i64);
+            let memory = self.b.call(self.rt.alloc, &[n]).unwrap();
+            let a = self.b.global_addr(g);
+            self.b.store(memory, a);
+        }
         if self.field_caches > 0 {
             let size = self.b.iconst(Type::I64, 24 * self.field_caches as i64);
             let caches = self.b.call(self.rt.alloc, &[size]).unwrap();
@@ -872,6 +1209,7 @@ impl<'a> Lowerer<'a> {
         let mut itables: HashMap<IrGlobal, Value> = HashMap::new();
         for (owner, i, methods) in m.vtables.clone() {
             let descs = match owner {
+                Owner::Struct(s) if m.structs[s.index()].inline => continue,
                 Owner::Struct(s) => vec![self.struct_desc[s.index()]],
                 Owner::Enum(e) => self.enum_desc[e.index()].1.clone(),
                 Owner::Value(_) => continue,
@@ -1179,12 +1517,27 @@ impl<'a> Lowerer<'a> {
 
     /// The size of an array's elements of type `elem`, and the IR type of each in memory.
     fn elem_layout(&self, elem: TypeId) -> (u32, Type) {
-        match self.elem_kind(elem) {
+        if self.m.inline_struct(elem).is_some() {
+            return (self.size_align(elem).0, Type::Ptr);
+        }
+        match self.elem_kind(elem) as u8 {
             ELEM_BYTE => (1, Type::I8),
             ELEM_16 => (2, Type::I16),
             ELEM_32 => (4, Type::I32),
             _ => (8, Type::I64),
         }
+    }
+
+    /// The address of element `i` of an array of inline structs, after a bounds check.
+    fn element_place(&mut self, a: Value, i: Value, elem: TypeId) -> Value {
+        let size = self.size_align(elem).0;
+        let bad = self.out_of_bounds(a, i);
+        self.b.if_(bad);
+        // Fails with the index and the length.
+        self.b.call(self.rt.array_get, &[a, i]);
+        self.b.unreachable();
+        self.b.end_if();
+        self.element_address(a, i, size)
     }
 
     /// `a[i]`, as a word, for an array of `elem`s.
@@ -1283,8 +1636,26 @@ impl<'a> Lowerer<'a> {
         self.b.call(self.rt.gc_new, &[d]).unwrap()
     }
 
-    fn box_desc(&self, t: TypeId) -> IrGlobal {
-        self.box_desc[self.word_kind(t) as usize]
+    fn box_desc(&mut self, t: TypeId) -> IrGlobal {
+        if self.m.inline_struct(t).is_none() {
+            return self.box_desc[self.word_kind(t) as usize];
+        }
+        // A captured inline local: a box of its raw words.
+        let words = self.words_of(t);
+        if let Some(&g) = self.inline_boxes.get(&words) {
+            return g;
+        }
+        let g = self
+            .b
+            .add_global_int(&format!("hir.type.box.inline{words}"), Type::Ptr, 0);
+        self.descs.push(TypeDesc {
+            global: g,
+            name: "box".to_string(),
+            layout: vec![WORD_RAW; words as usize],
+            family: None,
+        });
+        self.inline_boxes.insert(words, g);
+        g
     }
 
     // ---------------------------------------------------------------- functions
@@ -1304,6 +1675,7 @@ impl<'a> Lowerer<'a> {
         };
         self.f = Some(FnState {
             body,
+            sret: None,
             frame,
             slot_count,
             next: 0,
@@ -1338,6 +1710,12 @@ impl<'a> Lowerer<'a> {
                 self.st().storage.insert(l, Storage::Boxed(var, s));
             }
         }
+        // A result of an inline struct type is written where the caller says.
+        if m.inline_struct(m.body_ret(body)).is_some() {
+            let sret = self.b.param(param_index);
+            param_index += 1;
+            self.st().sret = Some(sret);
+        }
         // Parameters: root the GC ones first, then create boxes for captured ones (which allocates).
         let params = m.body_params(body).to_vec();
         let mut values = Vec::new();
@@ -1353,6 +1731,8 @@ impl<'a> Lowerer<'a> {
             values.push(v);
             match (self.st().storage[&p], v) {
                 (Storage::Var(var), Some(v)) => self.b.set(var, v),
+                // The caller passes a copy of its own: the parameter is that memory.
+                (Storage::Inline(var), Some(v)) => self.b.set(var, v),
                 (Storage::Rooted(var, s), Some(v)) => {
                     self.b.set(var, v);
                     self.store_slot(s, v, t);
@@ -1364,10 +1744,10 @@ impl<'a> Lowerer<'a> {
         for (&p, v) in params.iter().zip(values) {
             if let Storage::Boxed(var, s) = self.st().storage[&p] {
                 let t = m.local_type(p);
-                let bx = self.new_object(self.box_desc(t));
+                let desc = self.box_desc(t);
+                let bx = self.new_object(desc);
                 if let Some(v) = v {
-                    let w = self.word_encode(v, t);
-                    self.store_word(bx, 0, w);
+                    self.set_object_field(bx, 0, V::Val(v), t);
                 }
                 self.b.set(var, bx);
                 self.store_slot(s, bx, TypeId::STRING);
@@ -1381,10 +1761,14 @@ impl<'a> Lowerer<'a> {
         };
         if !matches!(result, V::Never) && !self.b.is_terminated() {
             self.pop_frame();
-            match (self.ir_type(ret), result) {
-                (Some(_), V::Val(v)) => self.b.ret(Some(v)),
-                (None, _) => self.b.ret(None),
-                (Some(_), _) => self.b.unreachable(),
+            match (self.st().sret, self.ir_type(ret), result) {
+                (Some(sret), _, result) => {
+                    self.store_at(sret, result, ret);
+                    self.b.ret(None);
+                }
+                (None, Some(_), V::Val(v)) => self.b.ret(Some(v)),
+                (None, None, _) => self.b.ret(None),
+                (None, Some(_), _) => self.b.unreachable(),
             }
         } else if !self.b.is_terminated() {
             self.b.unreachable();
@@ -1405,6 +1789,13 @@ impl<'a> Lowerer<'a> {
                 let null = self.b.null();
                 self.b.set(var, null);
                 Storage::Boxed(var, self.alloc_slot())
+            }
+            Some(_) if self.m.inline_struct(data.ty).is_some() => {
+                let var = self.b.declare_var(&data.name, Type::Ptr);
+                self.describe_local(var, l, false);
+                let memory = self.temp(data.ty);
+                self.b.set(var, memory);
+                Storage::Inline(var)
             }
             Some(t) if self.is_gc(data.ty) => {
                 let var = self.b.declare_var(&data.name, t);
@@ -1464,12 +1855,23 @@ impl<'a> Lowerer<'a> {
             TypeKind::Struct(s, _) => {
                 // Named as the object's descriptor is, which interface values are found by.
                 let s = *s;
-                let d = self.b.debug_type(DebugKind::Struct, m.struct_name(s), &[]);
+                let inline = m.inline_struct(t).is_some();
+                let kind = if inline {
+                    DebugKind::Inline
+                } else {
+                    DebugKind::Struct
+                };
+                let d = self.b.debug_type(kind, m.struct_name(s), &[]);
                 self.debug_types.insert(t, d);
                 for i in 0..m.struct_field_count(s) {
                     let (field, ft) = m.struct_field(s, i);
-                    let ft = self.debug_type(ft);
-                    self.b.debug_type_add_field(d, field, ft);
+                    let (offset, size) = if inline {
+                        (self.inline_offset(s, i), self.size_align(ft).0)
+                    } else {
+                        (8 * self.field_word(s, i), 8 * self.words_of(ft))
+                    };
+                    let fd = self.debug_type(ft);
+                    self.b.debug_type_add_field_at(d, field, fd, offset, size);
                 }
                 d
             }
@@ -1581,6 +1983,8 @@ impl<'a> Lowerer<'a> {
     /// Evaluates operands left to right. A GC value is spilled when an operand after it, or the
     /// operation itself (`op_allocates`), may allocate. Returns `None` if an operand diverges.
     fn operands(&mut self, es: &[ExprId], op_allocates: bool) -> Option<Vec<V>> {
+        // Only for this call's operands, not those of the operands' own operations.
+        let place_first = std::mem::replace(&mut self.place_first, false);
         let later: Vec<bool> = (0..es.len())
             .map(|i| es[i + 1..].iter().any(|&e| self.may_gc(e)))
             .collect();
@@ -1593,6 +1997,18 @@ impl<'a> Lowerer<'a> {
             if op_allocates || later[i] {
                 self.spill_operand(e, v);
             }
+            // An inline value named by a local, a field or an element is copied now, so that what
+            // follows cannot change it before it is used.
+            let v = match v {
+                V::Val(p)
+                    if self.m.inline_struct(self.m.expr_type(e)).is_some()
+                        && !self.fresh(e)
+                        && !(i == 0 && place_first) =>
+                {
+                    V::Val(self.copy_of(p, self.m.expr_type(e)))
+                }
+                v => v,
+            };
             out.push(v);
         }
         Some(out)
@@ -1677,17 +2093,39 @@ impl<'a> Lowerer<'a> {
                 }
                 if let (Some(ir), V::Val(v)) = (self.globals[g.index()], v) {
                     let a = self.b.global_addr(ir);
-                    self.b.store(v, a);
+                    if m.inline_struct(m.global_type(g)).is_some() {
+                        let memory = self.b.load(Type::Ptr, a);
+                        self.store_at(memory, V::Val(v), m.global_type(g));
+                    } else {
+                        self.b.store(v, a);
+                    }
                 }
                 V::Unit
             }
             ExprKind::SetField(o, f, value) => {
-                let Some(vs) = self.operands(&[o, value], false) else {
+                self.place_first = true;
+                let vs = self.operands(&[o, value], false);
+                self.place_first = false;
+                let Some(vs) = vs else {
                     return V::Never;
                 };
                 let obj = vs[0].val();
-                let w = self.word_of(vs[1], m.expr_type(value));
-                self.store_word(obj, f, w);
+                let ot = m.expr_type(o);
+                let vt = m.expr_type(value);
+                match *m.kind(ot) {
+                    TypeKind::Struct(s, _) if m.inline_struct(ot).is_some() => {
+                        let at = self.at_offset(obj, self.inline_offset(s, f));
+                        self.store_at(at, vs[1], vt);
+                    }
+                    TypeKind::Struct(s, _) => {
+                        let word = self.field_word(s, f);
+                        self.set_object_field(obj, word, vs[1], vt);
+                    }
+                    _ => {
+                        let w = self.word_of(vs[1], vt);
+                        self.store_word(obj, f, w);
+                    }
+                }
                 V::Unit
             }
             ExprKind::SetIndex(t, i, value) => {
@@ -1695,6 +2133,13 @@ impl<'a> Lowerer<'a> {
                     return V::Never;
                 };
                 let target = vs[0].val();
+                if let TypeKind::Array(elem) = *m.kind(m.expr_type(t))
+                    && m.inline_struct(elem).is_some()
+                {
+                    let at = self.element_place(target, vs[1].val(), elem);
+                    self.store_at(at, vs[2], elem);
+                    return V::Unit;
+                }
                 let vw = self.word_of(vs[2], m.expr_type(value));
                 match *m.kind(m.expr_type(t)) {
                     TypeKind::Array(elem) => self.set_array_element(target, vs[1].val(), vw, elem),
@@ -1734,15 +2179,19 @@ impl<'a> Lowerer<'a> {
                 let Some(vs) = self.operands(&args, false) else {
                     return V::Never;
                 };
-                let ir_args: Vec<Value> = vs
+                let mut ir_args: Vec<Value> = vs
                     .iter()
                     .filter_map(|v| if let V::Val(v) = v { Some(*v) } else { None })
                     .collect();
+                let sret = self.result_memory(ty, &mut ir_args, 0);
                 let r = self.b.call(self.funcs[f.index()], &ir_args);
                 if self.raises[m.func_body(f).index()] {
                     self.check_raised();
                 }
-                self.call_result(r, ty)
+                match sret {
+                    Some(memory) => V::Val(memory),
+                    None => self.call_result(r, ty),
+                }
             }
             ExprKind::CallExtern(x, args) => {
                 // A runtime function may allocate, so its reference arguments stay rooted; a C
@@ -1792,11 +2241,15 @@ impl<'a> Lowerer<'a> {
                         .filter_map(|v| if let V::Val(v) = v { Some(*v) } else { None }),
                 );
                 let (params, ret) = self.fn_signature(m.expr_type(callee));
+                let sret = self.result_memory(ty, &mut ir_args, 1);
                 let r = self.b.call_indirect(code, &params, ret, &ir_args);
                 if self.closures_raise {
                     self.check_raised();
                 }
-                self.call_result(r, ty)
+                match sret {
+                    Some(memory) => V::Val(memory),
+                    None => self.call_result(r, ty),
+                }
             }
             ExprKind::Lambda(body) => {
                 let desc = self.lambda_desc[&body];
@@ -1815,28 +2268,50 @@ impl<'a> Lowerer<'a> {
                 V::Val(obj)
             }
             ExprKind::New(s, fields) => {
+                let types: Vec<TypeId> = m.structs[s.index()].fields.iter().map(|f| f.1).collect();
+                if m.structs[s.index()].inline {
+                    // Built in fresh memory, field by field.
+                    let memory = self.temp(ty);
+                    for (k, (&f, &t)) in fields.iter().zip(&types).enumerate() {
+                        let v = self.expr(f);
+                        if matches!(v, V::Never) {
+                            return V::Never;
+                        }
+                        let at = self.at_offset(memory, self.inline_offset(s, k as u32));
+                        self.store_at(at, v, t);
+                    }
+                    return V::Val(memory);
+                }
                 let desc = self.struct_desc[s.index()];
-                self.construct(
-                    desc,
-                    None,
-                    &fields,
-                    &m.structs[s.index()]
-                        .fields
-                        .iter()
-                        .map(|f| f.1)
-                        .collect::<Vec<_>>(),
-                )
+                let words: Vec<u32> = (0..types.len() as u32)
+                    .map(|f| self.field_word(s, f))
+                    .collect();
+                self.construct(desc, None, &fields, &types, &words)
             }
             ExprKind::Variant(en, v, args) => {
                 let desc = self.enum_desc[en.index()].1[v as usize];
                 let field_types = m.variant_fields(en, v).to_vec();
-                self.construct(desc, Some(v), &args, &field_types)
+                let words = self.variant_words[en.index()][v as usize].clone();
+                self.construct(desc, Some(v), &args, &field_types, &words)
             }
             ExprKind::Field(o, f) => {
                 let v = self.expr(o);
                 let V::Val(obj) = v else { return v };
-                let w = self.load_word(obj, f);
-                self.word_decode(w, ty)
+                let ot = m.expr_type(o);
+                match *m.kind(ot) {
+                    TypeKind::Struct(s, _) if m.inline_struct(ot).is_some() => {
+                        let at = self.at_offset(obj, self.inline_offset(s, f));
+                        self.load_at(at, ty)
+                    }
+                    TypeKind::Struct(s, _) => {
+                        let word = self.field_word(s, f);
+                        self.object_field(obj, word, ty)
+                    }
+                    _ => {
+                        let w = self.load_word(obj, f);
+                        self.word_decode(w, ty)
+                    }
+                }
             }
             ExprKind::Unwrap(o) => {
                 let v = self.expr(o);
@@ -1854,7 +2329,7 @@ impl<'a> Lowerer<'a> {
                     TypeKind::Array(t) => *t,
                     _ => TypeId::NEVER,
                 };
-                let kind = self.b.iconst(Type::I64, self.elem_kind(elem_ty) as i64);
+                let kind = self.b.iconst(Type::I64, self.elem_kind(elem_ty));
                 let cap = self.b.iconst(Type::I64, elems.len() as i64);
                 let arr = self.b.call(self.rt.array_new, &[kind, cap]).unwrap();
                 self.spill(arr, ty);
@@ -1863,8 +2338,7 @@ impl<'a> Lowerer<'a> {
                     if matches!(v, V::Never) {
                         return V::Never;
                     }
-                    let w = self.word_of(v, elem_ty);
-                    self.b.call(self.rt.array_push, &[arr, w]);
+                    self.push_element(arr, v, elem_ty);
                 }
                 V::Val(arr)
             }
@@ -1872,7 +2346,7 @@ impl<'a> Lowerer<'a> {
                 let TypeKind::Array(elem) = *m.kind(ty) else {
                     unreachable!()
                 };
-                let kind = self.b.iconst(Type::I64, self.elem_kind(elem) as i64);
+                let kind = self.b.iconst(Type::I64, self.elem_kind(elem));
                 let cap = self.b.iconst(Type::I64, 0);
                 V::Val(self.b.call(self.rt.array_new, &[kind, cap]).unwrap())
             }
@@ -1899,6 +2373,11 @@ impl<'a> Lowerer<'a> {
                     return V::Never;
                 };
                 let target = vs[0].val();
+                if let TypeKind::Array(elem) = *m.kind(m.expr_type(t))
+                    && m.inline_struct(elem).is_some()
+                {
+                    return V::Val(self.element_place(target, vs[1].val(), elem));
+                }
                 let w = match *m.kind(m.expr_type(t)) {
                     TypeKind::Array(elem) => self.array_element(target, vs[1].val(), elem),
                     _ => {
@@ -1995,20 +2474,23 @@ impl<'a> Lowerer<'a> {
                 let off = self.b.iconst(Type::I64, 8 * k as i64);
                 let at = self.b.ptradd(vtable, off);
                 let code = self.b.load(Type::Ptr, at);
-                let mut params = vec![Type::Ptr];
+                let arg_types: Vec<TypeId> = args.iter().map(|&a| m.expr_type(a)).collect();
+                let (params, ret) = self.ir_signature(&arg_types, ty, true);
                 let mut ir_args = vec![object];
-                for (v, &a) in vs[1..].iter().zip(&args) {
+                for v in &vs[1..] {
                     if let V::Val(v) = *v {
-                        params.push(self.ir_type(m.expr_type(a)).unwrap());
                         ir_args.push(v);
                     }
                 }
-                let ret = self.ir_type(ty);
+                let sret = self.result_memory(ty, &mut ir_args, 1);
                 let r = self.b.call_indirect(code, &params, ret, &ir_args);
                 if self.closures_raise {
                     self.check_raised();
                 }
-                self.call_result(r, ty)
+                match sret {
+                    Some(memory) => V::Val(memory),
+                    None => self.call_result(r, ty),
+                }
             }
             ExprKind::Return(v) => {
                 let r = match v {
@@ -2020,8 +2502,12 @@ impl<'a> Lowerer<'a> {
                 }
                 self.pop_frame();
                 let body = self.st().body;
-                match (self.ir_type(m.body_ret(body)), r) {
-                    (Some(_), V::Val(v)) => self.b.ret(Some(v)),
+                match (self.st().sret, self.ir_type(m.body_ret(body)), r) {
+                    (Some(sret), _, r) => {
+                        self.store_at(sret, r, m.body_ret(body));
+                        self.b.ret(None);
+                    }
+                    (None, Some(_), V::Val(v)) => self.b.ret(Some(v)),
                     _ => self.b.ret(None),
                 }
                 V::Never
@@ -2174,9 +2660,11 @@ impl<'a> Lowerer<'a> {
                 self.pop_frame();
                 let ret = self.m.body_ret(self.st().body);
                 let zero = match self.ir_type(ret) {
+                    // A result written through a pointer is not written at all.
+                    _ if self.st().sret.is_some() => None,
                     None => None,
                     Some(Type::Ptr) => Some(self.b.null()),
-                    Some(Type::F64) => Some(self.b.fconst_bits(Type::F64, 0)),
+                    Some(t @ (Type::F64 | Type::F32)) => Some(self.b.fconst_bits(t, 0)),
                     Some(t) => Some(self.b.iconst(t, 0)),
                 };
                 self.b.ret(zero);
@@ -2257,11 +2745,10 @@ impl<'a> Lowerer<'a> {
         let t = self.m.local_type(l);
         match self.st().storage[&l] {
             Storage::None => V::Unit,
-            Storage::Var(v) | Storage::Rooted(v, _) => V::Val(self.b.get(v)),
+            Storage::Var(v) | Storage::Rooted(v, _) | Storage::Inline(v) => V::Val(self.b.get(v)),
             Storage::Boxed(var, _) => {
                 let bx = self.b.get(var);
-                let w = self.load_word(bx, 0);
-                self.word_decode(w, t)
+                self.object_field(bx, 0, t)
             }
         }
     }
@@ -2276,10 +2763,13 @@ impl<'a> Lowerer<'a> {
                 self.b.set(var, v);
                 self.store_slot(s, v, t);
             }
+            Storage::Inline(var) => {
+                let at = self.b.get(var);
+                self.store_at(at, V::Val(v), t);
+            }
             Storage::Boxed(var, _) => {
                 let bx = self.b.get(var);
-                let w = self.word_encode(v, t);
-                self.store_word(bx, 0, w);
+                self.set_object_field(bx, 0, V::Val(v), t);
             }
         }
     }
@@ -2295,11 +2785,9 @@ impl<'a> Lowerer<'a> {
                 {
                     self.spill(val, t);
                 }
-                let bx = self.new_object(self.box_desc(t));
-                if let V::Val(val) = v {
-                    let w = self.word_encode(val, t);
-                    self.store_word(bx, 0, w);
-                }
+                let desc = self.box_desc(t);
+                let bx = self.new_object(desc);
+                self.set_object_field(bx, 0, v, t);
                 self.b.set(var, bx);
                 self.store_slot(s, bx, TypeId::STRING);
                 self.release(mark);
@@ -2315,24 +2803,20 @@ impl<'a> Lowerer<'a> {
         tag: Option<u32>,
         fields: &[ExprId],
         types: &[TypeId],
+        words: &[u32],
     ) -> V {
         let obj = self.new_object(desc);
         self.spill(obj, TypeId::STRING);
-        let first = match tag {
-            Some(t) => {
-                let w = self.b.iconst(Type::I64, t as i64);
-                self.store_word(obj, 0, w);
-                1
-            }
-            None => 0,
-        };
-        for (i, (&f, &t)) in fields.iter().zip(types).enumerate() {
+        if let Some(t) = tag {
+            let w = self.b.iconst(Type::I64, t as i64);
+            self.store_word(obj, 0, w);
+        }
+        for ((&f, &t), &word) in fields.iter().zip(types).zip(words) {
             let v = self.expr(f);
             if matches!(v, V::Never) {
                 return V::Never;
             }
-            let w = self.word_of(v, t);
-            self.store_word(obj, first + i as u32, w);
+            self.set_object_field(obj, word, v, t);
         }
         V::Val(obj)
     }
@@ -2477,9 +2961,16 @@ impl<'a> Lowerer<'a> {
                 let TypeKind::Array(elem) = *m.kind(arg_ty(0)) else {
                     return V::Never;
                 };
-                let w = self.word_of(vs[1], elem);
-                self.b.call(self.rt.array_push, &[vs[0].val(), w]);
+                self.push_element(vs[0].val(), vs[1], elem);
                 V::Unit
+            }
+            Builtin::Pop if self.m.inline_struct(ty).is_some() => {
+                // The element's bytes stay where they were until the next push: copy them now.
+                let at = self
+                    .b
+                    .call(self.rt.array_pop_bytes, &[vs[0].val()])
+                    .unwrap();
+                V::Val(self.copy_of(at, ty))
             }
             Builtin::Pop => {
                 let w = self.b.call(self.rt.array_pop, &[vs[0].val()]).unwrap();
@@ -2565,7 +3056,11 @@ impl<'a> Lowerer<'a> {
                 let TypeKind::Array(elem) = *m.kind(ty) else {
                     return V::Never;
                 };
-                let kind = self.b.iconst(Type::I64, self.elem_kind(elem) as i64);
+                let kind = self.b.iconst(Type::I64, self.elem_kind(elem));
+                if self.m.inline_struct(elem).is_some() {
+                    let args = [kind, vs[0].val(), vs[1].val()];
+                    return V::Val(self.b.call(self.rt.array_filled_bytes, &args).unwrap());
+                }
                 let w = self.word_of(vs[1], elem);
                 let call = self.b.call(self.rt.array_filled, &[kind, vs[0].val(), w]);
                 V::Val(call.unwrap())
@@ -2995,9 +3490,12 @@ impl<'a> Lowerer<'a> {
                     open += 1;
                 }
                 for (k, &bind) in arm.binds.iter().enumerate() {
-                    let w = self.load_word(obj, k as u32 + 1);
                     let bt = m.local_type(bind);
-                    let bv = self.word_decode(w, bt);
+                    let word = match *m.kind(m.expr_type(s)) {
+                        TypeKind::Enum(en, _) => self.variant_words[en.index()][v as usize][k],
+                        _ => k as u32 + 1,
+                    };
+                    let bv = self.object_field(obj, word, bt);
                     self.bind_local(bind, bv);
                 }
             }
@@ -3028,8 +3526,6 @@ impl<'a> Lowerer<'a> {
     }
 }
 
-/// Whether a builtin allocates a GC object: one that makes a string or an array, or prints a value
-/// that is not a string yet.
 /// The IR integer type of a width.
 fn int_type(bits: u32) -> Type {
     match bits {
@@ -3040,6 +3536,8 @@ fn int_type(bits: u32) -> Type {
     }
 }
 
+/// Whether a builtin allocates a GC object: one that makes a string or an array, or prints a value
+/// that is not a string yet.
 fn builtin_allocates(m: &HirModule, op: Builtin, args: &[ExprId]) -> bool {
     match op {
         Builtin::Keys | Builtin::Substr | Builtin::Str | Builtin::Filled | Builtin::FieldNames => {

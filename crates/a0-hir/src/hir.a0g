@@ -19,7 +19,7 @@ module = "module" name:STRING ~ "expected the module name as a string" ";" ~ "ex
 item @inline @recover(before "struct" "enum" "interface" "impl" "global" "extern" "fn")
     = struct_decl | enum_decl | interface_decl | impl_decl | global_decl | extern_decl | fn_decl;
 
-struct_decl = "struct" name:NAME ~ "expected a struct name" type_params? "{" ~ "expected '{'"
+struct_decl = inline:"inline"? "struct" name:NAME ~ "expected a struct name" type_params? "{" ~ "expected '{'"
               (field ("," field)* ","?)? "}" ~ "expected '}'";
 field = name:NAME ":" ~ "expected ':'" type:type ~ "expected a type";
 

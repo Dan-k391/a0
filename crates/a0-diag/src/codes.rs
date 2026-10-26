@@ -62,6 +62,10 @@ codes! {
         "Modules import each other in a circle, so none of them can be compiled before the others. Move what they share into a module that both import.";
     UNKNOWN_METHOD = "E1013", "unknown method",
         "The value's type has no method of this name: its type declares none, no interface it is used as requires one, and no field of that name holds a function.";
+    INLINE_FIELD = "E1015", "inline struct holds a reference",
+        "An inline struct lives where it is used (in a variable, a field, an array element) and is copied as its bytes, so it can hold only numbers, booleans and other inline structs, which the collector need not see. Use a struct that is not inline to hold strings, arrays or objects.";
+    INLINE_CYCLE = "E1016", "inline struct contains itself",
+        "An inline struct holds its fields in itself, so it cannot contain itself, directly or through other inline structs: it would have no end. Hold the inner value through a struct that is not inline.";
 
     MISMATCHED_TYPES = "E2001", "mismatched types",
         "A value has a different type than the place it is used requires. The message says which type was expected and which was found, and points at where the expectation comes from: a declared type, a parameter, a field or a function's result.";
@@ -109,6 +113,8 @@ codes! {
         "The method takes or returns `Self`, the type that implements the interface, which a value of the interface type does not know. Call it on a value whose type is known, or on a value of a type parameter bounded by the interface.";
     LITERAL_RANGE = "E2023", "literal out of range",
         "A number written in the program takes the integer type expected of it, and must fit in it: an 8-bit unsigned integer holds 0 to 255, a signed one -128 to 127. Write a number that fits, or convert a value of a wider type with a conversion, which wraps.";
+    INLINE_VALUE = "E2024", "not possible with an inline value",
+        "An inline struct's value is its bytes, with no identity and no type information of its own, so it cannot be compared with `==`, held as an `any` or a map's value, or used as an interface. Compare its fields, or use a struct that is not inline.";
 
     OUTSIDE_LOOP = "E3001", "outside a loop",
         "Leaving or continuing a loop is only possible inside a loop.";

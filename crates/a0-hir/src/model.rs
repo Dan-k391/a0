@@ -370,6 +370,8 @@ pub(crate) struct ArmData {
 #[derive(Clone)]
 pub(crate) struct StructDef {
     pub name: String,
+    /// An inline struct is a value: its fields live where it is used and it is copied (D70).
+    pub inline: bool,
     pub type_params: Vec<String>,
     pub fields: Vec<(String, TypeId)>,
     /// Where each field was declared.
@@ -1057,8 +1059,19 @@ impl HirModule {
         }
     }
 
+    /// The inline struct a type is, if it is one.
+    pub fn inline_struct(&self, t: TypeId) -> Option<StructId> {
+        match self.kind(t) {
+            TypeKind::Struct(s, _) if self.structs[s.index()].inline => Some(*s),
+            _ => None,
+        }
+    }
+
     /// Whether values of this type are garbage-collected references.
     pub fn is_reference(&self, t: TypeId) -> bool {
+        if self.inline_struct(t).is_some() {
+            return false;
+        }
         matches!(
             self.kind(t),
             TypeKind::String

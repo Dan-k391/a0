@@ -287,7 +287,28 @@ impl Builder {
         }
         self.module.debug_types[t.index()]
             .fields
-            .push((name.to_string(), ty));
+            .push((name.to_string(), ty, None));
+    }
+
+    /// Adds a field at `offset` bytes, of `size` bytes, to a struct's or an inline struct's debug
+    /// type (fields added with `debug_type_add_field` are the words in order).
+    pub fn debug_type_add_field_at(
+        &mut self,
+        t: DebugType,
+        name: &str,
+        ty: DebugType,
+        offset: u32,
+        size: u32,
+    ) {
+        if !self.debug_type_exists(t) || !self.debug_type_exists(ty) {
+            self.error("debug_type_add_field_at: no such debug type");
+            return;
+        }
+        self.module.debug_types[t.index()].fields.push((
+            name.to_string(),
+            ty,
+            Some((offset, size)),
+        ));
     }
 
     /// Adds a variant, with the types of its fields, to an enum's debug type.

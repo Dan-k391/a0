@@ -141,6 +141,31 @@ fn type_errors_are_reported_with_locations() {
             "operator `&` cannot be applied to `float`",
         ),
         (
+            "inline struct V { s: string }
+fn main() -> int { 0 }",
+            "E1015",
+            "inline struct `V` cannot hold `string` in its field `s`",
+        ),
+        (
+            "inline struct A { b: B }
+inline struct B { a: A }
+fn main() -> int { 0 }",
+            "E1016",
+            "inline struct `A` contains itself",
+        ),
+        (
+            "inline struct V { x: int }
+fn main() -> int { let v = new V { x: 1 }; v == v; 0 }",
+            "E2024",
+            "cannot be compared with `==`",
+        ),
+        (
+            "inline struct V { x: int }
+fn main() -> int { let v = new V { x: 1 }; v as any; 0 }",
+            "E2024",
+            "cannot be converted",
+        ),
+        (
             "fn main() -> int { break; 0 }",
             "E3001",
             "`break` outside of a loop",

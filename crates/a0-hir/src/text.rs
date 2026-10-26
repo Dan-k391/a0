@@ -214,7 +214,10 @@ impl<'a> TextParser<'a> {
             let tparams: Vec<&str> = tparams.iter().map(String::as_str).collect();
             match (self.kind(item), name) {
                 ("struct_decl", Some(n)) => {
-                    self.b.declare_generic_struct(&n, &tparams);
+                    let s = self.b.declare_generic_struct(&n, &tparams);
+                    if self.field(item, "inline").is_some() {
+                        self.b.set_struct_inline(s);
+                    }
                 }
                 ("enum_decl", Some(n)) => {
                     self.b.declare_generic_enum(&n, &tparams);

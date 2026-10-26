@@ -256,10 +256,15 @@ impl Printer<'_> {
                     .map(|(n, t)| format!("{}: {}", ident(n), self.ty(*t)))
                     .collect();
                 let name = format!("{}{}", ident(&def.name), params(&def.type_params));
+                let inline = if def.inline { "inline " } else { "" };
                 if fields.is_empty() {
-                    let _ = writeln!(self.out, "struct {name} {{}}");
+                    let _ = writeln!(self.out, "{inline}struct {name} {{}}");
                 } else {
-                    let _ = writeln!(self.out, "struct {name} {{ {} }}", fields.join(", "));
+                    let _ = writeln!(
+                        self.out,
+                        "{inline}struct {name} {{ {} }}",
+                        fields.join(", ")
+                    );
                 }
             }
             Item::Enum(e) => {

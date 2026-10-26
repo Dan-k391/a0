@@ -301,6 +301,8 @@ void a0_hir_report_fix(A0HirBuilder *b, const char *message, size_t len, uint32_
 /* Declarations, in any order. Type parameters are names; none for a plain item. */
 A0HirStruct a0_hir_declare_struct(A0HirBuilder *b, const char *name, size_t len,
                                   const A0Str *type_params, size_t type_param_count);
+/* Makes a struct inline: a value whose fields live where it is used (docs/hir.md). */
+void a0_hir_set_struct_inline(A0HirBuilder *b, A0HirStruct s);
 /* Returns the field's index. */
 uint32_t a0_hir_add_field(A0HirBuilder *b, A0HirStruct s, const char *name, size_t len,
                           A0HirType type);

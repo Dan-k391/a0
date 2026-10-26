@@ -84,12 +84,16 @@ pub(crate) struct VarData {
 }
 
 /// A source-level type, for debuggers.
+/// A field of a debug type: its name, type, and where it is: its byte offset and size (`None`:
+/// word `i`).
+pub(crate) type DebugField = (String, DebugType, Option<(u32, u32)>);
+
 #[derive(Clone)]
 pub(crate) struct DebugTypeData {
     pub kind: DebugKind,
     pub name: String,
     pub elems: Vec<DebugType>,
-    pub fields: Vec<(String, DebugType)>,
+    pub fields: Vec<DebugField>,
     pub variants: Vec<(String, Vec<DebugType>)>,
 }
 
@@ -405,8 +409,16 @@ impl Module {
     }
 
     pub fn debug_type_field(&self, t: DebugType, i: u32) -> (&str, DebugType) {
-        let (n, ty) = &self.debug_types[t.index()].fields[i as usize];
+        let (n, ty, _) = &self.debug_types[t.index()].fields[i as usize];
         (n, *ty)
+    }
+
+    /// Where field `i` of a struct's debug type is: its byte offset and size in bytes (a word at
+    /// `8 * i` unless the type said otherwise).
+    pub fn debug_type_field_place(&self, t: DebugType, i: u32) -> (u32, u32) {
+        self.debug_types[t.index()].fields[i as usize]
+            .2
+            .unwrap_or((8 * i, 8))
     }
 
     pub fn debug_type_variant_count(&self, t: DebugType) -> u32 {

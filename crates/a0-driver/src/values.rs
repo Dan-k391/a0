@@ -146,8 +146,14 @@ fn summary(m: &Module, w: u64, view: View, depth: u32) -> String {
         _ if w == 0 => "null".to_string(),
         DebugKind::Array if nested => format!("[…; {}]", word(w)),
         DebugKind::Map if nested => format!("{{…; {}}}", word(w)),
-        DebugKind::Struct if nested => format!("{} {{…}}", m.debug_type_name(t)),
-        DebugKind::Array | DebugKind::Map | DebugKind::Struct | DebugKind::Enum => {
+        DebugKind::Struct | DebugKind::Inline if nested => {
+            format!("{} {{…}}", m.debug_type_name(t))
+        }
+        DebugKind::Array
+        | DebugKind::Map
+        | DebugKind::Struct
+        | DebugKind::Inline
+        | DebugKind::Enum => {
             let items = parts(m, w, View::Typed(t));
             let shown: Vec<String> = items
                 .iter()
@@ -155,7 +161,7 @@ fn summary(m: &Module, w: u64, view: View, depth: u32) -> String {
                 .map(|(name, iw, iv)| {
                     let v = summary(m, *iw, *iv, depth + 1);
                     match m.debug_type_kind(t) {
-                        DebugKind::Struct => format!("{name}: {v}"),
+                        DebugKind::Struct | DebugKind::Inline => format!("{name}: {v}"),
                         DebugKind::Map => format!("{name}: {v}"),
                         _ => v,
                     }
@@ -165,7 +171,9 @@ fn summary(m: &Module, w: u64, view: View, depth: u32) -> String {
             match m.debug_type_kind(t) {
                 DebugKind::Array => format!("[{}{more}]", shown.join(", ")),
                 DebugKind::Map => format!("{{{}{more}}}", shown.join(", ")),
-                DebugKind::Struct => format!("{} {{ {} }}", m.debug_type_name(t), shown.join(", ")),
+                DebugKind::Struct | DebugKind::Inline => {
+                    format!("{} {{ {} }}", m.debug_type_name(t), shown.join(", "))
+                }
                 _ => {
                     let variant = variant_name(m, w, t);
                     if shown.is_empty() {
@@ -297,10 +305,29 @@ pub fn parts(m: &Module, w: u64, view: View) -> Vec<(String, u64, View)> {
                 })
                 .collect()
         }
-        DebugKind::Struct => (0..m.debug_type_field_count(t))
+        DebugKind::Struct | DebugKind::Inline => (0..m.debug_type_field_count(t))
             .map(|i| {
                 let (name, ft) = m.debug_type_field(t, i);
-                (name.to_string(), word(w + 8 * i as u64), View::Typed(ft))
+                let (offset, size) = m.debug_type_field_place(t, i);
+                let at = w + offset as u64;
+                // An inline struct in a field is its bytes there; anything else is read, and a
+                // narrow signed integer extended by its sign.
+                let v = match m.debug_type_kind(ft) {
+                    DebugKind::Inline => at,
+                    kind if size < 8 => {
+                        let mut le = [0u8; 8];
+                        le[..size as usize].copy_from_slice(&bytes(at, size as usize));
+                        let raw = u64::from_le_bytes(le);
+                        let shift = 64 - 8 * size;
+                        if kind == DebugKind::Int {
+                            (((raw << shift) as i64) >> shift) as u64
+                        } else {
+                            raw
+                        }
+                    }
+                    _ => word(at),
+                };
+                (name.to_string(), v, View::Typed(ft))
             })
             .collect(),
         DebugKind::Enum => {
@@ -348,16 +375,21 @@ fn elements(a: u64, elem: View) -> Vec<(String, u64, View)> {
     let len = word(a) as usize;
     let data = word(a + 16);
     // Elements of 1, 2 or 4 bytes (`A0_ELEM_BYTE`, `A0_ELEM_16`, `A0_ELEM_32`) or words.
-    let size: u64 = match word(a + 24) {
+    let kind = word(a + 24);
+    let size: u64 = match kind {
         ELEM_BYTE => 1,
         4 => 2,
         5 => 4,
+        // Inline structs (`A0_ELEM_BYTES` and their size): each element is its address.
+        k if k >= 16 => k - 16,
         _ => 8,
     };
     (0..len.min(SHOWN))
         .map(|i| {
             let at = data + size * i as u64;
-            let w = if size < 8 {
+            let w = if kind >= 16 {
+                at
+            } else if size < 8 {
                 let mut le = [0u8; 8];
                 le[..size as usize].copy_from_slice(&self::bytes(at, size as usize));
                 u64::from_le_bytes(le)

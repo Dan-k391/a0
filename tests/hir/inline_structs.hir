@@ -1,0 +1,112 @@
+// Inline structs: values whose fields live where they are used, copied when assigned, passed or
+// returned, laid out as C does. In locals, parameters, results, fields of objects, enum payloads,
+// arrays, globals and closures, with methods, generics and sized fields.
+// expect-stdout: copy 1 2, original 10 2
+// expect-stdout: callee 99, caller still 1
+// expect-stdout: made 3 4, sum 7
+// expect-stdout: nested 5 6 7
+// expect-stdout: in object 1 2 -> 30 2
+// expect-stdout: array 1 2 3 4 len 2 -> 1 50 3 4
+// expect-stdout: popped 3 4, len 1, filled 8 8 8
+// expect-stdout: closure 6 then 7
+// expect-stdout: generic 9 9
+// expect-stdout: enum 11 12
+// expect-stdout: global 0 0 -> 13 14
+// expect-stdout: method 25
+// expect-stdout: pixel 200 -5 1.5 true
+// expect-stdout: chosen 2
+// expect-stderr: panic: index out of bounds: the length is 1 but the index is 3
+// expect-stderr:     at main (tests/hir/inline_structs.hir:110:3)
+// expect-exit: 101
+module "inline_structs";
+
+inline struct Vec2 { x: int, y: int }
+inline struct Box3 { min: Vec2, z: int }
+inline struct Pixel { r: u8, g: i32, h: f32, on: bool }
+struct Holder { name: string, at: Vec2 }
+enum Shape { Dot(Vec2), Nothing }
+
+global origin: Vec2;
+
+impl Vec2 {
+  fn dot(self: Vec2, other: Vec2) -> int { self.x * other.x + self.y * other.y }
+}
+
+fn bump(v: Vec2) -> int {
+  v.x = 99;
+  v.x
+}
+
+fn make(a: int, b: int) -> Vec2 {
+  new Vec2 { x: a, y: b }
+}
+
+fn same<T>(v: T) -> T {
+  v
+}
+
+fn main() -> int {
+  let a = new Vec2 { x: 1, y: 2 };
+  let b = a;
+  a.x = 10;
+  print("copy " + str(b.x) + " " + str(b.y) + ", original " + str(a.x) + " " + str(a.y) + "\n");
+
+  let c = new Vec2 { x: 1, y: 0 };
+  let r = bump(c);
+  print("callee " + str(r) + ", caller still " + str(c.x) + "\n");
+
+  let d = make(3, 4);
+  print("made " + str(d.x) + " " + str(d.y) + ", sum " + str(d.x + make(3, 4).y) + "\n");
+
+  let e = new Box3 { min: new Vec2 { x: 5, y: 6 }, z: 7 };
+  print("nested " + str(e.min.x) + " " + str(e.min.y) + " " + str(e.z) + "\n");
+
+  let h = new Holder { name: "h", at: new Vec2 { x: 1, y: 2 } };
+  let before = h.at;
+  h.at.x = 30;
+  print("in object " + str(before.x) + " " + str(before.y) + " -> " + str(h.at.x) + " " + str(h.at.y) + "\n");
+
+  let vs = [new Vec2 { x: 1, y: 2 }, new Vec2 { x: 3, y: 4 }];
+  let first = vs[0];
+  vs[0].y = 50;
+  print("array " + str(first.x) + " " + str(first.y) + " " + str(vs[1].x) + " " + str(vs[1].y) + " len " + str(len(vs)) + " -> " + str(vs[0].x) + " " + str(vs[0].y) + " " + str(vs[1].x) + " " + str(vs[1].y) + "\n");
+
+  let p = pop(vs);
+  push(vs, new Vec2 { x: 0, y: 0 });
+  let full = filled(3, new Vec2 { x: 8, y: 8 });
+  print("popped " + str(p.x) + " " + str(p.y) + ", len " + str(len(vs) - 1) + ", filled " + str(full[0].x) + " " + str(full[1].y) + " " + str(full[2].x) + "\n");
+
+  let counter = new Vec2 { x: 5, y: 0 };
+  let tick = fn() -> int {
+    counter.x = counter.x + 1;
+    counter.x
+  };
+  let once = tick();
+  print("closure " + str(once) + " then " + str(tick()) + "\n");
+
+  let g = same(new Vec2 { x: 9, y: 9 });
+  print("generic " + str(g.x) + " " + str(g.y) + "\n");
+
+  let s = Shape::Dot(new Vec2 { x: 11, y: 12 });
+  match s {
+    Dot(v) => print("enum " + str(v.x) + " " + str(v.y) + "\n"),
+    Nothing => print("none\n"),
+  }
+
+  let g0 = origin;
+  origin = new Vec2 { x: 13, y: 14 };
+  print("global " + str(g0.x) + " " + str(g0.y) + " -> " + str(origin.x) + " " + str(origin.y) + "\n");
+
+  print("method " + str(make(3, 4).dot(make(3, 4))) + "\n");
+
+  let px = new Pixel { r: 200, g: -5, h: 1.5, on: true };
+  let copy = px;
+  print("pixel " + str(copy.r) + " " + str(copy.g) + " " + str(copy.h) + " " + str(copy.on) + "\n");
+
+  let chosen = if a.x > 5 { make(2, 0) } else { make(0, 2) };
+  print("chosen " + str(chosen.x) + "\n");
+
+  let small = [new Vec2 { x: 0, y: 0 }];
+  small[3];
+  0
+}

@@ -87,6 +87,9 @@ const A0Symbol a0_rt_symbols[] = {
     /* arrays */
     SYM(a0_array_new),
     SYM(a0_array_filled),
+    SYM(a0_array_push_bytes),
+    SYM(a0_array_pop_bytes),
+    SYM(a0_array_filled_bytes),
     SYM(a0_array_len),
     SYM(a0_array_get),
     SYM(a0_array_set),

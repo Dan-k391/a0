@@ -62,6 +62,8 @@ enum Ty {
     Obj,
     Map,
     Rec,
+    /// `P`, an inline struct: a value, copied when assigned, passed or returned.
+    Pt,
     Opt,
     Shape,
     Fun,
@@ -71,8 +73,8 @@ enum Ty {
 use Ty::*;
 
 /// The types of parameters, results and locals.
-const VALUES: [Ty; 15] = [
-    Int, U8, I32, Bool, Float, Str, Any, Arr, Flags, Obj, Map, Rec, Opt, Shape, Fun,
+const VALUES: [Ty; 16] = [
+    Int, U8, I32, Bool, Float, Str, Any, Arr, Flags, Obj, Map, Rec, Pt, Opt, Shape, Fun,
 ];
 
 impl Ty {
@@ -90,6 +92,7 @@ impl Ty {
             Obj => "object",
             Map => "map<string, int>",
             Rec => "R",
+            Pt => "P",
             Opt => "R?",
             Shape => "Shape",
             Fun => "fn(int) -> int",
@@ -102,6 +105,7 @@ impl Ty {
 const PRELUDE: &str = r#"module "random";
 
 struct R { n: int, s: string }
+inline struct P { a: int, b: u8 }
 enum Shape { Dot, Num(int), Txt(string) }
 interface Sized { fn size(self) -> int; fn twice(self) -> int; }
 
@@ -254,6 +258,7 @@ fn show(ty: Ty, name: &str) -> String {
         Obj => format!("show_obj({name})"),
         Map => format!("show_map({name})"),
         Rec | Opt => format!("show_opt({name})"),
+        Pt => format!("\"P\" + str({name}.a) + \"/\" + str({name}.b)"),
         Shape => format!("show_shape({name})"),
         Fun => format!("str({name}(5))"),
         Unit => "\"()\"".to_string(),
@@ -393,6 +398,9 @@ impl Gen {
                 .to_string(),
             Obj => r.pick(&["new object", "obj(3)", "obj(-1)"]).to_string(),
             Map => "new map<string, int>".to_string(),
+            Pt => r
+                .pick(&["new P { a: 1, b: 2 }", "new P { a: -3, b: 255 }"])
+                .to_string(),
             Rec => r
                 .pick(&["new R { n: 1, s: \"r\" }", "new R { n: -4, s: \"\" }"])
                 .to_string(),
@@ -501,6 +509,7 @@ impl Gen {
                     format!("({} as int)", self.expr(of, ctx, d))
                 }
                 5 => format!("note({})", self.expr(Int, ctx, d)),
+                6 if self.rng.chance(50) => format!("({}).a", self.expr(Pt, ctx, d)),
                 6 => format!("({}).n", self.expr(Rec, ctx, d)),
                 7 => format!("({} as int)", self.expr(Float, ctx, d)),
                 8 => {
@@ -678,6 +687,11 @@ impl Gen {
                 "new R {{ n: {}, s: {} }}",
                 self.expr(Int, ctx, d),
                 self.expr(Str, ctx, d)
+            ),
+            Pt => format!(
+                "new P {{ a: {}, b: {} }}",
+                self.expr(Int, ctx, d),
+                self.expr(U8, ctx, d)
             ),
             Opt => format!("({} as R?)", self.expr(Rec, ctx, d)),
             Shape => match self.rng.below(3) {
@@ -888,6 +902,19 @@ impl Gen {
                     };
                 }
                 11 => {
+                    // A field of an inline local: the local's own copy changes, no other.
+                    let points = self.locals_of(ctx, Pt, false);
+                    if !points.is_empty() && self.rng.chance(40) {
+                        let p = self
+                            .rng
+                            .pick(&points.iter().map(String::as_str).collect::<Vec<_>>())
+                            .to_string();
+                        return if self.rng.chance(50) {
+                            format!("{p}.a = {};", self.expr(Int, ctx, e))
+                        } else {
+                            format!("{p}.b = {};", self.expr(U8, ctx, e))
+                        };
+                    }
                     let maps = self.locals_of(ctx, Map, false);
                     if maps.is_empty() {
                         continue;
@@ -958,7 +985,11 @@ impl Gen {
                 }
                 16 if ctx.in_try => {
                     let c = self.expr(Bool, ctx, 1);
-                    let ty = self.rng.pick(&VALUES);
+                    // Anything but an inline value, which an `any` cannot hold.
+                    let ty = match self.rng.pick(&VALUES) {
+                        Pt => Int,
+                        ty => ty,
+                    };
                     let v = self.expr(ty, ctx, 2);
                     return format!("if {c} {{ throw {v}; }}");
                 }
@@ -1299,6 +1330,8 @@ fn the_generator_is_deterministic_and_varied() {
     // The default run (24 seeds) uses what lowering learned recently.
     let programs: Vec<String> = (0..24).map(generate).collect();
     for feature in [
+        ": P",
+        ".a = ",
         "filled(",
         "array<bool>",
         "fset(",

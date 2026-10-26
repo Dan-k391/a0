@@ -181,6 +181,7 @@ pub const KEYWORDS: &[&str] = &[
     "field_names",
     "shl",
     "shr",
+    "inline",
 ];
 
 /// A name as the text format writes it: as is if it is an identifier and not a keyword, otherwise
@@ -333,6 +334,7 @@ impl HirBuilder {
         self.check_bounds();
         self.build_vtables();
         self.report_value_nullables();
+        self.check_inline_structs();
         let warnings = self.find_warnings();
         let mut diags = self.diags;
         diags.extend(check(&mut self.m));
@@ -515,6 +517,74 @@ impl HirBuilder {
     }
 
     /// Reports `T?` where inference made `T` a value type (`let x = null; x = 5;`).
+    /// Inline structs hold only numbers, booleans and inline structs, and never themselves.
+    fn check_inline_structs(&mut self) {
+        for i in 0..self.m.structs.len() {
+            let def = self.m.structs[i].clone();
+            if !def.inline {
+                continue;
+            }
+            let span = def.span;
+            if !def.type_params.is_empty() {
+                let p = Problem::new(
+                    code::INLINE_FIELD,
+                    format!("inline struct `{}` cannot take type parameters", def.name),
+                )
+                .label("inline");
+                self.problem_at(span, &p);
+                continue;
+            }
+            for (k, (name, t)) in def.fields.iter().enumerate() {
+                if !self.plain_data(*t) {
+                    let p = Problem::new(
+                        code::INLINE_FIELD,
+                        format!(
+                            "inline struct `{}` cannot hold {} in its field `{name}`",
+                            def.name,
+                            self.m.quote_type(*t)
+                        ),
+                    )
+                    .label("not a number, a boolean or an inline struct");
+                    self.problem_at(def.field_spans.get(k).copied().flatten().or(span), &p);
+                }
+            }
+            if self.contains_inline(StructId(i as u32), StructId(i as u32), &mut Vec::new()) {
+                let p = Problem::new(
+                    code::INLINE_CYCLE,
+                    format!("inline struct `{}` contains itself", def.name),
+                )
+                .label("would have no end");
+                self.problem_at(span, &p);
+            }
+        }
+    }
+
+    /// Whether `t` is plain data an inline struct can hold.
+    fn plain_data(&self, t: TypeId) -> bool {
+        matches!(
+            self.m.kind(t),
+            TypeKind::Int
+                | TypeKind::Float
+                | TypeKind::Bool
+                | TypeKind::SizedInt(..)
+                | TypeKind::F32
+                | TypeKind::Error
+        ) || self.m.inline_struct(t).is_some()
+    }
+
+    /// Whether the inline struct `s` holds `target` inline, at any depth.
+    fn contains_inline(&self, s: StructId, target: StructId, seen: &mut Vec<StructId>) -> bool {
+        if seen.contains(&s) {
+            return false;
+        }
+        seen.push(s);
+        self.m.structs[s.index()].fields.iter().any(|&(_, t)| {
+            self.m
+                .inline_struct(t)
+                .is_some_and(|f| f == target || self.contains_inline(f, target, seen))
+        })
+    }
+
     fn report_value_nullables(&mut self) {
         let mut reported = HashSet::new();
         for i in 0..self.m.exprs.len() {
@@ -776,6 +846,7 @@ impl HirBuilder {
         let type_params = self.type_param_names(type_params);
         self.m.structs.push(StructDef {
             name: self.qualified(name),
+            inline: false,
             type_params,
             fields: Vec::new(),
             field_spans: Vec::new(),
@@ -783,6 +854,13 @@ impl HirBuilder {
         });
         self.add_type_name(name, Item::Struct(s));
         s
+    }
+
+    /// Makes a struct inline (D70): a value whose fields live where it is used, in a variable, a
+    /// field or an array element, copied when assigned or passed, laid out as C lays out a struct.
+    /// It holds only numbers, booleans and other inline structs, and takes no type parameters.
+    pub fn set_struct_inline(&mut self, s: StructId) {
+        self.m.structs[s.index()].inline = true;
     }
 
     pub fn add_field(&mut self, s: StructId, name: &str, ty: TypeId) -> u32 {
@@ -2118,11 +2196,14 @@ pub(crate) fn infer(m: &mut HirModule, kind: &ExprKind, hint: TypeId) -> Typed {
             hint
         }
         ExprKind::NewMap => {
-            if !matches!(m.kind(hint), TypeKind::Map(..)) {
+            let TypeKind::Map(_, v) = *m.kind(hint) else {
                 return fail(Problem::new(
                     "hir.builder",
                     format!("new map needs a map type, not `{}`", m.display_type(hint)),
                 ));
+            };
+            if m.inline_struct(v).is_some() {
+                return fail(inline_value(m, v, "a map's value"));
             }
             hint
         }
@@ -2137,6 +2218,9 @@ pub(crate) fn infer(m: &mut HirModule, kind: &ExprKind, hint: TypeId) -> Typed {
             let from = ty(m, *e);
             if matches!(m.kind(from), TypeKind::Var(_)) {
                 return Err(TypeErr::Open(*e));
+            }
+            if m.inline_struct(from).is_some() && !m.same(from, hint) {
+                return Err(TypeErr::At(Some(*e), inline_value(m, from, "converted")));
             }
             if !cast_allowed(m, from, hint) {
                 return fail(Problem::new(
@@ -2244,7 +2328,14 @@ pub(crate) fn infer(m: &mut HirModule, kind: &ExprKind, hint: TypeId) -> Typed {
             interface_call_type(m, *i, *k, args)?
         }
         // Lowering boxes the value, whose type `finish` requires to be known like every other.
-        ExprKind::Throw(_) => TypeId::NEVER,
+        ExprKind::Throw(v) => {
+            // What is thrown is held as an `any`.
+            let vt = ty(m, *v);
+            if m.inline_struct(vt).is_some() {
+                return Err(TypeErr::At(Some(*v), inline_value(m, vt, "thrown")));
+            }
+            TypeId::NEVER
+        }
         ExprKind::Try(body, local, handler) => {
             let lt = m.local_type(*local);
             if !m.unify(lt, TypeId::ANY) {
@@ -2484,6 +2575,12 @@ fn binary_type(m: &mut HirModule, op: BinOp, a: ExprId, b: ExprId) -> Typed {
             Adapt::No => (ta, tb),
         },
     };
+    if matches!(op, BinOp::Eq | BinOp::Ne) && m.inline_struct(ta).is_some() {
+        return Err(TypeErr::At(
+            Some(a),
+            inline_value(m, ta, "compared with `==`"),
+        ));
+    }
     if matches!(op, BinOp::Eq | BinOp::Ne) {
         // Either side may be the nullable one: `x == null`.
         let p = mismatch(m, ta, tb).at(a_span, left(m));
@@ -2525,6 +2622,18 @@ fn binary_type(m: &mut HirModule, op: BinOp, a: ExprId, b: ExprId) -> Typed {
     } else {
         m.shallow(t)
     })
+}
+
+/// Something an inline value cannot do (E2024).
+fn inline_value(m: &HirModule, t: TypeId, what: &str) -> Box<Problem> {
+    Problem::new(
+        code::INLINE_VALUE,
+        format!(
+            "a value of the inline struct {} cannot be {what}",
+            m.quote_type(t)
+        ),
+    )
+    .label("inline")
 }
 
 fn bad_operand(m: &HirModule, op: &str, t: TypeId) -> Box<Problem> {
@@ -2721,6 +2830,15 @@ fn builtin_type(m: &mut HirModule, op: Builtin, args: &[ExprId]) -> Typed {
             expect(m, args[0], TypeId::OBJECT)?;
             if op != Builtin::FieldNames {
                 expect(m, args[1], TypeId::STRING)?;
+            }
+            if op == Builtin::SetField {
+                let vt = m.expr_type(args[2]);
+                if m.inline_struct(vt).is_some() {
+                    return Err(TypeErr::At(
+                        Some(args[2]),
+                        inline_value(m, vt, "a field's value"),
+                    ));
+                }
             }
             match op {
                 Builtin::HasField => TypeId::BOOL,
