@@ -66,8 +66,13 @@ def module(i, imports):
     w(f"pub fn check{i}() -> int {{")
     w(f"  let item = make{i}({i});")
     w(f"  let sum = len(describe{i}(item)) + f{i}_{FUNCS_PER_MODULE - 1}({i % 11});")
-    for j in imports:
-        w(f"  sum = sum + m{j}.check{j}() % 7;")
+    # One import's check, so that the calls reach every module once; the others are called into
+    # (calling every import's check would make the calls grow exponentially with the modules).
+    for n, j in enumerate(imports):
+        if n == 0:
+            w(f"  sum = sum + m{j}.check{j}() % 7;")
+        else:
+            w(f"  sum = sum + m{j}.f{j}_0({i}) % 7;")
     w(f"  return sum % 1000;")
     w(f"}}")
     return "\n".join(out) + "\n"

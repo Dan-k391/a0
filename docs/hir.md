@@ -103,7 +103,7 @@ the sub-expression they are about, in source terms (`mismatched types: expected 
 ## Module
 
 ```
-module "example";
+module "example" version 1;
 
 struct Point { x: float, y: float }
 enum Shape { Circle(float), Rect(float, float), Empty }
@@ -136,6 +136,10 @@ fn main() -> int {
   0
 }
 ```
+
+`version 1` names the version of the text format (`docs/compatibility.md`); it is optional, 1 when
+absent, and the printer always writes it. A0 1.x reads version 1 and refuses a later one with
+`E0004`.
 
 - `global` variables start at the zero value of their type (`0`, `0.0`, `false`, `()`, and `()` for
   `any`); one of reference type must be nullable and starts as `null`.

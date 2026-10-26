@@ -463,11 +463,7 @@ fn emitted_hir_round_trips_through_text() {
     for f in programs() {
         // Through the driver's loader, so programs of several files are one module too.
         let mut sm = SourceMap::new();
-        let modules = a0_driver::Modules {
-            extension: "mn",
-            start: minnow::start,
-            compile: minnow::compile_file,
-        };
+        let modules = a0_driver::Modules::new("mn", minnow::start, minnow::compile_file);
         let root = f.to_string_lossy().into_owned();
         let mut read = |p: &Path| std::fs::read_to_string(p).ok();
         let program = a0_driver::program::load(
@@ -507,11 +503,7 @@ fn cached_trees_load_the_same_program() {
         "pub fn twice(x: int) -> int {\n  return \"twice\";\n}\n",
     )
     .unwrap();
-    let modules = a0_driver::Modules {
-        extension: "mn",
-        start: minnow::start,
-        compile: minnow::compile_file,
-    };
+    let modules = a0_driver::Modules::new("mn", minnow::start, minnow::compile_file);
     let grammar = minnow::grammar();
     let root = dir.join("main.mn").to_string_lossy().into_owned();
     let mut cache = a0_driver::program::TreeCache::default();

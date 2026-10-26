@@ -2,7 +2,7 @@
 
 Every language built with `a0-driver` has a language server: `lang lsp` speaks the Language Server
 Protocol on stdin and stdout. A language needs no code for it. It passes its grammar to the driver
-(`Language { grammar: Some(GRAMMAR), .. }`) and marks declarations and scopes in the grammar with
+(`Language::new(name, compile).grammar(GRAMMAR)`) and marks declarations and scopes in the grammar with
 `@def` and `@scope` (`docs/grammar.md`).
 
 | Feature | Where it comes from |

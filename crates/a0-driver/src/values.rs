@@ -6,6 +6,7 @@ use a0_ir::{DebugKind, DebugType, Module, Type};
 
 /// How to read a word.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum View {
     Typed(DebugType),
     /// A dynamic value (`any`).

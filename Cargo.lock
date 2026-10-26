@@ -500,9 +500,7 @@ dependencies = [
  "a0-diag",
  "a0-driver",
  "a0-hir",
- "a0-interp",
  "a0-ir",
- "a0-native",
  "a0-runtime",
  "a0-syntax",
 ]
@@ -751,7 +749,6 @@ dependencies = [
  "a0-diag",
  "a0-driver",
  "a0-hir",
- "a0-interp",
  "a0-native",
  "a0-runtime",
  "a0-syntax",

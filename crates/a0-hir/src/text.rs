@@ -200,6 +200,19 @@ impl<'a> TextParser<'a> {
 
     /// Builds the items of the module; returns the problems with the text.
     fn module(mut self, root: NodeId) -> Diagnostics {
+        if let Some(v) = self.field(root, "version") {
+            let version: u64 = self.text(v).parse().unwrap_or(u64::MAX);
+            if version != u64::from(crate::FORMAT_VERSION) {
+                let span = self.tree.span(v);
+                return a0_diag::Diagnostic::newer_format(
+                    "module",
+                    version,
+                    crate::FORMAT_VERSION,
+                    span,
+                )
+                .into();
+            }
+        }
         if let Some(decl) = self.field(root, "memory") {
             let mode = self.field(decl, "mode").map(|n| self.text(n).to_string());
             match mode.as_deref().and_then(Memory::from_name) {

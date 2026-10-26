@@ -26,6 +26,7 @@ members = [
 version = "0.9.0"
 edition = "2024"
 license = "MIT"
+rust-version = "1.97"
 repository = "https://github.com/Dan-k391/a0"
 
 [workspace.dependencies]

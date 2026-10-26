@@ -299,7 +299,7 @@ fn build(args: &[String], executable: bool) -> ExitCode {
     };
     let mut sources = SourceMap::new();
     let options = if args.debug_info {
-        a0_hir::LowerOptions { optimize: false }
+        a0_hir::LowerOptions::optimized(false)
     } else {
         a0_hir::LowerOptions::default()
     };

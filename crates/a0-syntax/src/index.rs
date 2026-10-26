@@ -18,6 +18,9 @@ use crate::tree::{NodeId, SyntaxTree};
 /// What a token is, for highlighting.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[repr(u32)]
+///
+/// A minor release may add variants (`docs/compatibility.md`): code outside A0 matches it with
+/// a `_` arm. A0 itself matches it exhaustively, so that nothing misses a new one.
 pub enum TokenClass {
     /// A literal token that looks like a word (`while`, `fun`).
     Keyword,
@@ -34,6 +37,7 @@ pub enum TokenClass {
 
 /// A token of an indexed file. `start..end` are byte offsets.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct IndexedToken {
     pub start: u32,
     pub end: u32,

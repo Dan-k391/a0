@@ -28,6 +28,7 @@ impl TypeId {
 /// The shape of a type.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[repr(u8)]
+#[non_exhaustive]
 pub enum TypeTag {
     /// A type known by name only: `int`, `string`, ... Equal names are the same type.
     Named,

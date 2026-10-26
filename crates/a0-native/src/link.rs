@@ -10,11 +10,23 @@ use a0_target::{LinkerFlavor, Target};
 
 /// A static library to link into an executable, for example a language's own C runtime.
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub struct Library {
     /// A file-name-friendly name (no extension).
     pub name: String,
     /// The library file's contents, built for the target.
     pub bytes: Vec<u8>,
+}
+
+impl Library {
+    /// A static library named `name` (no extension) with the contents `bytes`, as
+    /// `a0_build::runtime_library` embeds it.
+    pub fn new(name: &str, bytes: &[u8]) -> Library {
+        Library {
+            name: name.to_string(),
+            bytes: bytes.to_vec(),
+        }
+    }
 }
 
 #[derive(Clone, Debug)]

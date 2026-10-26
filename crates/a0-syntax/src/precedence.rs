@@ -7,6 +7,7 @@
 /// A reference to an operand of a [`Combine`] step: an original operand (`is_step == false`) or the
 /// result of an earlier step.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct Operand {
     pub index: u32,
     pub is_step: bool,
@@ -30,6 +31,7 @@ impl Operand {
 
 /// One binary operation: `left op right`, where `op` indexes the chain's operators.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct Combine {
     pub left: Operand,
     pub op: u32,

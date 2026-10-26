@@ -4,6 +4,7 @@ description = "WebAssembly from A0's core IR: modules that link against A0's run
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+rust-version.workspace = true
 
 [dependencies]
 a0-diag.workspace = true

@@ -1,4 +1,4 @@
-module "all ops"
+module "all ops" version 1
 
 data @greeting = "Hello, \"world\"\\\0a\00"
 

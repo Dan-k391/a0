@@ -11,6 +11,7 @@
 
 /// One code and what it means.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct CodeInfo {
     pub code: &'static str,
     /// A short description, as in the codes' list.
@@ -37,6 +38,8 @@ codes! {
         "These characters do not form any token of the language, for example an unknown symbol or a string that is never closed.";
     TOO_DEEP = "E0003", "nested too deeply",
         "The program nests deeper than the compiler goes: expressions inside expressions or blocks inside blocks, more than 10,000 levels (in a long chain of operators, each operator is a level). Name intermediate results with variables, or move inner parts into functions of their own.";
+    NEWER_FORMAT = "E0004", "written for a newer A0",
+        "The text says it is in a later version of its format than this A0 reads: a module of HIR or core IR text (`module \"m\" version 2;`) or a grammar (`grammar g version 2;`). Each A0 1.x reads version 1 of every format, which is also what text without a version is. Use the newer A0 that wrote the text, or write it in the version this one reads.";
 
     UNKNOWN_NAME = "E1001", "unknown name",
         "The name is not declared where it is used: no variable, function or global of that name is in scope. It may be misspelled, declared later in an inner block, or declared in a block that has ended.";

@@ -52,9 +52,17 @@ const KEY_BOOL: i64 = 2;
 
 /// How to lower a module.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct LowerOptions {
     /// Run the HIR optimizer (`opt.rs`) first.
     pub optimize: bool,
+}
+
+impl LowerOptions {
+    /// Options with the HIR optimizer on or off, whatever `A0_OPT` says.
+    pub fn optimized(optimize: bool) -> LowerOptions {
+        LowerOptions { optimize }
+    }
 }
 
 impl Default for LowerOptions {

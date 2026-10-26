@@ -378,3 +378,16 @@ fn nesting_too_deep_is_reported() {
         .join()
         .unwrap();
 }
+
+#[test]
+fn grammars_name_their_format_version() {
+    grammar("grammar g version 1;\nstart = \"x\";\n");
+    grammar("grammar g;\nstart = \"x\";\n");
+    let mut sm = SourceMap::new();
+    let text = "grammar g version 2;\nstart = \"x\";\n";
+    let id = sm.add("test.a0g", text);
+    let e = Grammar::from_str(text, id).err().unwrap().render(&sm);
+    assert!(e.contains("[E0004]") && e.contains("version 2"), "{e}");
+    let e = grammar_errors("grammar g version x;\nstart = \"x\";\n");
+    assert!(e.contains("expected the format version"), "{e}");
+}

@@ -247,10 +247,7 @@ impl HirBuilder {
     /// Points the last error reported at a related location, such as an earlier declaration.
     pub fn report_label(&mut self, span: Span, message: &str) {
         if let Some(d) = self.diags.last_mut() {
-            d.labels.push(a0_diag::Label {
-                span,
-                message: message.to_string(),
-            });
+            d.labels.push(a0_diag::Label::new(span, message));
         }
     }
 

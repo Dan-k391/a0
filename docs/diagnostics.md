@@ -50,6 +50,7 @@ list matches it.
 | E0001 | syntax error |
 | E0002 | invalid token |
 | E0003 | nested too deeply |
+| E0004 | written for a newer A0 |
 | E1001 | unknown name |
 | E1002 | unknown type |
 | E1003 | unknown field |
@@ -107,7 +108,7 @@ Problems only a language's own code can cause keep descriptive codes, since they
 language rather than errors in a program: `hir.builder` (the builder was misused), `hir.check` and
 `hir.tree` (a malformed module), `ir.*`, `native.*`, `grammar.*`.
 
-A language chooses how codes are shown with `Language { codes, .. }`: `Codes::A0`, `Codes::Hidden`,
+A language chooses how codes are shown with `Language::codes`: `Codes::A0`, `Codes::Hidden`,
 or `Codes::Own(map)`, a function from A0's code to the language's (`None` hides one); `explain` then
 takes the language's codes. The language server shows the same codes.
 

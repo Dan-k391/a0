@@ -214,6 +214,9 @@ impl SourceMap {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 #[repr(u8)]
+///
+/// A minor release may add variants (`docs/compatibility.md`): code outside A0 matches it with
+/// a `_` arm. A0 itself matches it exhaustively, so that nothing misses a new one.
 pub enum Severity {
     Error,
     Warning,
@@ -232,20 +235,41 @@ impl Severity {
 
 /// A secondary span with its own message: a related location, such as an earlier definition.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct Label {
     pub span: Span,
     pub message: String,
 }
 
+impl Label {
+    pub fn new(span: Span, message: &str) -> Label {
+        Label {
+            span,
+            message: message.to_string(),
+        }
+    }
+}
+
 /// A change to the source: replace `span` with `text` (insert when the span is empty).
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct Edit {
     pub span: Span,
     pub text: String,
 }
 
+impl Edit {
+    pub fn new(span: Span, text: &str) -> Edit {
+        Edit {
+            span,
+            text: text.to_string(),
+        }
+    }
+}
+
 /// A suggested fix: edits that together resolve a diagnostic, which editors offer as a quick fix.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct Fix {
     /// What the fix does, as in "a local with a similar name exists".
     pub message: String,
@@ -258,6 +282,7 @@ pub struct Fix {
 /// text, and `label` says what is wrong at `span` itself. `labels` point at related locations,
 /// `notes` and `helps` add explanations, and `fixes` suggest edits.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct Diagnostic {
     pub severity: Severity,
     pub code: String,
@@ -292,6 +317,23 @@ impl Diagnostic {
 
     pub fn warning(code: &str, message: &str) -> Diagnostic {
         Diagnostic::new(Severity::Warning, code, message)
+    }
+
+    /// `E0004`: a text (`what`: "grammar", "module") in `version` of its format, which this A0,
+    /// reading `reads`, does not read. `span` is the version number.
+    pub fn newer_format(what: &str, version: u64, reads: u32, span: Span) -> Diagnostic {
+        Diagnostic::error(
+            codes::NEWER_FORMAT,
+            &format!(
+                "this {what} is in version {version} of its format, which this A0 does not read"
+            ),
+        )
+        .with_span(span)
+        .with_primary_label(&format!("version {version}"))
+        .with_note(&format!(
+            "A0 {} reads version {reads}; text without a version is version 1",
+            env!("CARGO_PKG_VERSION")
+        ))
     }
 
     pub fn with_span(mut self, span: Span) -> Diagnostic {

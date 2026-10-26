@@ -3,6 +3,9 @@
 /// The type of an IR value.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[repr(u8)]
+///
+/// A minor release may add variants (`docs/compatibility.md`): code outside A0 matches it with
+/// a `_` arm. A0's backends match it exhaustively, so that none misses a new one.
 pub enum Type {
     I1,
     I8,
@@ -194,6 +197,9 @@ macro_rules! opcodes {
         /// Instruction opcode. See `docs/ir.md` for the meaning of each.
         #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
         #[repr(u8)]
+        ///
+        /// A minor release may add variants (`docs/compatibility.md`): code outside A0 matches it with
+        /// a `_` arm. A0's backends match it exhaustively, so that none misses a new one.
         pub enum Opcode {
             $($variant,)*
         }
@@ -223,6 +229,9 @@ macro_rules! opcodes {
 /// function's struct result goes (the function then returns nothing in the IR).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[repr(u8)]
+///
+/// A minor release may add variants (`docs/compatibility.md`): code outside A0 matches it with
+/// a `_` arm. A0's backends match it exhaustively, so that none misses a new one.
 pub enum StructPass {
     ByValue,
     Result,
@@ -246,6 +255,7 @@ impl StructPass {
 /// A C struct's layout: its size and alignment, and its scalar fields with their offsets (nested
 /// structs flattened), which is what a C ABI looks at.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub struct CStruct {
     pub size: u32,
     pub align: u32,
@@ -444,6 +454,9 @@ entity!(
 /// them: references are pointers to the runtime's objects.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[repr(u8)]
+///
+/// A minor release may add variants (`docs/compatibility.md`): code outside A0 matches it with
+/// a `_` arm. A0's backends match it exhaustively, so that none misses a new one.
 pub enum DebugKind {
     Int,
     Float,
@@ -537,6 +550,7 @@ pub enum SymbolKind {
 
 /// A reference to a module item by kind and index.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub struct Symbol {
     pub kind: SymbolKind,
     pub index: u32,

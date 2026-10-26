@@ -4,6 +4,7 @@ description = "Tin, a small C-like systems language built on A0"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+rust-version.workspace = true
 build = "build.rs"
 
 [dependencies]
@@ -11,9 +12,11 @@ a0-driver.workspace = true
 a0-diag.workspace = true
 a0-hir.workspace = true
 a0-syntax.workspace = true
-a0-interp.workspace = true
-a0-native.workspace = true
+# Only for its C header, which a0-build compiles the runtime against (docs/runtime.md).
 a0-runtime.workspace = true
+
+[dev-dependencies]
+a0-native.workspace = true
 
 [build-dependencies]
 a0-build.workspace = true

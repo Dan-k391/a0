@@ -7,37 +7,24 @@
 use std::process::ExitCode;
 
 use a0_diag::Span;
-use a0_driver::{Codes, CompileError, ExitCodes, Language, Message, Program};
+use a0_driver::{CompileError, ExitCodes, Language, Message, Program};
 
 fn main() -> ExitCode {
-    Language {
-        name: "lox",
-        compile: |text, source| match lox::compile_hir(text) {
-            Ok(m) => Ok(Program::Hir(m)),
-            Err(errors) => Err(CompileError::Messages(
-                errors
-                    .iter()
-                    .map(|e| {
-                        let span = Span::new(source, e.offset, e.end);
-                        Message::new(&e.to_string(), Some(span))
-                    })
-                    .collect(),
-            )),
-        },
-        // The BSD sysexits codes jlox uses: EX_USAGE, EX_NOINPUT, EX_DATAERR.
-        exit_codes: ExitCodes {
-            usage: 64,
-            io: 66,
-            compile: lox::EXIT_COMPILE_ERROR,
-            internal: 1,
-        },
-        run_by_default: true,
-        host_symbols: None,
-        libraries: None,
-        grammar: Some(lox::GRAMMAR),
-        codes: Codes::A0,
-        modules: None,
-        repl_main: None,
-    }
+    Language::new("lox", |text, source| match lox::compile_hir(text) {
+        Ok(m) => Ok(Program::Hir(m)),
+        Err(errors) => Err(CompileError::Messages(
+            errors
+                .iter()
+                .map(|e| {
+                    let span = Span::new(source, e.offset, e.end);
+                    Message::new(&e.to_string(), Some(span))
+                })
+                .collect(),
+        )),
+    })
+    // The BSD sysexits codes jlox uses: EX_USAGE, EX_NOINPUT, EX_DATAERR.
+    .exit_codes(ExitCodes::new(64, 66, lox::EXIT_COMPILE_ERROR, 1))
+    .run_by_default()
+    .grammar(lox::GRAMMAR)
     .main()
 }

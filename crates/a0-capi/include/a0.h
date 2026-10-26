@@ -21,6 +21,22 @@
 extern "C" {
 #endif
 
+/* The version of this header (docs/compatibility.md). A library of the same major version and at
+ * least this minor version provides everything declared here: compare with a0_version(). */
+#define A0_VERSION_MAJOR 0
+#define A0_VERSION_MINOR 9
+#define A0_VERSION_PATCH 0
+
+/* Marks a declaration deprecated: it keeps working until the next major version, and compilers
+ * warn where it is used, with the message naming its replacement. */
+#if defined(__GNUC__) || defined(__clang__)
+#define A0_DEPRECATED(message) __attribute__((deprecated(message)))
+#elif defined(_MSC_VER)
+#define A0_DEPRECATED(message) __declspec(deprecated(message))
+#else
+#define A0_DEPRECATED(message)
+#endif
+
 #define A0_STR(s) (s), (sizeof(s) - 1)
 #define A0_NONE UINT32_MAX
 
@@ -50,7 +66,7 @@ typedef enum A0Type {
     A0_PTR = 8
 } A0Type;
 
-/* The library's version, NUL-terminated. */
+/* The library's version, NUL-terminated: "major.minor.patch", as A0_VERSION_* name the header's. */
 const char *a0_version(void);
 
 /* ---- Diagnostics -------------------------------------------------------------------------- */

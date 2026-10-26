@@ -6,6 +6,32 @@ APIs. `docs/milestones.md` has the details of each step, with measurements.
 
 ## [Unreleased]
 
+### Added
+
+- **A compatibility promise** for 1.0 (`docs/compatibility.md`, D86): what is covered (the command
+  line, the text formats, the C header, the Python package, the Rust API for languages, the part of
+  `a0rt.h` in the new `docs/runtime.md`), the rules for each, and how things are deprecated.
+- **Versioned text formats**: `module "m" version 1;` (HIR), `module "m" version 1` (core IR) and
+  `grammar g version 1;`, optional and 1 when absent; HIR and IR are printed with it. A later
+  version is refused with the new code `E0004`. `a0_hir::FORMAT_VERSION`, `a0_ir::FORMAT_VERSION`,
+  `a0_syntax::FORMAT_VERSION`.
+- `a0_driver::backend` re-exports what a language with a C runtime needs (`Library`,
+  `HostSymbols`, `A0Symbol`); `Library::new`.
+- `A0_VERSION_MAJOR`, `A0_VERSION_MINOR`, `A0_VERSION_PATCH` and `A0_DEPRECATED` in `a0.h`;
+  `a0.__version__` in Python, which checks the library's version when imported.
+- `rust-version` (1.97, what Cranelift needs) in every crate.
+
+### Changed
+
+- `Language` is built with `Language::new(name, compile)` and methods (`grammar`, `modules`,
+  `repl_main`, `codes`, `exit_codes`, `run_by_default`, `runtime`) instead of a struct literal;
+  `Modules::new`, `ExitCodes::new`, `LowerOptions::optimized`, `Label::new` and `Edit::new` replace
+  theirs. Public enums and structs that may grow are `#[non_exhaustive]`; the core IR's opcodes
+  and types, and a few other enums A0 matches exhaustively, say in their documentation that they
+  may grow.
+- Kaleidoscope and Tin depend only on covered crates (and `a0-runtime` for its header).
+- `bench/large/gen.py` makes a program whose run time is linear in its modules.
+
 ## [0.9.0] - 2026-10-26
 
 Large programs and ecosystems: packages with dependencies, fast builds of large programs, a fast

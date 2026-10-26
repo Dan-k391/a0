@@ -331,7 +331,7 @@ fn hir_text(text: &str) -> Result<(), String> {
         return Err("printed HIR does not print back the same".to_string());
     }
     for optimize in [true, false] {
-        match a0_hir::lower_with(&m, a0_hir::LowerOptions { optimize }) {
+        match a0_hir::lower_with(&m, a0_hir::LowerOptions::optimized(optimize)) {
             Ok(ir) => {
                 reached(1);
                 codegen(&ir)?

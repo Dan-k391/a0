@@ -4,6 +4,7 @@ description = "A0 frontend: grammars, lexing, parsing into syntax trees, syntax 
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+rust-version.workspace = true
 
 [dependencies]
 a0-diag.workspace = true

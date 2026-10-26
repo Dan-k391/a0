@@ -21,6 +21,7 @@ pub const MAX_NESTING: usize = 10_000;
 
 /// A token produced by the lexer. `start..end` are byte offsets.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct Token {
     pub kind: KindId,
     pub start: u32,

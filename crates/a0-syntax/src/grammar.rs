@@ -32,6 +32,9 @@ impl FieldId {
 /// What a grammar's `@def` rules declare, for editors (outline, highlighting, navigation).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[repr(u32)]
+///
+/// A minor release may add variants (`docs/compatibility.md`): code outside A0 matches it with
+/// a `_` arm. A0 itself matches it exhaustively, so that nothing misses a new one.
 pub enum SymbolKind {
     Function,
     Method,
@@ -110,6 +113,7 @@ impl SymbolKind {
 
 /// A rule marked `@def`: its nodes declare names.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct Definition {
     pub kind: SymbolKind,
     /// The field that holds the name.
@@ -309,6 +313,7 @@ impl Grammar {
 #[derive(Clone, Debug, PartialEq)]
 enum Tok {
     Ident(String),
+    Int(u64),
     Str(String),
     Regex(String),
     Attr(String),
@@ -321,6 +326,10 @@ struct DslToken {
     tok: Tok,
     span: Span,
 }
+
+/// The version of the grammar format this A0 reads and writes (`grammar g version 1;`,
+/// `docs/compatibility.md`).
+pub const FORMAT_VERSION: u32 = 1;
 
 const PUNCT: [&str; 15] = [
     "=>", "=", ";", "|", "(", ")", "*", "+", "?", "!", "&", ":", "~", "{", "}",
@@ -423,6 +432,17 @@ fn lex_dsl(text: &str, source: SourceId) -> Result<Vec<DslToken>, Diagnostics> {
             }
             toks.push(DslToken {
                 tok: Tok::Str(s),
+                span: span(start, i),
+            });
+            continue;
+        }
+        if c.is_ascii_digit() {
+            while i < bytes.len() && bytes[i].is_ascii_digit() {
+                i += 1;
+            }
+            let n = text[start..i].parse().unwrap_or(u64::MAX);
+            toks.push(DslToken {
+                tok: Tok::Int(n),
                 span: span(start, i),
             });
             continue;
@@ -550,6 +570,7 @@ impl DslParser {
     fn fail<T>(&self, what: &str) -> Result<T, Diagnostics> {
         let found = match self.peek() {
             Tok::Ident(s) => format!("'{s}'"),
+            Tok::Int(n) => format!("'{n}'"),
             Tok::Str(s) => format!("\"{s}\""),
             Tok::Regex(_) => "a pattern".to_string(),
             Tok::Attr(a) => format!("'@{a}'"),
@@ -618,6 +639,19 @@ impl DslParser {
         if self.is_word("grammar") {
             self.bump();
             let (name, _) = self.ident("the grammar name")?;
+            if self.is_word("version") {
+                self.bump();
+                let span = self.span();
+                let Tok::Int(version) = *self.peek() else {
+                    return self.fail("the format version, a number");
+                };
+                self.bump();
+                if version != u64::from(FORMAT_VERSION) {
+                    return Err(
+                        Diagnostic::newer_format("grammar", version, FORMAT_VERSION, span).into(),
+                    );
+                }
+            }
             self.punct(";")?;
             items.push(Item::Name(name));
         }

@@ -14,6 +14,7 @@
 use std::collections::{HashMap, HashSet};
 
 use a0_diag::{Diagnostics, SourceId};
+use a0_driver::backend::{A0Symbol, HostSymbols, Library};
 use a0_hir::{BinOp, BodyId, ExprId, FuncId, HirBuilder, HirModule, TypeId, UnOp};
 use a0_syntax::{Grammar, NodeId, Operand, SyntaxTree, resolve_precedence};
 // ANCHOR_END: uses
@@ -47,20 +48,20 @@ pub fn compile(text: &str, source: SourceId) -> Result<HirModule, Diagnostics> {
 
 // ANCHOR: runtime
 /// The Kaleidoscope runtime library (`putchard`, `printd`), for linking native executables.
-pub fn runtime_library() -> a0_native::Library {
-    a0_native::Library {
-        name: "kaleidoscope_rt".to_string(),
-        bytes: include_bytes!(concat!(env!("OUT_DIR"), "/kaleidoscope_rt.embedded")).to_vec(),
-    }
+pub fn runtime_library() -> Library {
+    Library::new(
+        "kaleidoscope_rt",
+        include_bytes!(concat!(env!("OUT_DIR"), "/kaleidoscope_rt.embedded")),
+    )
 }
 
 unsafe extern "C" {
-    static kaleidoscope_symbols: a0_runtime::A0Symbol;
+    static kaleidoscope_symbols: A0Symbol;
 }
 
 /// Host symbols for the interpreter: the A0 runtime, the C library and Kaleidoscope's runtime.
-pub fn host_symbols() -> a0_interp::HostSymbols {
-    let mut symbols = a0_interp::HostSymbols::new();
+pub fn host_symbols() -> HostSymbols {
+    let mut symbols = HostSymbols::new();
     // SAFETY: `kaleidoscope_symbols` is a NULL-terminated table defined in runtime/kaleidoscope.c.
     unsafe { symbols.add_table(&raw const kaleidoscope_symbols) };
     symbols

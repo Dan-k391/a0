@@ -1274,3 +1274,34 @@ now checks the bodies' shape without recursion before any pass walks them); and 
 before it started (`Span::new` now takes such an end as the start). The text parsers, verifier,
 lowering and code generators held.
 
+## D86. What 1.0 promises: the language-building surface, versioned text, and a deprecation path
+
+v1.0 asks for stable, documented public APIs in Rust, C and Python, versioned text formats, a
+written compatibility policy and a deprecation process (`docs/compatibility.md`). The question is
+where to draw the line. Everything `pub` in every crate would freeze the backends' internals, which
+change with every optimization; too little would leave languages depending on uncovered items.
+
+The line follows what a language uses. The example languages and B0 need the diagnostics, the
+grammar and syntax trees, scopes, the HIR and core IR builders, the driver, and the build-script
+helper: `a0-diag`, `a0-syntax`, `a0-sema`, `a0-ir`, `a0-hir`, `a0-driver` and `a0-build` are
+covered, all of their public items. Languages with a C runtime also needed three items from backend
+crates (`a0_native::Library`, `a0_interp::HostSymbols`, `a0_runtime::A0Symbol`); `a0-driver` now
+re-exports them (`a0_driver::backend`), so the backend crates stay free to change. The C header
+and the Python package are covered whole: they were designed as public surfaces (D2, D56).
+`a0rt.h` is mostly the contract between generated code and the runtime, which changes with
+codegen; only what a language's C runtime uses is covered, listed in `docs/runtime.md` (such a
+language keeps `a0-runtime` as a dependency, since Cargo tells only direct dependents where its
+header is).
+
+For Rust, growth must not break: public enums that can gain variants and structs that can gain
+fields are `#[non_exhaustive]` (Rust's own way, rather than a rule nobody checks), with
+constructors for what languages build (`Language::new` and its builder methods replace the struct
+literal every driver wrote). The exception is the few enums that A0's own crates translate
+exhaustively, the core IR's opcodes and types above all: marking them would force wildcard arms in
+the backends and lose the compiler's check that each backend handles every opcode, so they say in
+their documentation that they may grow instead. The minimum Rust version is stated in
+`Cargo.toml`. Text formats name their version in the module's header,
+optional and 1 when absent, so every file written before 1.0 is version 1 as it is; a text of a
+newer major version is refused with a code (`E0004`) rather than misread. Deprecation is the
+usual one: marked in a minor release in each language's own way, kept working for the rest of the
+major version, removed only in the next.

@@ -27,6 +27,13 @@
 //! compiler, and highlighting, the outline, go-to-definition and hovers from the grammar's `@def`
 //! and `@scope` annotations (`docs/grammar.md`) and the HIR the compiler builds.
 
+/// What a language with a runtime of its own in C needs from A0's backends: the library linked
+/// into its executables and the symbols the interpreter calls (`docs/runtime.md`). These are
+/// covered by A0's compatibility promise here, while the backend crates are not (D86).
+pub mod backend {
+    pub use a0_native::Library;
+    pub use a0_runtime::{A0Symbol, HostSymbols};
+}
 pub mod dap;
 pub mod json;
 pub mod lsp;
@@ -45,6 +52,7 @@ use a0_diag::{Diagnostics, RenderOptions, SourceId, SourceMap, Span};
 /// What a compiler produces.
 // Made once per compile, so the size of its variants does not matter.
 #[allow(clippy::large_enum_variant)]
+#[non_exhaustive]
 pub enum Program {
     /// A core IR module with a `@main`.
     Ir(a0_ir::Module),
@@ -53,6 +61,7 @@ pub enum Program {
 }
 
 /// Why compiling failed.
+#[non_exhaustive]
 pub enum CompileError {
     /// Diagnostics with spans into the source file.
     Diagnostics(Diagnostics),
@@ -62,6 +71,7 @@ pub enum CompileError {
 
 /// A compile error in the language's own format, with where it is (for editors).
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct Message {
     pub text: String,
     pub span: Option<Span>,
@@ -80,6 +90,7 @@ impl Message {
 /// and the files it imports (through the grammar's `@import` rules), each into a module of one HIR
 /// builder.
 #[derive(Clone, Copy)]
+#[non_exhaustive]
 pub struct Modules {
     /// The extension of its source files, without the dot (`"mn"`).
     pub extension: &'static str,
@@ -90,8 +101,25 @@ pub struct Modules {
     pub compile: fn(&mut a0_hir::HirBuilder, &a0_syntax::SyntaxTree),
 }
 
+impl Modules {
+    /// Files with the extension `extension` (without the dot), each compiled by `compile` after
+    /// `start` has prepared the builder.
+    pub fn new(
+        extension: &'static str,
+        start: fn(&mut a0_hir::HirBuilder),
+        compile: fn(&mut a0_hir::HirBuilder, &a0_syntax::SyntaxTree),
+    ) -> Modules {
+        Modules {
+            extension,
+            start,
+            compile,
+        }
+    }
+}
+
 /// How the driver shows the codes of diagnostics.
 #[derive(Clone, Copy)]
+#[non_exhaustive]
 pub enum Codes {
     /// A0's codes (`E2001`), which `lang explain` explains.
     A0,
@@ -129,6 +157,7 @@ impl Codes {
 
 /// The exit statuses of the driver's own failures.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct ExitCodes {
     /// A bad command line.
     pub usage: u8,
@@ -142,16 +171,35 @@ pub struct ExitCodes {
 
 impl Default for ExitCodes {
     fn default() -> Self {
+        ExitCodes::new(2, 2, 1, 1)
+    }
+}
+
+impl ExitCodes {
+    pub fn new(usage: u8, io: u8, compile: u8, internal: u8) -> ExitCodes {
         ExitCodes {
-            usage: 2,
-            io: 2,
-            compile: 1,
-            internal: 1,
+            usage,
+            io,
+            compile,
+            internal,
         }
     }
 }
 
-/// A language, as the driver sees it.
+/// A language, as the driver sees it: made with [`Language::new`] and the methods that set the
+/// rest, then run with [`Language::main`].
+///
+/// ```no_run
+/// # use a0_driver::{CompileError, Language};
+/// # fn compile(_: &str, _: a0_diag::SourceId) -> Result<a0_driver::Program, CompileError> { todo!() }
+/// fn main() -> std::process::ExitCode {
+///     Language::new("calc", compile)
+///         .grammar("grammar calc; ...")
+///         .repl_main("fn main() {\n{}}\n")
+///         .main()
+/// }
+/// ```
+#[non_exhaustive]
 pub struct Language {
     /// The command name, used in messages and the usage text.
     pub name: &'static str,
@@ -162,9 +210,9 @@ pub struct Language {
     /// Whether `lang <file>` means `lang run <file>`.
     pub run_by_default: bool,
     /// Interpreter symbols for a language that ships its own C runtime.
-    pub host_symbols: Option<fn() -> a0_interp::HostSymbols>,
+    pub host_symbols: Option<fn() -> backend::HostSymbols>,
     /// Static libraries to link into executables (a language's own C runtime).
-    pub libraries: Option<fn() -> Vec<a0_native::Library>>,
+    pub libraries: Option<fn() -> Vec<backend::Library>>,
     /// The language's grammar (the text of its `.a0g` file), for the language server.
     pub grammar: Option<&'static str>,
     /// How error codes are shown.
@@ -180,6 +228,7 @@ pub struct Language {
 
 /// A parsed command line.
 #[derive(Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct Invocation {
     pub command: Command,
     pub file: String,
@@ -196,6 +245,7 @@ pub struct Invocation {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Command {
     Run,
     Build,
@@ -253,6 +303,77 @@ fn executable_name(file: &str, output: Option<&str>, suffix: &str) -> String {
 }
 
 impl Language {
+    /// The language named `name` (its command), whose compiler is `compile`: HIR or core IR from
+    /// the text of one source file. Everything else has defaults: A0's exit codes and error codes,
+    /// no grammar (so no language server), single files, no REPL.
+    pub fn new(
+        name: &'static str,
+        compile: fn(text: &str, source: SourceId) -> Result<Program, CompileError>,
+    ) -> Language {
+        Language {
+            name,
+            compile,
+            exit_codes: ExitCodes::default(),
+            run_by_default: false,
+            host_symbols: None,
+            libraries: None,
+            grammar: None,
+            codes: Codes::A0,
+            modules: None,
+            repl_main: None,
+        }
+    }
+
+    /// The language's grammar, the text of its `.a0g` file: the language server and the REPL use
+    /// it.
+    pub fn grammar(mut self, grammar: &'static str) -> Language {
+        self.grammar = Some(grammar);
+        self
+    }
+
+    /// Programs of several files, compiled into one HIR builder (see [`Modules`]).
+    pub fn modules(mut self, modules: Modules) -> Language {
+        self.modules = Some(modules);
+        self
+    }
+
+    /// The REPL's program, with `{}` where the statements typed so far go
+    /// (`"fn main() {\n{}}\n"`); without one, statements run at the top level.
+    pub fn repl_main(mut self, program: &'static str) -> Language {
+        self.repl_main = Some(program);
+        self
+    }
+
+    /// How error codes are shown.
+    pub fn codes(mut self, codes: Codes) -> Language {
+        self.codes = codes;
+        self
+    }
+
+    /// The exit statuses of the driver's own failures.
+    pub fn exit_codes(mut self, exit_codes: ExitCodes) -> Language {
+        self.exit_codes = exit_codes;
+        self
+    }
+
+    /// `lang <file>` means `lang run <file>`.
+    pub fn run_by_default(mut self) -> Language {
+        self.run_by_default = true;
+        self
+    }
+
+    /// A runtime of the language's own in C: the symbols the interpreter calls and the libraries
+    /// executables link (see [`backend`]).
+    pub fn runtime(
+        mut self,
+        host_symbols: fn() -> backend::HostSymbols,
+        libraries: fn() -> Vec<backend::Library>,
+    ) -> Language {
+        self.host_symbols = Some(host_symbols);
+        self.libraries = Some(libraries);
+        self
+    }
+
     /// Runs the driver on the process's command line.
     pub fn main(&self) -> ExitCode {
         let args: Vec<String> = std::env::args().skip(1).collect();
@@ -471,7 +592,7 @@ impl Language {
             Program::Ir(m) => m,
             // Debug information describes the program as written: no inlining.
             Program::Hir(m) if inv.debug => {
-                match a0_hir::lower_with(&m, a0_hir::LowerOptions { optimize: false }) {
+                match a0_hir::lower_with(&m, a0_hir::LowerOptions::optimized(false)) {
                     Ok(m) => m,
                     Err(d) => return self.internal_error(&d, &sources),
                 }

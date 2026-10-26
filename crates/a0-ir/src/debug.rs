@@ -15,6 +15,7 @@ use crate::types::{FuncId, InlineId, Inst};
 
 /// One location. `file` is empty (and `line` and `col` 0) when it is not known.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub struct Location {
     pub func: String,
     pub file: String,

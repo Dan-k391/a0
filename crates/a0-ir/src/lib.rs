@@ -31,6 +31,10 @@ mod print;
 mod types;
 mod verify;
 
+/// The version of the core IR text format this A0 reads and prints (`module "m" version 1`,
+/// `docs/compatibility.md`).
+pub const FORMAT_VERSION: u32 = 1;
+
 pub use builder::Builder;
 pub use debug::{Location, Locations};
 pub use module::{InlineSite, Item, Module, region_terminates};

@@ -19,7 +19,7 @@ error[E1001]: unknown name `y`
 
 - The inputs make a program. A language whose statements run at the top level (Lox, Kaleidoscope,
   Calc) keeps them in the order they were typed; one whose statements live in `main` says how
-  (`Language { repl_main: Some("fn main() {\n{}}\n"), .. }`), and its inputs are told apart by the
+  (`.repl_main("fn main() {\n{}}\n")`), and its inputs are told apart by the
   grammar: an input that parses after the declarations so far is a declaration, anything else a
   statement of `main`.
 - Each input runs the whole program again, in a process of its own (`lang run -`, which reads the

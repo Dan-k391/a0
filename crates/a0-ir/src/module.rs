@@ -29,6 +29,7 @@ pub(crate) struct FuncData {
 /// A place where a source-level function was inlined: instructions that came from its body name it
 /// in stack traces, followed by the function that called it, at `call`.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct InlineSite {
     /// The inlined function, as traces name it.
     pub callee: String,
@@ -124,6 +125,9 @@ pub(crate) struct RegionData {
 
 /// Kinds of module items, in declaration order.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+///
+/// A minor release may add variants (`docs/compatibility.md`): code outside A0 matches it with
+/// a `_` arm. A0's backends match it exhaustively, so that none misses a new one.
 pub enum Item {
     Func(FuncId),
     Global(GlobalId),

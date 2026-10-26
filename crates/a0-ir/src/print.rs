@@ -9,7 +9,12 @@ use crate::types::*;
 /// Prints the whole module in canonical form.
 pub fn print_module(m: &Module) -> String {
     let mut out = String::new();
-    let _ = writeln!(out, "module {}", quote_string(m.name().as_bytes()));
+    let _ = writeln!(
+        out,
+        "module {} version {}",
+        quote_string(m.name().as_bytes()),
+        crate::FORMAT_VERSION
+    );
     for item in m.items() {
         out.push('\n');
         match *item {

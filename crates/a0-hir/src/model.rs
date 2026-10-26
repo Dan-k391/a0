@@ -130,6 +130,7 @@ pub(crate) enum TypeKind {
 /// The kind of a type, for the public, handle-based API.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[repr(u8)]
+#[non_exhaustive]
 pub enum TypeTag {
     Unit,
     Bool,
@@ -163,6 +164,7 @@ pub enum TypeTag {
 /// allocates (`free`) and has no collector at all (D72).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[repr(u8)]
+#[non_exhaustive]
 pub enum Memory {
     Gc,
     Manual,
@@ -185,6 +187,7 @@ impl Memory {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[repr(u8)]
+#[non_exhaustive]
 pub enum BinOp {
     Add,
     Sub,
@@ -245,6 +248,7 @@ impl BinOp {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[repr(u8)]
+#[non_exhaustive]
 pub enum UnOp {
     Neg,
     Not,
@@ -257,6 +261,7 @@ macro_rules! builtins {
         /// Built-in operations, called like functions (see `docs/hir.md`).
         #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
         #[repr(u8)]
+        #[non_exhaustive]
         pub enum Builtin {
             $($variant,)*
         }
@@ -477,6 +482,7 @@ pub(crate) struct ExternDef {
 
 /// How an `extern fn` takes its arguments and returns its result (D47).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum Abi {
     /// A C function: `int`, `float` and `bool` as C's 64-bit integers, doubles and integers, strings
     /// as NUL-terminated `const char *`, arrays of `int`, `float` or `bool` as pointers to their
@@ -544,6 +550,7 @@ pub(crate) struct LocalData {
 /// ([`crate::HirBuilder::set_term`]). The defaults are the HIR's words.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[repr(u32)]
+#[non_exhaustive]
 pub enum Term {
     /// "function"
     Function,
@@ -599,6 +606,7 @@ impl Term {
 /// Warnings a language can turn on ([`crate::HirBuilder::enable_warning`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[repr(u32)]
+#[non_exhaustive]
 pub enum Warning {
     /// A variable whose value is never read. Names that start with `_` are exempt, and so are
     /// parameters.
@@ -609,6 +617,9 @@ pub enum Warning {
 
 /// Something a module-level name refers to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+///
+/// A minor release may add variants (`docs/compatibility.md`): code outside A0 matches it with
+/// a `_` arm. A0 itself matches it exhaustively, so that nothing misses a new one.
 pub enum Item {
     Struct(StructId),
     Enum(EnumId),

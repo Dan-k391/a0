@@ -77,6 +77,15 @@ layer, decision D17). A new crate goes into the table above and into `[workspace
   object). Anything public that C should reach gets a binding in `a0-capi` and its header, and a
   builder function also gets a line in the Python table (`bindings/python/a0/__init__.py`), which a
   test checks against the header (D56).
+- **Compatibility** (`docs/compatibility.md`, D86). From 1.0, nothing covered breaks before 2.0:
+  the command line, the text formats, the C header, the Python package, the Rust API of
+  `a0-diag`, `a0-syntax`, `a0-sema`, `a0-ir`, `a0-hir`, `a0-driver` and `a0-build`, and the part of
+  `a0rt.h` in `docs/runtime.md`. Add rather than change; a new public enum or struct that may grow
+  is `#[non_exhaustive]` (with a constructor), except enums A0's own crates must match
+  exhaustively, which say in their docs that they may grow. Retire things by deprecating them
+  (`#[deprecated]`, `A0_DEPRECATED`, `a0._deprecated`) and listing them under **Deprecated** in the
+  changelog. Languages use only the covered crates (`a0_driver::backend` for C runtimes); a text
+  format change keeps every version-1 text reading the same.
 - **Report, don't panic.** Libraries return `Diagnostics` (from `a0-diag`) for anything a user can
   cause. Builders record misuse as diagnostics. `panic!`/`unwrap` only for internal invariants.
 - **Diagnostics as good as rustc's.** A problem a program can have gets its own code in
@@ -184,7 +193,8 @@ layer, decision D17). A new crate goes into the table above and into `[workspace
 | Diagnostics: rendering, codes (`a0_diag::codes`), the builder's reporting API | `docs/diagnostics.md` (its code table is tested) |
 | A design choice with alternatives | a new `D<n>` entry in `docs/decisions.md` |
 | A milestone ends | `docs/milestones.md` (done / changed / open questions); `CHANGELOG.md` (under Unreleased) |
-| A release | `CHANGELOG.md`, the version in `Cargo.toml`, `README.md` status, a `v<version>` tag |
+| A release | `CHANGELOG.md`, the version in `Cargo.toml`, `A0_VERSION_*` in `a0.h`, `__version__` in `bindings/python/a0`, `editors/vscode/package.json`, `README.md` status, a `v<version>` tag |
+| The covered API (`docs/compatibility.md`) or what languages' C runtimes may use | `docs/compatibility.md`, `docs/runtime.md`, and the changelog (**Deprecated** for what is retired) |
 | What the benchmark measures, or anything that moves its numbers much (codegen, the optimizer, the collector, linking) | `docs/benchmarks.md`, rerunning `bench/run.py` |
 | A workflow or convention | this file and `.claude/skills/` |
 

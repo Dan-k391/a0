@@ -463,7 +463,8 @@ fn compile_time() {
         front += t;
         files += 1;
         for (i, optimize) in [false, true].into_iter().enumerate() {
-            let (t, ir) = best(&mut || a0_hir::lower_with(&hir, a0_hir::LowerOptions { optimize }));
+            let (t, ir) =
+                best(&mut || a0_hir::lower_with(&hir, a0_hir::LowerOptions::optimized(optimize)));
             let ir = ir.unwrap();
             lower[i] += t;
             insts[i] += ir.to_string().lines().count();

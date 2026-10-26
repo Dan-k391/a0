@@ -22,6 +22,7 @@ pub struct SymbolId(pub u32);
 /// What kind of scope this is. Function scopes mark the boundary for closure capture.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[repr(u8)]
+#[non_exhaustive]
 pub enum ScopeKind {
     Block,
     Function,
@@ -29,6 +30,7 @@ pub enum ScopeKind {
 
 /// Where a name resolved to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct Resolution {
     pub symbol: SymbolId,
     /// How many scopes up from the innermost one the symbol was found (0 = innermost).

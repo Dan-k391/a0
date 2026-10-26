@@ -13,6 +13,7 @@ use crate::{Diagnostic, Fix, Severity, SourceId, SourceMap, Span};
 
 /// How diagnostics are rendered.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct RenderOptions {
     /// Color with ANSI escapes, for terminals.
     pub color: bool,

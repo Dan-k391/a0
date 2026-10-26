@@ -4,6 +4,7 @@ description = "Minnow, a small statically typed language built on A0"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+rust-version.workspace = true
 
 [dependencies]
 a0-diag.workspace = true

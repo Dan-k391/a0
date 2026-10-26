@@ -4,6 +4,7 @@ description = "A0 core IR: data model, builder, text format and verifier"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+rust-version.workspace = true
 
 [dependencies]
 a0-diag.workspace = true

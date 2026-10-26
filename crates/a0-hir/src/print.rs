@@ -13,7 +13,12 @@ pub fn print_module(m: &HirModule) -> String {
         m,
         out: String::new(),
     };
-    let _ = writeln!(p.out, "module {};", quote(&m.name));
+    let _ = writeln!(
+        p.out,
+        "module {} version {};",
+        quote(&m.name),
+        crate::FORMAT_VERSION
+    );
     if m.memory() != crate::model::Memory::Gc {
         let _ = writeln!(p.out, "memory {};", m.memory().name());
     }

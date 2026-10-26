@@ -866,6 +866,7 @@ fn checkout(url: &str, commit: &str) -> Result<PathBuf, String> {
 
 /// One package of a program: where its modules are and what it depends on.
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub struct Package {
     /// The name its modules have in the program (`json`, `json.parser`); empty for the root
     /// package, whose modules have their own names.
@@ -882,6 +883,7 @@ pub struct Package {
 
 /// The packages of a program, the root package first.
 #[derive(Clone, Debug, Default)]
+#[non_exhaustive]
 pub struct Packages {
     pub list: Vec<Package>,
     /// The root package's main file, if it has one.
@@ -894,6 +896,7 @@ pub struct Packages {
 
 /// How [`load`] may get dependencies.
 #[derive(Clone, Copy, Debug, Default)]
+#[non_exhaustive]
 pub struct LoadOptions {
     /// Fetch git dependencies that are not in the cache (builds do, the language server does not).
     pub fetch: bool,

@@ -21,6 +21,7 @@ use crate::Modules;
 use crate::package::{Package, Packages};
 
 /// One file of a program.
+#[non_exhaustive]
 pub struct ProgramFile {
     /// Absolute, without `.` and `..`.
     pub path: PathBuf,
@@ -51,6 +52,7 @@ impl TreeCache {
 
 /// The files of a program, in the order they are compiled: every file after the files it imports,
 /// so the root file last.
+#[non_exhaustive]
 pub struct Program {
     pub files: Vec<ProgramFile>,
 }

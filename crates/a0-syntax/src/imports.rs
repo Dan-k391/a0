@@ -14,6 +14,7 @@ use crate::tree::{NodeId, SyntaxTree};
 
 /// One import, as written.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct Import {
     /// The module's name: its path's segments joined with `.` (`text.json`), or for a string path
     /// the path without its extension (`lib/json`).
