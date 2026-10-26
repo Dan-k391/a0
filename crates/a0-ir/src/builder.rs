@@ -392,6 +392,19 @@ impl Builder {
         self.inst(Opcode::Null, &[], 0, Some(Type::Ptr))
     }
 
+    /// The address of `size` bytes in the function's frame, aligned to `align` (a power of two,
+    /// at most 16): the same for every execution in one call of the function, gone when it
+    /// returns. Its contents start undefined.
+    pub fn stack_slot(&mut self, size: u32, align: u32) -> Value {
+        if !align.is_power_of_two() || align > 16 {
+            self.error(&format!(
+                "stack_slot alignment {align} is not a power of two up to 16"
+            ));
+        }
+        let imm = size as u64 | (align as u64) << 32;
+        self.inst(Opcode::StackSlot, &[], imm, Some(Type::Ptr))
+    }
+
     /// The address of a function.
     pub fn func_addr(&mut self, f: FuncId) -> Value {
         self.inst(Opcode::Addr, &[], Symbol::func(f).to_imm(), Some(Type::Ptr))

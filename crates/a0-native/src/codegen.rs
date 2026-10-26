@@ -290,6 +290,7 @@ pub(crate) fn compile_functions<M: ClifModule>(
                 rt: &rt,
                 values: HashMap::new(),
                 vars: HashMap::new(),
+                stack_slots: HashMap::new(),
                 func_refs: HashMap::new(),
                 trap_sites: Vec::new(),
                 loops: Vec::new(),
@@ -598,6 +599,8 @@ struct Lower<'a, M: ClifModule> {
     rt: &'a RuntimeFuncs,
     values: HashMap<a0_ir::Value, ir::Value>,
     vars: HashMap<a0_ir::Var, Variable>,
+    /// The Cranelift stack slot of each `stack_slot`.
+    stack_slots: HashMap<Inst, ir::StackSlot>,
     func_refs: HashMap<cranelift_module::FuncId, ir::FuncRef>,
     /// Cold blocks that report a trap: (block, trap code, location).
     trap_sites: Vec<(ir::Block, i32, u32)>,
@@ -650,6 +653,18 @@ impl<M: ClifModule> Lower<'_, M> {
             self.vars.insert(var, cv);
         }
         let body = m.func_body(self.f).unwrap();
+        for inst in a0_ir::insts_in_text_order(m, body) {
+            if m.inst_opcode(inst) == Opcode::StackSlot {
+                let (size, align) = m.inst_stack_slot(inst);
+                let data = ir::StackSlotData::new(
+                    ir::StackSlotKind::ExplicitSlot,
+                    size,
+                    align.max(1).trailing_zeros() as u8,
+                );
+                let slot = self.b.create_sized_stack_slot(data);
+                self.stack_slots.insert(inst, slot);
+            }
+        }
         if self.region(body) {
             // Only void functions can fall off the end (the verifier guarantees it).
             self.b.ins().return_(&[]);
@@ -789,6 +804,13 @@ impl<M: ClifModule> Lower<'_, M> {
             }
             Opcode::Null => {
                 let v = self.iconst(self.ptr, 0);
+                self.set(inst, v);
+            }
+            Opcode::StackSlot => {
+                let v = self
+                    .b
+                    .ins()
+                    .stack_addr(self.ptr, self.stack_slots[&inst], 0);
                 self.set(inst, v);
             }
             Opcode::Addr => {

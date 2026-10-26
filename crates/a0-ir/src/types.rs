@@ -252,6 +252,7 @@ opcodes! {
     Load = "load",
     Store = "store",
     Ptradd = "ptradd",
+    StackSlot = "stack_slot",
     Call = "call",
     CallIndirect = "call_indirect",
     Get = "get",

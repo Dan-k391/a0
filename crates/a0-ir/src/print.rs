@@ -131,6 +131,10 @@ pub(crate) fn inst_text(m: &Module, names: &Names, inst: Inst) -> String {
             format_scalar(ty, m.inst_fconst_bits(inst))
         }
         Opcode::Null | Opcode::Unreachable | Opcode::Loop => String::new(),
+        Opcode::StackSlot => {
+            let (size, align) = m.inst_stack_slot(inst);
+            format!("{size}, {align}")
+        }
         Opcode::Break | Opcode::Continue => match m.inst_loop_depth(inst) {
             0 => String::new(),
             depth => depth.to_string(),

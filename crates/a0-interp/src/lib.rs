@@ -151,6 +151,11 @@ enum Op {
         dst: Slot,
         bits: u64,
     },
+    /// The address of the bytes at `offset` in the frame's stack slots.
+    StackSlot {
+        dst: Slot,
+        offset: u32,
+    },
     IntBin {
         op: Opcode,
         ty: Type,
@@ -283,6 +288,8 @@ struct Code {
     ops: Box<[Op]>,
     params: Vec<Slot>,
     frame_size: usize,
+    /// The bytes of the function's stack slots (`stack_slot`), allocated for each call.
+    slot_bytes: usize,
     /// The slot of each variable, for debuggers.
     vars: Vec<(a0_ir::Var, Slot)>,
 }
@@ -330,6 +337,8 @@ pub struct Interpreter {
     _global_memory: Vec<Box<[u64]>>,
     /// Function tokens are addresses inside this allocation, so they never collide with real code.
     tokens: Box<[u8]>,
+    /// The stack slots of the active calls that have any, innermost last.
+    slot_memory: Vec<Box<[u128]>>,
     stack: Vec<u64>,
     depth: u32,
     max_depth: u32,
@@ -510,6 +519,7 @@ impl Interpreter {
             stack: Vec::with_capacity(1 << 16),
             depth: 0,
             max_depth: DEFAULT_MAX_DEPTH,
+            slot_memory: Vec::new(),
             debug,
             locations,
             hook,
@@ -633,6 +643,11 @@ impl Interpreter {
                 self.depth += 1;
                 let base = self.stack.len();
                 self.stack.resize(base + code.frame_size, 0);
+                // Real memory that does not move while the call runs, aligned to 16.
+                if code.slot_bytes > 0 {
+                    self.slot_memory
+                        .push(vec![0u128; code.slot_bytes.div_ceil(16)].into_boxed_slice());
+                }
                 for (&param, &arg) in code.params.iter().zip(args) {
                     self.stack[base + param as usize] = self.stack[caller_base + arg as usize];
                 }
@@ -654,6 +669,9 @@ impl Interpreter {
                 }
                 CALLS.with(|c| c.borrow_mut().pop());
                 self.stack.truncate(base);
+                if code.slot_bytes > 0 {
+                    self.slot_memory.pop();
+                }
                 self.depth -= 1;
                 match flow? {
                     Flow::Return(v) => Ok(v),
@@ -766,6 +784,11 @@ impl Interpreter {
         for op in ops {
             match op {
                 &Op::Const { dst, bits } => self.put(base, dst, bits),
+                &Op::StackSlot { dst, offset } => {
+                    let memory = self.slot_memory.last().expect("a frame with stack slots");
+                    let address = memory.as_ptr() as u64 + offset as u64;
+                    self.put(base, dst, address)
+                }
                 &Op::Copy { dst, src } => {
                     let v = self.get(base, src);
                     self.put(base, dst, v)
@@ -904,6 +927,8 @@ impl Interpreter {
 struct FuncCompiler<'a> {
     m: &'a Module,
     slots: HashMap<Value, Slot>,
+    /// The offset of each `stack_slot` in the frame's slot memory.
+    stack_slots: HashMap<Inst, u32>,
     vars: HashMap<a0_ir::Var, Slot>,
     addr_of: &'a dyn Fn(a0_ir::Symbol) -> u64,
     locations: &'a a0_ir::Locations,
@@ -921,6 +946,7 @@ fn compile_function(
     let mut c = FuncCompiler {
         m,
         slots: HashMap::new(),
+        stack_slots: HashMap::new(),
         vars: HashMap::new(),
         addr_of,
         locations,
@@ -934,10 +960,17 @@ fn compile_function(
         next += 1;
     }
     let body = m.func_body(f).unwrap();
+    let mut slot_bytes = 0u32;
     for inst in a0_ir::insts_in_text_order(m, body) {
         if let Some(v) = m.inst_result(inst) {
             c.slots.insert(v, next);
             next += 1;
+        }
+        if m.inst_opcode(inst) == Opcode::StackSlot {
+            let (size, align) = m.inst_stack_slot(inst);
+            let offset = slot_bytes.div_ceil(align.max(1)) * align.max(1);
+            c.stack_slots.insert(inst, offset);
+            slot_bytes = offset + size;
         }
     }
     for &var in m.func_vars(f) {
@@ -950,6 +983,7 @@ fn compile_function(
         ops,
         params,
         frame_size: next as usize,
+        slot_bytes: slot_bytes as usize,
         vars,
     }
 }
@@ -1003,6 +1037,10 @@ impl FuncCompiler<'_> {
             Opcode::Null => Op::Const {
                 dst: dst.unwrap(),
                 bits: 0,
+            },
+            Opcode::StackSlot => Op::StackSlot {
+                dst: dst.unwrap(),
+                offset: self.stack_slots[&i],
             },
             Opcode::Addr => Op::Const {
                 dst: dst.unwrap(),

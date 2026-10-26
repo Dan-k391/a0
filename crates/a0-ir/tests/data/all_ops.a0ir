@@ -103,6 +103,7 @@ func @memory() -> i64 {
   %v: i64 = load %g
   %eight: i64 = iconst 8
   %p: ptr = ptradd %g, %eight
+  %slot: ptr = stack_slot 24, 8
   store %v, %g
   %fp: ptr = addr @arith
   %r: i64 = call_indirect %fp(%v, %v) : (i64, i64) -> i64

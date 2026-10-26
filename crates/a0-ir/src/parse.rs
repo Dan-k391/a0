@@ -908,6 +908,19 @@ impl Parser {
                 imm = self.float(ty)?;
             }
             Opcode::Null | Opcode::Unreachable => {}
+            Opcode::StackSlot => {
+                let number = |p: &mut Self| match *p.peek() {
+                    Tok::Int(v) if (0..=u32::MAX as i128).contains(&v) => {
+                        p.bump();
+                        Ok(v as u64)
+                    }
+                    _ => p.unexpected("a size in bytes"),
+                };
+                let size = number(self)?;
+                self.expect(Tok::Comma, "','")?;
+                let align = number(self)?;
+                imm = size | align << 32;
+            }
             Opcode::Break | Opcode::Continue => {
                 if let Tok::Int(depth) = *self.peek() {
                     if !(0..=u32::MAX as i128).contains(&depth) {

@@ -206,6 +206,7 @@ impl<'a> FuncVerifier<'a> {
             Opcode::Iconst
             | Opcode::Fconst
             | Opcode::Null
+            | Opcode::StackSlot
             | Opcode::Addr
             | Opcode::Get
             | Opcode::Loop
@@ -270,6 +271,17 @@ impl<'a> FuncVerifier<'a> {
                 }
             }
             Opcode::Null => self.expect_result(inst, result, Type::Ptr),
+            Opcode::StackSlot => {
+                self.expect_result(inst, result, Type::Ptr);
+                let (_, align) = m.inst_stack_slot(inst);
+                if !align.is_power_of_two() || align > 16 {
+                    self.inst_error(
+                        inst,
+                        "ir.type",
+                        "stack_slot alignment must be a power of two up to 16",
+                    );
+                }
+            }
             Opcode::Addr => {
                 let sym = m.inst_symbol(inst);
                 let valid = match sym.kind {

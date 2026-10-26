@@ -55,6 +55,7 @@ for most opcodes it is implied by the operands and the verifier checks that it m
 | conversion | `zext sext trunc sitofp uitofp fptosi fptoui fext ftrunc bitcast ptrtoint inttoptr` | The target type is the result type. |
 | select | `select c, a, b` | `c: i1`. |
 | memory | `load p`, `store v, p`, `ptradd p, off` | `off: i64`, byte offset. Unaligned access is allowed. |
+| stack | `stack_slot SIZE, ALIGN` | The address of `SIZE` bytes in the function's frame, aligned to `ALIGN` (a power of two up to 16). Each instruction has its own slot, the same address on every execution within one call and another in each call; it is gone when the function returns, and its contents start undefined. |
 | calls | `call @f(args)`, `call_indirect p(args) : (T..) -> R` | `call_indirect` spells out the signature. |
 | variables | `get $v`, `set $v, x` | |
 | control | `if c { } else { }`, `loop { }`, `break [n]`, `continue [n]`, `return [v]`, `unreachable` | `break`/`continue` refer to the innermost `loop`, or with `n` to the loop `n` loops out from it (`break 1` leaves two loops). |
@@ -198,5 +199,5 @@ span of the offending instruction.
 
 ## Not yet
 
-Aggregate types, stack slots, switch, DWARF debug information and calling-convention
-attributes are left out until an example language needs them (see `docs/decisions.md`).
+Aggregate types, switch and calling-convention attributes are left out until an example language
+needs them (see `docs/decisions.md`); aggregates live in memory, stack slots included.

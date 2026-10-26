@@ -501,6 +501,12 @@ impl Module {
         SigId(self.insts[i.index()].imm as u32)
     }
 
+    /// The size and the alignment in bytes of a `stack_slot`.
+    pub fn inst_stack_slot(&self, i: Inst) -> (u32, u32) {
+        let imm = self.insts[i.index()].imm;
+        (imm as u32, (imm >> 32) as u32)
+    }
+
     /// How many loops out from the innermost a `break` or `continue` goes (0: the innermost).
     pub fn inst_loop_depth(&self, i: Inst) -> u32 {
         self.insts[i.index()].imm as u32

@@ -1,0 +1,108 @@
+; Stack slots: memory in a function's frame, one per call (recursion keeps each its own), the
+; same address on every execution within a call, aligned, and usable by C.
+; expect-stdout: sum 15
+; expect-stdout: aligned 0
+; expect-stdout: same 1
+; expect-stdout: hi!
+module "stack_slots"
+
+extern func @a0_print_bytes(ptr, i64)
+extern func @a0_print_i64(i64)
+extern func @a0_print_newline()
+
+data @sum_label = "sum "
+data @aligned_label = "aligned "
+data @same_label = "same "
+
+; Keeps n in a slot across the recursive call, then adds it to what the call returns.
+func @sum(%n: i64) -> i64 {
+  %slot: ptr = stack_slot 8, 8
+  store %n, %slot
+  %zero: i64 = iconst 0
+  %done: i1 = icmp eq %n, %zero
+  if %done {
+    return %zero
+  }
+  %one: i64 = iconst 1
+  %m: i64 = isub %n, %one
+  %rest: i64 = call @sum(%m)
+  %mine: i64 = load %slot
+  %r: i64 = iadd %rest, %mine
+  return %r
+}
+
+func @label(%p: ptr, %n: i64) {
+  call @a0_print_bytes(%p, %n)
+}
+
+func @main() -> i32 {
+  var $first: ptr
+  var $i: i64
+  var $same: i64
+  %l1: ptr = addr @sum_label
+  %four: i64 = iconst 4
+  call @label(%l1, %four)
+  %five: i64 = iconst 5
+  %s: i64 = call @sum(%five)
+  call @a0_print_i64(%s)
+  call @a0_print_newline()
+
+  %wide: ptr = stack_slot 32, 16
+  %bits: i64 = ptrtoint %wide
+  %fifteen: i64 = iconst 15
+  %low: i64 = and %bits, %fifteen
+  %l2: ptr = addr @aligned_label
+  %eight: i64 = iconst 8
+  call @label(%l2, %eight)
+  call @a0_print_i64(%low)
+  call @a0_print_newline()
+
+  %one: i64 = iconst 1
+  set $same, %one
+  loop {
+    %p: ptr = stack_slot 4, 4
+    %k: i64 = get $i
+    %zero: i64 = iconst 0
+    %first_time: i1 = icmp eq %k, %zero
+    if %first_time {
+      set $first, %p
+    } else {
+      %f: ptr = get $first
+      %eq: i1 = icmp eq %f, %p
+      if %eq {
+      } else {
+        %no: i64 = iconst 0
+        set $same, %no
+      }
+    }
+    %k1: i64 = iadd %k, %one
+    set $i, %k1
+    %three: i64 = iconst 3
+    %stop: i1 = icmp sge %k1, %three
+    if %stop {
+      break
+    }
+  }
+  %l3: ptr = addr @same_label
+  call @label(%l3, %five)
+  %same_v: i64 = get $same
+  call @a0_print_i64(%same_v)
+  call @a0_print_newline()
+
+  ; Bytes written into a slot and printed by C.
+  %text: ptr = stack_slot 3, 1
+  %h: i8 = iconst 104
+  store %h, %text
+  %p1: ptr = ptradd %text, %one
+  %i8: i8 = iconst 105
+  store %i8, %p1
+  %two: i64 = iconst 2
+  %p2: ptr = ptradd %text, %two
+  %bang: i8 = iconst 33
+  store %bang, %p2
+  %three2: i64 = iconst 3
+  call @a0_print_bytes(%text, %three2)
+  call @a0_print_newline()
+  %ok: i32 = iconst 0
+  return %ok
+}
