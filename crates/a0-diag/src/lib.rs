@@ -8,6 +8,7 @@
 pub mod codes;
 mod render;
 mod similar;
+pub mod time;
 
 use std::fmt::Write as _;
 use std::sync::RwLock;

@@ -1161,3 +1161,29 @@ Every language with modules gets them from `a0-driver`, so the choices are the d
 
 Versions and version requirements (semver resolution) are left out: with git, a tag or a commit
 says which version, and nothing reads `version` yet.
+
+## D82. Large programs: whole-program compilation made fast, in parallel, not cached
+
+v0.9 asks for incremental compilation that is fast on a 100,000-line project. The first
+measurement (`bench/large/gen.py`, 175 modules) took 2.3 s to build it: lexing 337 ms (an NFA
+simulated with a set as large as the automaton per character), the HIR optimizer 534 ms (each
+function's bodies found by scanning all of them, every node cloned three times per round), the
+location table 167 ms (two strings and a hash per instruction) and Cranelift 800 ms. The choices
+were to cache work between builds (objects per function or per module, keyed by their IR), or to
+make each build fast enough not to need it.
+
+A0 does the second. Caching compiled code only pays if unchanged functions compile to the same IR
+after an edit elsewhere, but location ids, string constants and type descriptors are numbered
+program-wide, and inlining copies code across modules; making all of it stable, and keeping a
+cache from ever serving stale code, would cost more than what is left to save once the stages are
+linear and code generation is parallel. So: the lexer runs a DFA (built from the NFA on first use,
+ASCII only, the NFA taking over at other characters); the optimizer indexes bodies by function and
+rewrites nodes in place; the location table is interned by numbers; and code generation splits a
+large program into objects of about 8,000 instructions (at most 64), compiled at once on the
+machine's processors and linked together. The split depends only on the program, never on the
+machine, so builds stay reproducible (D81). Each object has the code table of its functions
+(`a0_rt_add_code`); unwind information stays Cranelift's, which defining precompiled code would
+lose. `A0_TIME=1` prints how long each stage takes.
+
+The language server, which analyzes on every pause in typing, is where reuse pays: see the
+measurements in `docs/benchmarks.md` ("Large programs").

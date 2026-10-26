@@ -78,16 +78,16 @@ pub fn lower_with(m: &HirModule, options: LowerOptions) -> Result<a0_ir::Module,
         return Err(entry);
     }
     // Generic items become one copy per use; lowering itself never sees a type parameter.
-    let mut owned = crate::mono::monomorphize(m)?;
+    let mut owned = a0_diag::time::stage("monomorphize", || crate::mono::monomorphize(m))?;
     if options.optimize {
         let mut o = owned.unwrap_or_else(|| m.clone());
-        crate::opt::optimize(&mut o);
+        a0_diag::time::stage("optimize (HIR)", || crate::opt::optimize(&mut o));
         owned = Some(o);
     }
     let m = owned.as_ref().unwrap_or(m);
     let mut l = Lowerer::new(m);
-    l.run();
-    match l.b.finish() {
+    a0_diag::time::stage("lower to IR", || l.run());
+    match a0_diag::time::stage("verify IR", || l.b.finish()) {
         Ok(module) => Ok(module),
         Err(d) => {
             let mut diags: Diagnostics = Diagnostic::error(

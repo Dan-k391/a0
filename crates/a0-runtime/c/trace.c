@@ -12,13 +12,22 @@
 #include <stdio.h>
 #include <string.h>
 
+/* A program compiled in parallel has a code table per object it was compiled into. */
+#define A0_MAX_CODE_TABLES 256
+
 static const A0LocationTable *g_locations;
-static const A0CodeTable *g_code;
+static const A0CodeTable *g_code[A0_MAX_CODE_TABLES];
+static size_t g_code_count;
 static A0FramesFn g_frames;
 
 void a0_rt_set_debug(const A0LocationTable *locations, const A0CodeTable *code) {
     g_locations = locations;
-    g_code = code;
+    g_code_count = 0;
+    if (code != NULL) g_code[g_code_count++] = code;
+}
+
+void a0_rt_add_code(const A0CodeTable *code) {
+    if (code != NULL && g_code_count < A0_MAX_CODE_TABLES) g_code[g_code_count++] = code;
 }
 
 void a0_rt_set_frames(A0FramesFn frames) { g_frames = frames; }
@@ -35,22 +44,24 @@ static const char *string_at(uint32_t offset) {
 /* Whether `ra` returns into generated code; if it does, `*site` is the location of the call (0 if
  * the call has none, in a function traces leave out). */
 static int call_site(uintptr_t ra, uint32_t *site) {
-    if (g_code == NULL) return 0;
-    for (uint64_t i = 0; i < g_code->count; i++) {
-        const A0CodeFunction *f = &g_code->functions[i];
-        uintptr_t start = (uintptr_t)f->start;
-        if (ra <= start || ra > start + f->size) continue;
-        /* The call instruction ends where the return address points. */
-        uint32_t offset = (uint32_t)(ra - 1 - start);
-        *site = 0;
-        for (uint32_t r = f->first; r < f->first + f->count; r++) {
-            const A0CodeRange *range = &g_code->ranges[r];
-            if (offset >= range->start && offset < range->end) {
-                *site = range->location;
-                break;
+    for (size_t t = 0; t < g_code_count; t++) {
+        const A0CodeTable *code = g_code[t];
+        for (uint64_t i = 0; i < code->count; i++) {
+            const A0CodeFunction *f = &code->functions[i];
+            uintptr_t start = (uintptr_t)f->start;
+            if (ra <= start || ra > start + f->size) continue;
+            /* The call instruction ends where the return address points. */
+            uint32_t offset = (uint32_t)(ra - 1 - start);
+            *site = 0;
+            for (uint32_t r = f->first; r < f->first + f->count; r++) {
+                const A0CodeRange *range = &code->ranges[r];
+                if (offset >= range->start && offset < range->end) {
+                    *site = range->location;
+                    break;
+                }
             }
+            return 1;
         }
-        return 1;
     }
     return 0;
 }

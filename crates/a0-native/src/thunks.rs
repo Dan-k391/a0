@@ -107,7 +107,16 @@ pub fn add_thunks(m: &Module, symbols: &mut HostSymbols) -> Result<(), Diagnosti
         lookup.lookup(name).map(|a| a as *const u8)
     }));
     let mut jit = JITModule::new(builder);
-    let compiled = compile_functions(&mut jit, &tm, target, "a0.thunks.main", false)?;
+    let locations = a0_ir::Locations::build(&tm);
+    let compiled = compile_functions(
+        &mut jit,
+        &tm,
+        target,
+        "a0.thunks.main",
+        false,
+        &crate::codegen::Unit::whole(&tm),
+        &locations,
+    )?;
     jit.finalize_definitions().map_err(|e| {
         Diagnostics::from(Diagnostic::error(
             "native.jit",

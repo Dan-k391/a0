@@ -403,7 +403,13 @@ fn the_platform_debugger_prints_variables() {
         return;
     };
     let dir = scratch("debugger-vars");
-    let out = a0(&dir, &["build", "vars.hir", "-g", "-o", "vars"]);
+    // In two objects (D82), each with its own DWARF.
+    let out = Command::new(env!("CARGO_BIN_EXE_a0"))
+        .current_dir(&dir)
+        .args(["build", "vars.hir", "-g", "-o", "vars"])
+        .env("A0_CODEGEN_UNITS", "2")
+        .output()
+        .unwrap();
     assert!(
         out.status.success(),
         "{}",
@@ -602,7 +608,13 @@ fn the_windows_debugger_stops_at_a_line_and_shows_variables() {
         return;
     };
     let dir = scratch("cdb");
-    let out = a0(&dir, &["build", "vars.hir", "-g", "-o", "vars.exe"]);
+    // In two objects (D82), each with its own CodeView.
+    let out = Command::new(env!("CARGO_BIN_EXE_a0"))
+        .current_dir(&dir)
+        .args(["build", "vars.hir", "-g", "-o", "vars.exe"])
+        .env("A0_CODEGEN_UNITS", "2")
+        .output()
+        .unwrap();
     assert!(
         out.status.success(),
         "{}",

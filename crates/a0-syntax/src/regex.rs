@@ -298,13 +298,31 @@ enum State {
     Match(u32),
 }
 
-/// A set of patterns compiled into one NFA.
+/// A set of patterns compiled into one NFA, and the DFA it becomes over ASCII text.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct Matcher {
     states: Vec<State>,
     classes: Vec<Class>,
     starts: Vec<usize>,
+    /// Built on first use, once every pattern is added; `None` if it would be too large.
+    dfa: std::sync::OnceLock<Option<Dfa>>,
 }
+
+/// The matcher's automaton for ASCII characters (subset construction): each state is a set of
+/// the NFA's. Lexing runs it a byte at a time; a non-ASCII character continues in the NFA.
+#[derive(Clone, Debug)]
+struct Dfa {
+    /// Per state: its NFA states, sorted.
+    sets: Vec<Vec<usize>>,
+    /// Per state: the pattern it accepts (the earliest), if any.
+    accepts: Vec<Option<u32>>,
+    /// Per state: the state after each ASCII character, or [`DEAD`].
+    next: Vec<[u32; 128]>,
+}
+
+const DEAD: u32 = u32::MAX;
+/// Lexers' automata have hundreds of states; one that would have more falls back to the NFA.
+const MAX_DFA_STATES: usize = 20_000;
 
 impl Matcher {
     pub(crate) fn new() -> Matcher {
@@ -313,6 +331,7 @@ impl Matcher {
 
     /// Adds a pattern that reports `id` when it matches. Earlier patterns win ties.
     pub(crate) fn add(&mut self, node: &Node, id: u32) {
+        self.dfa = std::sync::OnceLock::new();
         let accept = self.push(State::Match(id));
         let start = self.compile(node, accept);
         self.starts.push(start);
@@ -398,41 +417,128 @@ impl Matcher {
         }
     }
 
+    /// The NFA states reachable from `set` on `c`, closed over empty moves and sorted.
+    fn step(&self, set: &[usize], c: char, seen: &mut [bool]) -> Vec<usize> {
+        let mut next = Vec::new();
+        for &s in set {
+            let target = match self.states[s] {
+                State::Char(want, n) if want == c => Some(n),
+                State::Class(cl, n) if self.classes[cl].matches(c) => Some(n),
+                State::Any(n) if c != '\n' => Some(n),
+                _ => None,
+            };
+            if let Some(n) = target {
+                self.add_closure(n, &mut next, seen);
+            }
+        }
+        // The closure marked the states it went through, empty moves included.
+        seen.iter_mut().for_each(|s| *s = false);
+        next.sort_unstable();
+        next
+    }
+
+    fn accept(&self, set: &[usize]) -> Option<u32> {
+        set.iter()
+            .filter_map(|&s| match self.states[s] {
+                State::Match(id) => Some(id),
+                _ => None,
+            })
+            .min()
+    }
+
+    fn start_set(&self) -> Vec<usize> {
+        let mut seen = vec![false; self.states.len()];
+        let mut set = Vec::new();
+        for &s in &self.starts {
+            self.add_closure(s, &mut set, &mut seen);
+        }
+        set.sort_unstable();
+        set.dedup();
+        set
+    }
+
+    fn build_dfa(&self) -> Option<Dfa> {
+        let mut dfa = Dfa {
+            sets: vec![self.start_set()],
+            accepts: Vec::new(),
+            next: Vec::new(),
+        };
+        let mut ids: std::collections::HashMap<Vec<usize>, u32> = std::collections::HashMap::new();
+        ids.insert(dfa.sets[0].clone(), 0);
+        let mut seen = vec![false; self.states.len()];
+        let mut i = 0;
+        while i < dfa.sets.len() {
+            let set = dfa.sets[i].clone();
+            dfa.accepts.push(self.accept(&set));
+            let mut row = [DEAD; 128];
+            for (b, slot) in row.iter_mut().enumerate() {
+                let next = self.step(&set, b as u8 as char, &mut seen);
+                if next.is_empty() {
+                    continue;
+                }
+                *slot = match ids.get(&next) {
+                    Some(&id) => id,
+                    None => {
+                        if dfa.sets.len() >= MAX_DFA_STATES {
+                            return None;
+                        }
+                        let id = dfa.sets.len() as u32;
+                        ids.insert(next.clone(), id);
+                        dfa.sets.push(next);
+                        id
+                    }
+                };
+            }
+            dfa.next.push(row);
+            i += 1;
+        }
+        Some(dfa)
+    }
+
     /// The longest non-empty match starting at byte offset `pos`: `(end offset, pattern id)`.
     pub(crate) fn longest_match(&self, text: &str, pos: usize) -> Option<(usize, u32)> {
-        let mut seen = vec![false; self.states.len()];
-        let mut current = Vec::new();
-        for &s in &self.starts {
-            self.add_closure(s, &mut current, &mut seen);
-        }
+        let Some(dfa) = self.dfa.get_or_init(|| self.build_dfa()) else {
+            return self.nfa_match(text, pos, self.start_set(), None);
+        };
+        let bytes = text.as_bytes();
+        let mut state = 0usize;
         let mut best = None;
-        let mut next = Vec::new();
-        for (offset, c) in text[pos..].char_indices() {
-            seen.iter_mut().for_each(|s| *s = false);
-            next.clear();
-            for &s in &current {
-                let target = match self.states[s] {
-                    State::Char(want, n) if want == c => Some(n),
-                    State::Class(cl, n) if self.classes[cl].matches(c) => Some(n),
-                    State::Any(n) if c != '\n' => Some(n),
-                    _ => None,
-                };
-                if let Some(n) = target {
-                    self.add_closure(n, &mut next, &mut seen);
-                }
+        let mut i = pos;
+        while i < bytes.len() {
+            let b = bytes[i];
+            if b >= 128 {
+                return self.nfa_match(text, i, dfa.sets[state].clone(), best);
             }
+            let next = dfa.next[state][b as usize];
+            if next == DEAD {
+                break;
+            }
+            state = next as usize;
+            i += 1;
+            if let Some(id) = dfa.accepts[state] {
+                best = Some((i, id));
+            }
+        }
+        best
+    }
+
+    /// Continues a match at byte offset `pos` from the NFA states `current`, with the best match
+    /// so far.
+    fn nfa_match(
+        &self,
+        text: &str,
+        pos: usize,
+        mut current: Vec<usize>,
+        mut best: Option<(usize, u32)>,
+    ) -> Option<(usize, u32)> {
+        let mut seen = vec![false; self.states.len()];
+        for (offset, c) in text[pos..].char_indices() {
+            let next = self.step(&current, c, &mut seen);
             if next.is_empty() {
                 break;
             }
-            std::mem::swap(&mut current, &mut next);
-            let accepted = current
-                .iter()
-                .filter_map(|&s| match self.states[s] {
-                    State::Match(id) => Some(id),
-                    _ => None,
-                })
-                .min();
-            if let Some(id) = accepted {
+            current = next;
+            if let Some(id) = self.accept(&current) {
                 best = Some((pos + offset + c.len_utf8(), id));
             }
         }

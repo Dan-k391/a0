@@ -564,8 +564,10 @@ impl Language {
                 std::fs::read_to_string(p).ok()
             }
         };
-        let loaded = program::load(&grammar, modules, root, packages, &mut read, sources)
-            .map_err(CompileError::Diagnostics)?;
+        let loaded = a0_diag::time::stage("parse", || {
+            program::load(&grammar, modules, root, packages, &mut read, sources)
+        })
+        .map_err(CompileError::Diagnostics)?;
         let name = match packages {
             Some(p) if packages_main_is(p, root) => p.name.clone(),
             _ => Path::new(root)
@@ -573,7 +575,10 @@ impl Language {
                 .map(|s| s.to_string_lossy().into_owned())
                 .unwrap_or_default(),
         };
-        let m = program::compile(&loaded, modules, &name).map_err(CompileError::Diagnostics)?;
+        let m = a0_diag::time::stage("analyze (HIR)", || {
+            program::compile(&loaded, modules, &name)
+        })
+        .map_err(CompileError::Diagnostics)?;
         let entry = a0_hir::check_entry(&m);
         if entry.has_errors() {
             return Err(CompileError::Diagnostics(entry));

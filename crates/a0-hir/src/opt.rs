@@ -30,22 +30,21 @@ pub(crate) fn optimize(m: &mut HirModule) {
     let inlinable = o.inlinable_functions();
     // Callees before their callers: a callee is copied, and measured, as it is after its own
     // inlining, so no copy is inlined into again and sizes cannot compound along a call chain.
+    // (Bodies that inlining makes belong to the function inlined into, which is done by then.)
+    let bodies = o.bodies_by_function();
     for f in o.bottom_up() {
-        for b in 0..o.m.bodies.len() {
-            let body = BodyId(b as u32);
-            if o.m.bodies[b].func != f {
-                continue;
-            }
-            if let Some(root) = o.m.bodies[b].root {
+        for &body in &bodies[f.index()] {
+            if let Some(root) = o.m.bodies[body.index()].root {
                 let size = o.size(root);
                 let mut budget = GROWN_SIZE.max(2 * size) - size;
                 o.inline_calls(root, body, &inlinable, &mut budget);
             }
         }
     }
+    let bodies = o.bodies_by_function();
     for _ in 0..ROUNDS {
-        for f in 0..o.m.funcs.len() {
-            o.simplify_function(FuncId(f as u32));
+        for bodies in &bodies {
+            o.simplify_function(bodies);
         }
     }
 }
@@ -189,9 +188,7 @@ impl Opt<'_> {
     /// Calls `f` on `e` and every node under it (not inside closures).
     fn walk(&self, e: ExprId, f: &mut dyn FnMut(&HirModule, ExprId)) {
         f(self.m, e);
-        for c in self.children(e) {
-            self.walk(c, f);
-        }
+        visit_children(self.m, e, &mut |c| self.walk(c, f));
     }
 
     /// Whether `e`, a function body, has a `return` other than in tail position (the last statement
@@ -491,17 +488,23 @@ impl Opt<'_> {
 
     // ---------------------------------------------------------------- simplification
 
-    fn simplify_function(&mut self, f: FuncId) {
-        let bodies: Vec<BodyId> = (0..self.m.bodies.len())
-            .map(|b| BodyId(b as u32))
-            .filter(|&b| self.m.bodies[b.index()].func == f)
-            .collect();
-        let uses = self.uses(&bodies);
-        self.split_boxed_lets(&bodies, &uses);
+    /// Each function's bodies (its own and its closures'), by function index.
+    fn bodies_by_function(&self) -> Vec<Vec<BodyId>> {
+        let mut out = vec![Vec::new(); self.m.funcs.len()];
+        for (b, body) in self.m.bodies.iter().enumerate() {
+            out[body.func.index()].push(BodyId(b as u32));
+        }
+        out
+    }
+
+    /// Simplifies one function's bodies (its own and its closures').
+    fn simplify_function(&mut self, bodies: &[BodyId]) {
+        let uses = self.uses(bodies);
+        self.split_boxed_lets(bodies, &uses);
         // The split made new locals; count again.
-        let uses = self.uses(&bodies);
-        let replace = self.replacements(&bodies, &uses);
-        for b in bodies {
+        let uses = self.uses(bodies);
+        let replace = self.replacements(bodies, &uses);
+        for &b in bodies {
             if let Some(root) = self.m.bodies[b.index()].root {
                 let root = self.simplify(root, &uses, &replace);
                 self.m.bodies[b.index()].root = Some(root);
@@ -762,27 +765,29 @@ impl Opt<'_> {
 
     /// Simplifies the tree under `e` bottom-up and returns what replaces `e`.
     fn simplify(&mut self, e: ExprId, uses: &Uses, replace: &HashMap<LocalId, Replace>) -> ExprId {
-        let kind = self.kind(e).clone();
-        // Children first.
-        let kind = match kind {
+        // Children first, rewritten in place: the node is taken out meanwhile (nothing under it
+        // looks at it), so that a program's worth of nodes is not cloned every round.
+        let mut kind = std::mem::replace(&mut self.m.exprs[e.index()].kind, ExprKind::Unit);
+        match &mut kind {
             ExprKind::Match(s, arms) => {
-                let s = self.simplify(s, uses, replace);
-                for &a in &arms {
+                *s = self.simplify(*s, uses, replace);
+                for &a in arms.iter() {
                     let b = self.m.arms[a.index()].body;
                     self.m.arms[a.index()].body = self.simplify(b, uses, replace);
                 }
-                ExprKind::Match(s, arms)
             }
-            ExprKind::Lambda(b) => {
-                // A closure body is simplified with its own function's bodies.
-                ExprKind::Lambda(b)
-            }
-            k => map_children(&k, &mut |c| self.simplify(c, uses, replace)),
-        };
-        self.m.exprs[e.index()].kind = kind.clone();
+            // A closure body is simplified with its own function's bodies.
+            ExprKind::Lambda(_) => {}
+            k => map_children_mut(k, &mut |c| self.simplify(c, uses, replace)),
+        }
+        if let ExprKind::Block(items, tail) = kind {
+            return self.simplify_block(e, items, tail, uses);
+        }
+        let shape = Shape::of(&kind);
+        self.m.exprs[e.index()].kind = kind;
         let ty = self.ty(e);
-        match kind {
-            ExprKind::Local(l) => match replace.get(&l) {
+        match shape {
+            Shape::Local(l) => match replace.get(&l) {
                 Some(Replace::Local(q)) => {
                     self.m.exprs[e.index()].kind = ExprKind::Local(*q);
                     e
@@ -793,8 +798,8 @@ impl Opt<'_> {
                 }
                 Some(Replace::Boxed(..)) | None => e,
             },
-            ExprKind::Cast(x) if self.ty(x) == ty => x,
-            ExprKind::Cast(x) => match self.kind(x).clone() {
+            Shape::Cast(x) if self.ty(x) == ty => x,
+            Shape::Cast(x) => match self.kind(x).clone() {
                 // `(y as any) as T` with `y: T` is `y`.
                 ExprKind::Cast(y) if self.ty(x) == TypeId::ANY && self.ty(y) == ty => y,
                 ExprKind::Local(l) => match replace.get(&l) {
@@ -806,7 +811,7 @@ impl Opt<'_> {
                 },
                 _ => e,
             },
-            ExprKind::Is(x, t) => {
+            Shape::Is(x, t) => {
                 let known = match self.kind(x).clone() {
                     ExprKind::Cast(y) if self.ty(x) == TypeId::ANY => {
                         known_test(self.m, self.ty(y), t).map(|v| (v, Some(y)))
@@ -830,7 +835,7 @@ impl Opt<'_> {
                     None => e,
                 }
             }
-            ExprKind::Unary(UnOp::Not, x) => match self.kind(x).clone() {
+            Shape::Not(x) => match self.kind(x).clone() {
                 ExprKind::Bool(v) => {
                     self.m.exprs[e.index()].kind = ExprKind::Bool(!v);
                     e
@@ -838,19 +843,19 @@ impl Opt<'_> {
                 ExprKind::Unary(UnOp::Not, y) => y,
                 _ => e,
             },
-            ExprKind::And(a, b) => match (self.kind(a).clone(), self.kind(b).clone()) {
+            Shape::And(a, b) => match (self.kind(a).clone(), self.kind(b).clone()) {
                 (ExprKind::Bool(true), _) => b,
                 (ExprKind::Bool(false), _) => a,
                 (_, ExprKind::Bool(true)) => a,
                 _ => e,
             },
-            ExprKind::Or(a, b) => match (self.kind(a).clone(), self.kind(b).clone()) {
+            Shape::Or(a, b) => match (self.kind(a).clone(), self.kind(b).clone()) {
                 (ExprKind::Bool(false), _) => b,
                 (ExprKind::Bool(true), _) => a,
                 (_, ExprKind::Bool(false)) => a,
                 _ => e,
             },
-            ExprKind::If(c, t, f) => match (self.kind(c).clone(), f) {
+            Shape::If(c, t, f) => match (self.kind(c).clone(), f) {
                 (ExprKind::Bool(true), Some(_)) => t,
                 (ExprKind::Bool(false), Some(f)) => f,
                 (ExprKind::Bool(true), None) => self.node(ExprKind::Block(vec![t], None), ty, e),
@@ -861,8 +866,7 @@ impl Opt<'_> {
                 }
                 _ => e,
             },
-            ExprKind::Block(items, tail) => self.simplify_block(e, items, tail, uses),
-            _ => e,
+            Shape::Other => e,
         }
     }
 
@@ -889,15 +893,15 @@ impl Opt<'_> {
             if dead {
                 break;
             }
-            match self.kind(item).clone() {
+            match self.kind(item) {
                 // A nested block without a value: its statements, in place.
                 ExprKind::Block(inner, None) => {
-                    for i in inner {
+                    for &i in inner {
                         dead |= self.ty(i) == TypeId::NEVER;
                         out.push(i);
                     }
                 }
-                ExprKind::Let(l, init)
+                &ExprKind::Let(l, init)
                     if !uses.reads.contains_key(&l)
                         && !uses.writes.contains_key(&l)
                         && !uses.captured.contains(&l) =>
@@ -959,6 +963,105 @@ impl Opt<'_> {
                 items.iter().all(|&i| self.pure(i)) && tail.is_none_or(|t| self.pure(t))
             }
             _ => false,
+        }
+    }
+}
+
+/// The parts of a node [`Opt::simplify`] rewrites, copied out of it.
+#[derive(Clone, Copy)]
+enum Shape {
+    Local(LocalId),
+    Cast(ExprId),
+    Is(ExprId, TypeId),
+    Not(ExprId),
+    And(ExprId, ExprId),
+    Or(ExprId, ExprId),
+    If(ExprId, ExprId, Option<ExprId>),
+    Other,
+}
+
+impl Shape {
+    fn of(kind: &ExprKind) -> Shape {
+        match *kind {
+            ExprKind::Local(l) => Shape::Local(l),
+            ExprKind::Cast(x) => Shape::Cast(x),
+            ExprKind::Is(x, t) => Shape::Is(x, t),
+            ExprKind::Unary(UnOp::Not, x) => Shape::Not(x),
+            ExprKind::And(a, b) => Shape::And(a, b),
+            ExprKind::Or(a, b) => Shape::Or(a, b),
+            ExprKind::If(c, t, f) => Shape::If(c, t, f),
+            _ => Shape::Other,
+        }
+    }
+}
+
+/// Replaces each child expression of `kind` by `f(child)`, in place (match arms are left to the
+/// caller).
+fn map_children_mut(kind: &mut ExprKind, f: &mut dyn FnMut(ExprId) -> ExprId) {
+    use ExprKind::*;
+    let all = |v: &mut [ExprId], f: &mut dyn FnMut(ExprId) -> ExprId| {
+        for x in v {
+            *x = f(*x);
+        }
+    };
+    match kind {
+        Unit | Bool(_) | Int(_) | Float(_) | Str(_) | Null | Local(_) | Global(_) | Func(..)
+        | Lambda(_) | NewArray | NewMap | NewObject | SizeOf(_) | Break | Continue => {}
+        Let(_, a)
+        | SetLocal(_, a)
+        | SetGlobal(_, a)
+        | Unary(_, a)
+        | Field(a, _)
+        | FieldName(a, _)
+        | Cast(a)
+        | Unwrap(a)
+        | Is(a, _)
+        | Loop(a)
+        | Throw(a) => *a = f(*a),
+        SetField(a, _, b)
+        | SetFieldName(a, _, b)
+        | Binary(_, a, b)
+        | And(a, b)
+        | Or(a, b)
+        | Index(a, b)
+        | While(a, b)
+        | Try(a, _, b) => {
+            *a = f(*a);
+            *b = f(*b);
+        }
+        SetIndex(a, b, c) => {
+            *a = f(*a);
+            *b = f(*b);
+            *c = f(*c);
+        }
+        Call(_, _, args)
+        | CallExtern(_, args)
+        | New(_, args)
+        | Variant(_, _, args)
+        | Array(args)
+        | Builtin(_, args) => all(args, f),
+        CallValue(c, args) | MethodCall(c, _, args) | InterfaceCall(c, _, _, args) => {
+            *c = f(*c);
+            all(args, f);
+        }
+        Match(s, _) => *s = f(*s),
+        If(c, t, e) | IfLet(_, c, t, e) => {
+            *c = f(*c);
+            *t = f(*t);
+            if let Some(e) = e {
+                *e = f(*e);
+            }
+        }
+        Return(v) => {
+            if let Some(v) = v {
+                *v = f(*v);
+            }
+        }
+        Block(items, tail) => {
+            all(items, f);
+            if let Some(t) = tail {
+                *t = f(*t);
+            }
         }
     }
 }

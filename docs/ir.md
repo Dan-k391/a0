@@ -207,8 +207,9 @@ casts out of `any`, panics, traps) take two arguments more than the IR declares,
 pass: the location of the call and the caller's frame pointer (null in the interpreter). Native code
 keeps frame pointers and emits a table from the return address of each call to its location, so the
 runtime walks the frame pointer chain through generated frames only; nothing is done at calls that
-do not fail. The interpreter keeps the location of each active call and gives it to the runtime
-when asked.
+do not fail. A large program is compiled into several objects at once (`compile_objects`, D82),
+each with the table of its own code (`a0_rt_add_code`); the location table is one. The interpreter
+keeps the location of each active call and gives it to the runtime when asked.
 
 ## Debug information
 

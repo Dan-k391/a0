@@ -113,6 +113,8 @@ typedef struct A0CodeTable {
 
 /* Gives the runtime the program's tables (`code` is NULL in the interpreter). */
 void a0_rt_set_debug(const A0LocationTable *locations, const A0CodeTable *code);
+/* Adds the code table of another object of the program (one compiled in parallel has several). */
+void a0_rt_add_code(const A0CodeTable *code);
 /* The interpreter's frames: fills `out` with the location of the active call in each frame,
  * innermost first, and returns how many. */
 typedef size_t (*A0FramesFn)(uint32_t *out, size_t max);

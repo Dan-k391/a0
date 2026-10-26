@@ -11,7 +11,7 @@ use a0_runtime::HostSymbols;
 use a0_target::Target;
 use cranelift_jit::{JITBuilder, JITModule};
 
-use crate::codegen::{compile_functions, make_isa};
+use crate::codegen::{Unit, compile_functions, make_isa};
 
 /// How [`run_main`] compiles and runs a program.
 #[derive(Clone, Debug)]
@@ -134,12 +134,28 @@ fn compile(
         symbols.lookup(name).map(|a| a as *const u8)
     }));
     let mut jit = JITModule::new(builder);
-    let compiled = compile_functions(&mut jit, m, target, "main", false)?;
+    let locations = a0_ir::Locations::build(m);
+    let compiled = compile_functions(
+        &mut jit,
+        m,
+        target,
+        "main",
+        false,
+        &Unit::whole(m),
+        &locations,
+    )?;
     jit.finalize_definitions()
         .map_err(|e| jit_error(&format!("cannot load the compiled code: {e}")))?;
     let main = m.lookup_func("main").expect("checked by check_entry");
     let main = jit.get_finalized_function(compiled.func_ids[main.index()]) as usize;
-    let locations = jit.get_finalized_data(compiled.tables.0).0 as usize;
+    let locations = jit
+        .get_finalized_data(
+            compiled
+                .tables
+                .0
+                .expect("the JIT has every function and the data"),
+        )
+        .0 as usize;
     let code = jit.get_finalized_data(compiled.tables.1).0 as usize;
     Ok((jit, main, (locations, code)))
 }

@@ -99,11 +99,147 @@ pub fn compile_object(
     target: Target,
     opts: &CodegenOptions,
 ) -> Result<Vec<u8>, Diagnostics> {
-    // The module is verified first, so Cranelift should never panic; if it does anyway, report it as
-    // a diagnostic rather than taking the caller down.
-    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        compile_object_inner(m, target, opts)
-    })) {
+    catch_codegen_panic(target, || compile_object_inner(m, target, opts))
+}
+
+fn compile_object_inner(
+    m: &Module,
+    target: Target,
+    opts: &CodegenOptions,
+) -> Result<Vec<u8>, Diagnostics> {
+    check(m, opts)?;
+    let locations = a0_ir::Locations::build(m);
+    compile_unit(m, target, opts, &Unit::whole(m), 1, &locations)
+}
+
+/// Verifies `m`, and its entry point if an executable is wanted.
+fn check(m: &Module, opts: &CodegenOptions) -> Result<(), Diagnostics> {
+    let diags = a0_ir::verify(m);
+    if diags.has_errors() {
+        return Err(diags);
+    }
+    if opts.entry_point {
+        let diags = a0_ir::check_entry(m);
+        if diags.has_errors() {
+            return Err(diags);
+        }
+    }
+    Ok(())
+}
+
+/// The functions one object gets (or the JIT, all of them), and whether it also defines the
+/// module's globals, its location table and, for an executable, the C `main`.
+pub(crate) struct Unit {
+    pub index: usize,
+    pub funcs: Vec<FuncId>,
+    pub data: bool,
+}
+
+impl Unit {
+    /// Every function with a body, with the data: one object, or the JIT.
+    pub(crate) fn whole(m: &Module) -> Unit {
+        Unit {
+            index: 0,
+            funcs: (0..m.func_count())
+                .map(FuncId)
+                .filter(|&f| !m.func_is_extern(f))
+                .collect(),
+            data: true,
+        }
+    }
+}
+
+/// Instructions per object when a program is compiled in parallel (D82): enough that each object's
+/// fixed costs stay small, few enough that a large program has work for every processor.
+const UNIT_INSTS: usize = 8_000;
+/// At most this many objects.
+const MAX_UNITS: usize = 64;
+
+/// The objects a program is compiled into: runs of functions in the module's order, of about the
+/// same number of instructions. It depends on the program alone, never on the machine, so that a
+/// build gives the same executable everywhere.
+fn partition(m: &Module) -> Vec<Unit> {
+    let mut sizes = vec![0usize; m.func_count() as usize];
+    for f in 0..m.func_count() {
+        if let Some(body) = m.func_body(FuncId(f)) {
+            sizes[f as usize] = a0_ir::insts_in_text_order(m, body).len().max(1);
+        }
+    }
+    let funcs = Unit::whole(m).funcs;
+    let total: usize = funcs.iter().map(|f| sizes[f.index()]).sum();
+    // Tests split small programs too (`A0_CODEGEN_UNITS`).
+    let count = match std::env::var("A0_CODEGEN_UNITS").map(|v| v.parse::<usize>()) {
+        Ok(Ok(n)) => n.clamp(1, MAX_UNITS),
+        _ => (total / UNIT_INSTS).clamp(1, MAX_UNITS),
+    };
+    let per_unit = total.div_ceil(count);
+    let mut units = vec![Unit {
+        index: 0,
+        funcs: Vec::new(),
+        data: true,
+    }];
+    let mut filled = 0;
+    for f in funcs {
+        if filled >= per_unit && units.len() < count {
+            units.push(Unit {
+                index: units.len(),
+                funcs: Vec::new(),
+                data: false,
+            });
+            filled = 0;
+        }
+        filled += sizes[f.index()];
+        units.last_mut().unwrap().funcs.push(f);
+    }
+    units
+}
+
+/// Compiles a verified module with an entry point into one object or, for a large program, several
+/// compiled at once on the machine's processors (D82), to be linked together.
+pub fn compile_objects(
+    m: &Module,
+    target: Target,
+    opts: &CodegenOptions,
+) -> Result<Vec<Vec<u8>>, Diagnostics> {
+    check(m, opts)?;
+    let units = partition(m);
+    let locations = a0_ir::Locations::build(m);
+
+    type Slot = std::sync::Mutex<Option<Result<Vec<u8>, Diagnostics>>>;
+    let results: Vec<Slot> = units.iter().map(|_| std::sync::Mutex::new(None)).collect();
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    let workers = std::thread::available_parallelism()
+        .map_or(1, |n| n.get())
+        .min(units.len());
+    std::thread::scope(|scope| {
+        for _ in 0..workers {
+            scope.spawn(|| {
+                loop {
+                    let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    let Some(unit) = units.get(i) else {
+                        break;
+                    };
+                    let result = catch_codegen_panic(target, || {
+                        compile_unit(m, target, opts, unit, units.len(), &locations)
+                    });
+                    *results[i].lock().unwrap() = Some(result);
+                }
+            });
+        }
+    });
+    results
+        .into_iter()
+        .map(|r| r.into_inner().unwrap().expect("every unit is compiled"))
+        .collect()
+}
+
+/// `f`, with a panic in Cranelift reported as a diagnostic rather than taking the caller down
+/// (the module is verified first, so it should never panic).
+fn catch_codegen_panic(
+    target: Target,
+    f: impl FnOnce() -> Result<Vec<u8>, Diagnostics>,
+) -> Result<Vec<u8>, Diagnostics> {
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)) {
         Ok(result) => result,
         Err(payload) => {
             let detail = payload
@@ -118,25 +254,24 @@ pub fn compile_object(
     }
 }
 
-fn compile_object_inner(
+/// Compiles one unit of `units` into an object.
+fn compile_unit(
     m: &Module,
     target: Target,
     opts: &CodegenOptions,
+    unit: &Unit,
+    units: usize,
+    locations: &a0_ir::Locations,
 ) -> Result<Vec<u8>, Diagnostics> {
-    let diags = a0_ir::verify(m);
-    if diags.has_errors() {
-        return Err(diags);
-    }
-    if opts.entry_point {
-        let diags = a0_ir::check_entry(m);
-        if diags.has_errors() {
-            return Err(diags);
-        }
-    }
     let isa = make_isa(target, opts.optimize, false)?;
+    let name = if units == 1 {
+        m.name().to_string()
+    } else {
+        format!("{}.{}", m.name(), unit.index)
+    };
     let builder = ObjectBuilder::new(
         isa,
-        m.name().as_bytes().to_vec(),
+        name.as_bytes().to_vec(),
         cranelift_module::default_libcall_names(),
     )
     .map_err(|e| backend_error(format!("cannot create an object for {target}: {e}")))?;
@@ -146,9 +281,17 @@ fn compile_object_inner(
     } else {
         "main"
     };
-    let compiled = compile_functions(&mut obj, m, target, main_symbol, opts.debug_info)?;
+    let compiled = compile_functions(
+        &mut obj,
+        m,
+        target,
+        main_symbol,
+        opts.debug_info,
+        unit,
+        locations,
+    )?;
 
-    if opts.entry_point {
+    if opts.entry_point && unit.data {
         let main = m.lookup_func("main").unwrap();
         let mut ctx = obj.make_context();
         let mut fctx = FunctionBuilderContext::new();
@@ -159,7 +302,11 @@ fn compile_object_inner(
             compiled.func_ids[main.index()],
             &compiled.rt,
             target,
-            compiled.tables,
+            (
+                compiled.tables.0.expect("the data unit has the locations"),
+                compiled.tables.1,
+            ),
+            units,
         )?;
     }
 
@@ -184,23 +331,16 @@ fn compile_object_inner(
             .map(|d| d.to_string_lossy().into_owned())
             .unwrap_or_default();
         let written = if target.has_dwarf() {
-            crate::dwarf::emit(
-                &mut product.object,
-                m,
-                target,
-                &compiled.locations,
-                &functions,
-                &dir,
-            )
+            crate::dwarf::emit(&mut product.object, m, target, locations, &functions, &dir)
         } else {
             crate::codeview::emit(
                 &mut product.object,
                 m,
                 target.arch(),
-                &compiled.locations,
+                locations,
                 &functions,
                 &dir,
-                &format!("{}.obj", m.name()),
+                &format!("{name}.obj"),
             )
         };
         written.map_err(|e| backend_error(format!("cannot write debug information: {e}")))?;
@@ -215,9 +355,9 @@ pub(crate) struct Compiled {
     /// Every IR function's id in the Cranelift module, by IR index.
     pub func_ids: Vec<cranelift_module::FuncId>,
     pub rt: RuntimeFuncs,
-    /// The location table and the code table (`a0rt.h`), for `a0_rt_set_debug`.
-    pub tables: (DataId, DataId),
-    pub locations: a0_ir::Locations,
+    /// The location table (in the unit with the data) and the unit's code table (`a0rt.h`), for
+    /// `a0_rt_set_debug` and `a0_rt_add_code`.
+    pub tables: (Option<DataId>, DataId),
     pub code_ranges: Vec<CallRanges>,
     /// The functions with bodies, in the order of `code_ranges`.
     pub defined: Vec<FuncId>,
@@ -225,16 +365,23 @@ pub(crate) struct Compiled {
     pub var_places: Vec<Vec<crate::dwarf::VarPlace>>,
 }
 
-/// Declares and defines every function and global of a verified module in `obj` (an object file
-/// or the JIT's memory), with the tables runtime errors print traces from. The IR's `@main` is
-/// named `main_symbol`; `lines` gives every instruction its location, for debug information.
+/// Declares every function and global of a verified module in `obj` (an object file or the JIT's
+/// memory) and defines those of `unit`, with the tables runtime errors print traces from. The IR's
+/// `@main` is named `main_symbol`; `lines` gives every instruction its location, for debug
+/// information.
 pub(crate) fn compile_functions<M: ClifModule>(
     obj: &mut M,
     m: &Module,
     target: Target,
     main_symbol: &str,
     lines: bool,
+    unit: &Unit,
+    locations: &a0_ir::Locations,
 ) -> Result<Compiled, Diagnostics> {
+    let mut defines = vec![false; m.func_count() as usize];
+    for &f in &unit.funcs {
+        defines[f.index()] = true;
+    }
     let ptr = clif_type(Type::Ptr, target);
     let symbol_name = |f: FuncId| -> String {
         let name = m.func_name(f);
@@ -259,10 +406,11 @@ pub(crate) fn compile_functions<M: ClifModule>(
         } else {
             signature(obj, &params, m.func_ret(f), target)
         };
-        let linkage = if m.func_is_extern(f) {
-            Linkage::Import
-        } else {
+        // A function another unit defines is imported from its object (D82).
+        let linkage = if defines[f.index()] {
             Linkage::Export
+        } else {
+            Linkage::Import
         };
         let id = obj
             .declare_function(&symbol_name(f), linkage, &sig)
@@ -272,11 +420,16 @@ pub(crate) fn compile_functions<M: ClifModule>(
     let mut data_ids = Vec::new();
     for g in 0..m.global_count() {
         let g = GlobalId(g);
-        let id = define_global(obj, m, g, target)?;
+        let id = if unit.data {
+            define_global(obj, m, g, target)?
+        } else {
+            let name = m.global_name(g);
+            obj.declare_data(name, Linkage::Import, !m.global_is_data(g), false)
+                .map_err(|e| backend_error(format!("cannot declare @{name}: {e}")))?
+        };
         data_ids.push(id);
     }
     let rt = RuntimeFuncs::declare(obj, target)?;
-    let locations = a0_ir::Locations::build(m);
     // Per defined function: its id, code size and the ranges of its calls with their locations.
     let mut code_ranges: Vec<CallRanges> = Vec::new();
     let mut var_places = Vec::new();
@@ -286,11 +439,7 @@ pub(crate) fn compile_functions<M: ClifModule>(
     let frontend_config = obj.target_config();
     let mut ctx = obj.make_context();
     let mut fctx = FunctionBuilderContext::new();
-    for f in 0..m.func_count() {
-        let f = FuncId(f);
-        if m.func_is_extern(f) {
-            continue;
-        }
+    for &f in &unit.funcs {
         ctx.func.signature = signature(obj, m.func_params(f), m.func_ret(f), target);
         {
             let builder = FunctionBuilder::new(&mut ctx.func, &mut fctx);
@@ -310,7 +459,7 @@ pub(crate) fn compile_functions<M: ClifModule>(
                 func_refs: HashMap::new(),
                 trap_sites: Vec::new(),
                 loops: Vec::new(),
-                locations: &locations,
+                locations,
                 lines,
                 line: ir::SourceLoc::default(),
                 debug_slots: Vec::new(),
@@ -325,12 +474,16 @@ pub(crate) fn compile_functions<M: ClifModule>(
         defined.push(f);
         obj.clear_context(&mut ctx);
     }
-    let tables = emit_debug_tables(obj, &locations, &code_ranges)?;
+    let tables = emit_debug_tables(
+        obj,
+        unit.data.then_some(locations),
+        &code_ranges,
+        unit.index,
+    )?;
     Ok(Compiled {
         func_ids,
         rt,
         tables,
-        locations,
         code_ranges,
         defined,
         var_places,
@@ -394,36 +547,50 @@ fn call_ranges(ctx: &Context, id: cranelift_module::FuncId) -> CallRanges {
 }
 
 /// Emits the tables runtime errors print traces from (`A0LocationTable` and `A0CodeTable` in
-/// `a0rt.h`) and returns their data ids.
+/// `a0rt.h`): the location table if given, and unit `unit`'s code table (`a0.debug.code.<unit>`,
+/// which the unit with the C `main` reaches from the others); returns their data ids.
 fn emit_debug_tables<M: ClifModule>(
     obj: &mut M,
-    locations: &a0_ir::Locations,
+    locations: Option<&a0_ir::Locations>,
     code: &[CallRanges],
-) -> Result<(DataId, DataId), Diagnostics> {
+    unit: usize,
+) -> Result<(Option<DataId>, DataId), Diagnostics> {
     // Tables that hold addresses are writable data: position-independent executables cannot have
     // absolute addresses in read-only data.
     fn data<M: ClifModule>(
         obj: &mut M,
         name: &str,
         desc: &DataDescription,
+        writable: bool,
+        linkage: Linkage,
     ) -> Result<DataId, Diagnostics> {
-        let writable = name == "a0.debug.functions" || name == "a0.debug.code";
         let id = obj
-            .declare_data(name, Linkage::Local, writable, false)
+            .declare_data(name, linkage, writable, false)
             .map_err(|e| backend_error(format!("cannot declare {name}: {e}")))?;
         obj.define_data(id, desc)
             .map_err(|e| backend_error(format!("cannot define {name}: {e}")))?;
         Ok(id)
     }
-    let entries: Vec<a0_runtime::debug::Entry> = locations
-        .entries
-        .iter()
-        .map(|l| (l.func.as_str(), l.file.as_str(), l.line, l.col, l.parent))
-        .collect();
-    let mut desc = DataDescription::new();
-    desc.define(a0_runtime::debug::encode(&entries).into_boxed_slice());
-    desc.set_align(8);
-    let locations_id = data(obj, "a0.debug.locations", &desc)?;
+    let locations_id = match locations {
+        Some(locations) => {
+            let entries: Vec<a0_runtime::debug::Entry> = locations
+                .entries
+                .iter()
+                .map(|l| (l.func.as_str(), l.file.as_str(), l.line, l.col, l.parent))
+                .collect();
+            let mut desc = DataDescription::new();
+            desc.define(a0_runtime::debug::encode(&entries).into_boxed_slice());
+            desc.set_align(8);
+            Some(data(
+                obj,
+                "a0.debug.locations",
+                &desc,
+                false,
+                Linkage::Local,
+            )?)
+        }
+        None => None,
+    };
 
     let mut ranges = Vec::new();
     let mut funcs = Vec::new();
@@ -443,7 +610,7 @@ fn emit_debug_tables<M: ClifModule>(
         .into_boxed_slice(),
     );
     desc.set_align(4);
-    let ranges_id = data(obj, "a0.debug.ranges", &desc)?;
+    let ranges_id = data(obj, "a0.debug.ranges", &desc, false, Linkage::Local)?;
 
     // A0CodeFunction: the start address, then size, first range, range count and padding.
     let mut bytes = vec![0u8; funcs.len().max(1) * 24];
@@ -458,7 +625,7 @@ fn emit_debug_tables<M: ClifModule>(
     }
     desc.define(bytes.into_boxed_slice());
     desc.set_align(8);
-    let functions_id = data(obj, "a0.debug.functions", &desc)?;
+    let functions_id = data(obj, "a0.debug.functions", &desc, true, Linkage::Local)?;
 
     let mut desc = DataDescription::new();
     let mut header = vec![0u8; 24];
@@ -469,8 +636,13 @@ fn emit_debug_tables<M: ClifModule>(
     desc.write_data_addr(8, functions, 0);
     let ranges = obj.declare_data_in_data(ranges_id, &mut desc);
     desc.write_data_addr(16, ranges, 0);
-    let code_id = data(obj, "a0.debug.code", &desc)?;
+    let code_id = data(obj, &code_table_name(unit), &desc, true, Linkage::Export)?;
     Ok((locations_id, code_id))
+}
+
+/// The symbol of unit `unit`'s code table.
+fn code_table_name(unit: usize) -> String {
+    format!("a0.debug.code.{unit}")
 }
 
 fn define<M: ClifModule>(
@@ -609,7 +781,8 @@ impl RuntimeFuncs {
 }
 
 /// `int main(int argc, char **argv) { a0_rt_init(argc, argv); a0_rt_set_debug(...);
-/// a0_rt_exit(a0.main()); }`
+/// a0_rt_add_code(...) for each other unit; a0_rt_exit(a0.main()); }`
+#[allow(clippy::too_many_arguments)]
 fn emit_c_main(
     obj: &mut ObjectModule,
     ctx: &mut Context,
@@ -618,7 +791,26 @@ fn emit_c_main(
     rt: &RuntimeFuncs,
     target: Target,
     (locations, code): (DataId, DataId),
+    units: usize,
 ) -> Result<(), Diagnostics> {
+    // The other units' code tables, and the runtime function that takes them.
+    let mut others = Vec::new();
+    for u in 1..units {
+        let name = code_table_name(u);
+        others.push(
+            obj.declare_data(&name, Linkage::Import, true, false)
+                .map_err(|e| backend_error(format!("cannot declare {name}: {e}")))?,
+        );
+    }
+    let add_code = if units > 1 {
+        let sig = signature(obj, &[Type::Ptr], None, target);
+        Some(
+            obj.declare_function("a0_rt_add_code", Linkage::Import, &sig)
+                .map_err(|e| backend_error(format!("cannot declare a0_rt_add_code: {e}")))?,
+        )
+    } else {
+        None
+    };
     let sig = signature(obj, &[Type::I32, Type::Ptr], Some(Type::I32), target);
     let id = obj
         .declare_function("main", Linkage::Export, &sig)
@@ -642,6 +834,14 @@ fn emit_c_main(
         let code = b.ins().symbol_value(ptr, code);
         let set_debug = obj.declare_func_in_func(rt.set_debug, b.func);
         b.ins().call(set_debug, &[locations, code]);
+        if let Some(add_code) = add_code {
+            let add_code = obj.declare_func_in_func(add_code, b.func);
+            for &other in &others {
+                let table = obj.declare_data_in_func(other, b.func);
+                let table = b.ins().symbol_value(ptr, table);
+                b.ins().call(add_code, &[table]);
+            }
+        }
         let um = obj.declare_func_in_func(user_main, b.func);
         let call = b.ins().call(um, &[]);
         let code = b.inst_results(call)[0];

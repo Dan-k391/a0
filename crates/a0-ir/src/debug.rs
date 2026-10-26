@@ -40,19 +40,41 @@ impl Locations {
                 entries: Vec::new(),
                 inst: vec![0; m.insts.len()],
             },
-            ids: HashMap::new(),
             sites: HashMap::new(),
         };
+        // Instructions that share a location are found by numbers, without making its strings.
+        // (Copies of one generic function may repeat a location; that costs a few entries.)
+        let mut memo: HashMap<MemoKey, u32> = HashMap::new();
         for (i, data) in m.insts.iter().enumerate() {
             let Some(name) = m.func_trace_name(data.func) else {
                 continue;
             };
+            let place = data.span.map(|s| (s.source.0, s.start));
             let id = match data.inline.option() {
-                None => b.intern(name.to_string(), data.span, 0),
+                None => {
+                    let key = (data.func.0, 0, place);
+                    match memo.get(&key) {
+                        Some(&id) => id,
+                        None => {
+                            let id = b.intern(name.to_string(), data.span, 0);
+                            memo.insert(key, id);
+                            id
+                        }
+                    }
+                }
                 Some(site) => {
                     let parent = b.site(data.func, site);
-                    let callee = m.inline_site(site).callee.clone();
-                    b.intern(callee, data.span, parent)
+                    // The callee is the site's, so the parent and the place decide the location.
+                    let key = (u32::MAX - site.0, parent, place);
+                    match memo.get(&key) {
+                        Some(&id) => id,
+                        None => {
+                            let callee = m.inline_site(site).callee.clone();
+                            let id = b.intern(callee, data.span, parent);
+                            memo.insert(key, id);
+                            id
+                        }
+                    }
                 }
             };
             b.out.inst[i] = id;
@@ -73,10 +95,13 @@ impl Locations {
     }
 }
 
+/// A location by numbers: the function (or the inline site), the parent location, and the span's
+/// source and start.
+type MemoKey = (u32, u32, Option<(u32, u32)>);
+
 struct TableBuilder<'a> {
     m: &'a Module,
     out: Locations,
-    ids: HashMap<Location, u32>,
     /// The location of the call each inline site stands for, per function.
     sites: HashMap<(FuncId, InlineId), u32>,
 }
@@ -97,13 +122,8 @@ impl TableBuilder<'_> {
             col,
             parent,
         };
-        if let Some(&id) = self.ids.get(&loc) {
-            return id;
-        }
-        self.out.entries.push(loc.clone());
-        let id = self.out.entries.len() as u32;
-        self.ids.insert(loc, id);
-        id
+        self.out.entries.push(loc);
+        self.out.entries.len() as u32
     }
 
     /// The location of the call that inline site `site` stands for: in the function that called

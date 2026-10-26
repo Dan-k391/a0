@@ -173,7 +173,8 @@ fn native(opt: &str) {
 }
 
 fn native_with(opt: &str, env: &[(&str, &str)]) {
-    let dir = scratch_dir(&format!("native-{opt}-{}", env.len()));
+    let names: Vec<&str> = env.iter().map(|(k, _)| *k).collect();
+    let dir = scratch_dir(&format!("native-{opt}-{}", names.join("-")));
     check_programs(&|file| {
         let exe = build_for(&dir, file, None, &[("A0_OPT", opt)], env);
         run(&mut Command::new(&exe))
@@ -245,6 +246,12 @@ fn unoptimized_jit_programs_match_expectations() {
 #[test]
 fn unoptimized_programs_survive_gc_stress() {
     in_process("0", GC_STRESS);
+}
+
+/// Large programs are compiled into several objects at once (D82); here every program is.
+#[test]
+fn native_programs_split_into_objects_match_expectations() {
+    native_with("1", &[("A0_CODEGEN_UNITS", "3")]);
 }
 
 #[test]

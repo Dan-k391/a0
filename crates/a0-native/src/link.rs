@@ -86,10 +86,21 @@ pub fn link_executable(
     output: &Path,
     opts: &LinkOptions,
 ) -> Result<(), Diagnostics> {
+    link_objects(&[object.to_vec()], target, output, opts)
+}
+
+/// Links the objects of one program (as produced by [`crate::compile_objects`]) like
+/// [`link_executable`].
+pub fn link_objects(
+    objects: &[Vec<u8>],
+    target: Target,
+    output: &Path,
+    opts: &LinkOptions,
+) -> Result<(), Diagnostics> {
     let with_pack =
         Target::host() != Some(target) || std::env::var("A0_LINK").is_ok_and(|v| v == "pack");
     if with_pack {
-        return link_with_pack(object, target, output, opts);
+        return link_with_pack(objects, target, output, opts);
     }
     let scratch = ScratchDir::new()
         .map_err(|e| link_error(&format!("cannot create a temporary directory: {e}")))?;
@@ -99,7 +110,13 @@ pub fn link_executable(
             .map_err(|e| link_error(&format!("cannot write {}: {e}", path.display())))?;
         Ok(path)
     };
-    let object_path = write(format!("program{}", target.object_suffix()), object)?;
+    let mut object_paths = Vec::new();
+    for (i, object) in objects.iter().enumerate() {
+        object_paths.push(write(
+            format!("program{i}{}", target.object_suffix()),
+            object,
+        )?);
+    }
     let mut libs = Vec::new();
     for lib in &opts.libraries {
         libs.push(write(
@@ -123,7 +140,7 @@ pub fn link_executable(
                 .arg(format!("/OUT:{}", output.display()))
                 .arg("/SUBSYSTEM:CONSOLE")
                 .arg(format!("/STACK:{}", opts.stack_size))
-                .arg(&object_path)
+                .args(&object_paths)
                 .args(&libs)
                 .args(windows_debug_args(opts, output, &scratch.0)?);
             cmd
@@ -132,7 +149,7 @@ pub fn link_executable(
             let mut cmd = Command::new(std::env::var("CC").unwrap_or_else(|_| "cc".to_string()));
             cmd.arg("-o")
                 .arg(output)
-                .arg(&object_path)
+                .args(&object_paths)
                 .args(&libs)
                 .arg("-lm")
                 .arg("-lpthread");
@@ -142,7 +159,7 @@ pub fn link_executable(
             let mut cmd = Command::new(std::env::var("CC").unwrap_or_else(|_| "cc".to_string()));
             cmd.arg("-o")
                 .arg(output)
-                .arg(&object_path)
+                .args(&object_paths)
                 .args(&libs)
                 .arg(format!("-Wl,-stack_size,{:#x}", opts.stack_size));
             cmd
@@ -288,7 +305,7 @@ fn windows_debug_args(
 
 /// Links with lld against `target`'s pack (D79).
 fn link_with_pack(
-    object: &[u8],
+    objects: &[Vec<u8>],
     target: Target,
     output: &Path,
     opts: &LinkOptions,
@@ -319,9 +336,15 @@ fn link_with_pack(
     };
     let scratch = ScratchDir::new()
         .map_err(|e| link_error(&format!("cannot create a temporary directory: {e}")))?;
-    let object_path = scratch.0.join(format!("program{}", target.object_suffix()));
-    std::fs::write(&object_path, object)
-        .map_err(|e| link_error(&format!("cannot write {}: {e}", object_path.display())))?;
+    let mut object_paths = Vec::new();
+    for (i, object) in objects.iter().enumerate() {
+        let path = scratch
+            .0
+            .join(format!("program{i}{}", target.object_suffix()));
+        std::fs::write(&path, object)
+            .map_err(|e| link_error(&format!("cannot write {}: {e}", path.display())))?;
+        object_paths.push(path);
+    }
     // A language's C runtime, built for the target in the pack under the library's name.
     let mut libs = Vec::new();
     for lib in &opts.libraries {
@@ -350,7 +373,7 @@ fn link_with_pack(
             .arg("/entry:mainCRTStartup")
             .arg(format!("/stack:{}", opts.stack_size))
             .arg("/nodefaultlib")
-            .arg(&object_path)
+            .args(&object_paths)
             .args(&libs)
             .arg(pack.join("a0rt.lib"))
             .arg(pack.join("start_windows.o"))
@@ -369,7 +392,7 @@ fn link_with_pack(
             .arg(output)
             .arg(pack.join("crt1.o"))
             .arg(pack.join("crti.o"))
-            .arg(&object_path)
+            .args(&object_paths)
             .arg("--start-group")
             .args(&libs)
             .arg(pack.join("liba0rt.a"))

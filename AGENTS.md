@@ -30,7 +30,9 @@ Needs a C compiler: MSVC on Windows (found automatically), `cc` on Linux/macOS. 
 debugging: `a0 run|build|fmt|check file.a0ir|file.hir`, `a0 lower file.hir` (the core IR a HIR
 module becomes), `a0 parse lang.a0g input`, `a0 lang calc.a0g hir|ir|run file` (a language
 defined by its grammar alone), `lox hir|ir file.lox`, `minnow hir|ir file.mn`, `kaleidoscope hir|ir file.k`, `tin hir|ir file.tin`, and
-`A0_INTERP=1` (`run` interprets instead of compiling into memory with the JIT),
+`A0_INTERP=1` (`run` interprets instead of compiling into memory with the JIT), `A0_TIME=1` (how
+long each stage of compiling takes), `A0_CODEGEN_UNITS=n` (compile into `n` objects, as large
+programs are),
 `A0_GC_STRESS=1` (the collector runs on every allocation), `A0_GC_STATS=1` (what the collector did,
 printed at exit), `A0_OPT=0` (no HIR optimizer),
 `a0 explain E2001` (what an error code means), `A0_BLESS=1` (rewrite the tutorial's listings and the

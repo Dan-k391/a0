@@ -23,9 +23,9 @@ use std::path::Path;
 use a0_diag::Diagnostics;
 use a0_ir::Module;
 pub use a0_target::Target;
-pub use codegen::{CodegenOptions, ENTRY_SYMBOL, compile_object};
+pub use codegen::{CodegenOptions, ENTRY_SYMBOL, compile_object, compile_objects};
 pub use jit::{JitOptions, jit_supported, run_main};
-pub use link::{Library, LinkOptions, find_pack, link_executable, pack_name};
+pub use link::{Library, LinkOptions, find_pack, link_executable, link_objects, pack_name};
 pub use thunks::add_thunks;
 
 #[derive(Clone, Debug, Default)]
@@ -44,19 +44,21 @@ pub fn build_executable(
     output: &Path,
     opts: &BuildOptions,
 ) -> Result<(), Diagnostics> {
-    let object = compile_object(
-        m,
-        target,
-        &CodegenOptions {
-            optimize: !opts.no_optimize,
-            entry_point: true,
-            debug_info: opts.debug_info,
-        },
-    )?;
+    let objects = a0_diag::time::stage("code generation", || {
+        compile_objects(
+            m,
+            target,
+            &CodegenOptions {
+                optimize: !opts.no_optimize,
+                entry_point: true,
+                debug_info: opts.debug_info,
+            },
+        )
+    })?;
     let mut link = opts.link.clone();
     link.debug_info |= opts.debug_info;
     if opts.debug_info && target.os() == a0_target::Os::Windows {
         link.natvis = codeview::natvis(m);
     }
-    link_executable(&object, target, output, &link)
+    a0_diag::time::stage("link", || link_objects(&objects, target, output, &link))
 }
