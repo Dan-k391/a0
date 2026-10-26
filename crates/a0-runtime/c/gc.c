@@ -18,6 +18,7 @@ BUILTIN(a0_builtin_string, "string", A0_KIND_STRING);
 BUILTIN(a0_builtin_array, "array", A0_KIND_ARRAY);
 BUILTIN(a0_builtin_map, "map", A0_KIND_MAP);
 BUILTIN(a0_builtin_int, "int", A0_KIND_INT);
+BUILTIN(a0_builtin_object, "object", A0_KIND_OBJECT);
 
 static BigObject *big_objects;
 static size_t bytes_allocated;
@@ -313,6 +314,7 @@ static void trace(const void *object) {
     }
     case A0_KIND_ARRAY: a0_array_trace((A0Array *)object); break;
     case A0_KIND_MAP: a0_map_trace((A0Map *)object); break;
+    case A0_KIND_OBJECT: a0_object_trace((A0Object *)object); break;
     default: break;
     }
 }
@@ -343,6 +345,7 @@ static void finalize(void *object) {
     const A0Type *t = HEADER(object)->type;
     if (t->kind == A0_KIND_ARRAY) a0_array_finalize((A0Array *)object);
     if (t->kind == A0_KIND_MAP) a0_map_finalize((A0Map *)object);
+    if (t->kind == A0_KIND_OBJECT) a0_object_finalize((A0Object *)object);
 }
 
 void a0_gc_collect(void) {
@@ -351,6 +354,7 @@ void a0_gc_collect(void) {
     for (int64_t i = 0; i < root_count; i++) {
         a0_gc_mark_word(*(uint64_t *)roots[i].address, roots[i].kind);
     }
+    a0_intern_mark();
     drain_gray();
     mark_time += a0_clock() - start;
 

@@ -8,7 +8,9 @@
 use std::collections::HashMap;
 
 use a0_diag::SourceId;
-use a0_hir::{BinOp, BodyId, ExprId, GlobalId, HirBuilder, HirModule, Item, LocalId, TypeId, UnOp};
+use a0_hir::{
+    BinOp, BodyId, Builtin, ExprId, GlobalId, HirBuilder, HirModule, Item, LocalId, TypeId, UnOp,
+};
 use a0_syntax::{NodeId, SyntaxTree};
 
 use crate::Lines;
@@ -482,7 +484,7 @@ impl Emit<'_> {
             let k_ref = self.b.local(k);
             let methods = self.b.field_named(k_ref, "methods");
             let key = self.text(method_name);
-            out.push(self.b.set_index(methods, key, f));
+            out.push(self.b.builtin(Builtin::SetField, &[methods, key, f]));
         }
         let k_ref = self.b.local(k);
         let class = self.any(k_ref);
@@ -568,24 +570,48 @@ impl Emit<'_> {
                 self.any(not)
             }
         } else if kind == n.call {
-            let callee = self.expr(tree.field(node, n.operand).unwrap());
+            let callee_node = tree.field(node, n.operand).unwrap();
+            // `o.m(...)` and `super.m(...)` find what they call, then call it on the object
+            // without binding it to the object first (`find_method` in the prelude).
+            let method = self.method_callee(callee_node);
+            let (callee, receiver) = match method {
+                Some((_, callee, receiver)) => (callee, Some(receiver)),
+                None => (self.expr(callee_node), None),
+            };
             let args = match tree.field(node, n.args) {
                 Some(a) => tree.fields(a, n.arg),
                 None => Vec::new(),
             };
             let args: Vec<ExprId> = args.into_iter().map(|a| self.expr(a)).collect();
             let paren = tree.child(node, tree.child_count(node) - 1);
-            if args.len() <= 3 {
-                // `call0` .. `call3` take the arguments directly.
-                let name = format!("call{}", args.len());
-                let mut all = vec![callee];
-                all.extend(args);
-                all.push(self.line(paren));
-                return self.rt(&name, &all);
-            }
-            let args = self.b.array(&args);
             let line = self.line(paren);
-            self.rt("call", &[callee, args, line])
+            let call = match receiver {
+                // `call0` .. `call3` take the arguments directly.
+                None if args.len() <= 3 => {
+                    let mut all = vec![callee];
+                    all.extend(args);
+                    all.push(line);
+                    self.rt(&format!("call{}", all.len() - 2), &all)
+                }
+                None => {
+                    let args = self.b.array(&args);
+                    self.rt("call", &[callee, args, line])
+                }
+                Some(receiver) if args.len() <= 3 => {
+                    let mut all = vec![callee, receiver];
+                    all.extend(args);
+                    all.push(line);
+                    self.rt(&format!("call_with{}", all.len() - 3), &all)
+                }
+                Some(receiver) => {
+                    let args = self.b.array(&args);
+                    self.rt("call_with", &[callee, receiver, args, line])
+                }
+            };
+            match method {
+                Some((bind, _, _)) => self.b.block(&[bind], Some(call)),
+                None => call,
+            }
         } else {
             // `get`
             let object = self.expr(tree.field(node, n.operand).unwrap());
@@ -594,6 +620,37 @@ impl Emit<'_> {
             let line = self.line(name);
             self.rt("get_property", &[object, key, line])
         }
+    }
+
+    /// For a callee `o.m` or `super.m`: a `let` of the object, what to call (found as the call's
+    /// first operand, so before the arguments, as in jlox) and the object to call it on.
+    fn method_callee(&mut self, node: NodeId) -> Option<(ExprId, ExprId, ExprId)> {
+        let n = self.n;
+        let tree = self.tree;
+        let (object, name, find) = if tree.kind(node) == n.get {
+            let object = self.expr(tree.field(node, n.operand).unwrap());
+            (object, tree.field(node, n.name).unwrap(), "find_method")
+        } else if tree.kind(node) == n.primary && tree.kind(tree.child(node, 0)) == n.kw_super {
+            let this = self.local(self.a.super_this[&node]);
+            let this = self.b.local(this);
+            (this, tree.field(node, n.method).unwrap(), "find_super")
+        } else {
+            return None;
+        };
+        self.b.set_span(Some(tree.span(node)));
+        let receiver = self.b.new_local(self.body, "receiver", TypeId::ANY);
+        let bind = self.b.let_(receiver, object);
+        let key = self.text(name);
+        let line = self.line(name);
+        let found = if find == "find_method" {
+            let r = self.b.local(receiver);
+            self.rt(find, &[r, key, line])
+        } else {
+            let sup = self.read(self.a.uses[&node], tree.child(node, 0));
+            self.rt(find, &[sup, key, line])
+        };
+        let r = self.b.local(receiver);
+        Some((bind, found, r))
     }
 
     fn primary(&mut self, node: NodeId) -> ExprId {

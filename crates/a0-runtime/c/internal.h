@@ -11,6 +11,7 @@ extern const A0Type a0_builtin_string;
 extern const A0Type a0_builtin_array;
 extern const A0Type a0_builtin_map;
 extern const A0Type a0_builtin_int;
+extern const A0Type a0_builtin_object;
 
 typedef struct {
     int64_t value;
@@ -21,9 +22,13 @@ typedef struct {
  * preceded by a BigObject that links them for the sweep. */
 typedef struct Header {
     uint32_t size;                      /* header + payload, rounded up to a cell, for accounting */
-    uint32_t marked;
+    uint16_t marked;
+    uint16_t flags; /* A0_FLAG_* */
     A0_WORD_PTR(const A0Type *, type); /* read by generated code, just before the payload */
 } Header;
+
+/* An interned string (object.c), kept for the rest of the program. */
+#define A0_FLAG_INTERNED 1
 
 typedef struct BigObject {
     A0_WORD_PTR(struct BigObject *, next);
@@ -51,6 +56,10 @@ void a0_array_trace(A0Array *a);
 void a0_array_finalize(A0Array *a);
 void a0_map_trace(A0Map *m);
 void a0_map_finalize(A0Map *m);
+void a0_object_trace(A0Object *o);
+void a0_object_finalize(A0Object *o);
+/* Marks every interned string: they live for the rest of the program. */
+void a0_intern_mark(void);
 
 uint64_t a0_string_hash(A0String *s);
 

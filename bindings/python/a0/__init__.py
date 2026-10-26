@@ -482,6 +482,7 @@ HIR_FUNCTIONS = {
     "array": "U:u",
     "new_array": "u:u",
     "new_map": "u:u",
+    "new_object": ":u",
     "index": "uu:u",
     "builtin": "sU:u",
     "cast": "uu:u",

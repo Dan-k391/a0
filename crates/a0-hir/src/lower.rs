@@ -126,6 +126,13 @@ struct Runtime {
     string_panic: IrFunc,
     array_new: IrFunc,
     array_filled: IrFunc,
+    object_new: IrFunc,
+    object_has: IrFunc,
+    object_get: IrFunc,
+    object_set: IrFunc,
+    object_names: IrFunc,
+    object_find_cached: IrFunc,
+    object_set_cached: IrFunc,
     array_get: IrFunc,
     array_set: IrFunc,
     array_push: IrFunc,
@@ -177,6 +184,13 @@ impl Runtime {
             string_panic: f("a0_string_panic", &[Ptr], None),
             array_new: f("a0_array_new", &[I64, I64], Some(Ptr)),
             array_filled: f("a0_array_filled", &[I64, I64, I64], Some(Ptr)),
+            object_new: f("a0_object_new", &[], Some(Ptr)),
+            object_has: f("a0_object_has", &[Ptr, Ptr], Some(I64)),
+            object_get: f("a0_object_get", &[Ptr, Ptr], Some(I64)),
+            object_set: f("a0_object_set", &[Ptr, Ptr, I64], None),
+            object_names: f("a0_object_names", &[Ptr], Some(Ptr)),
+            object_find_cached: f("a0_object_find_cached", &[Ptr, Ptr, Ptr], Some(I64)),
+            object_set_cached: f("a0_object_set_cached", &[Ptr, Ptr, I64, Ptr], None),
             array_get: f("a0_array_get", &[Ptr, I64], Some(I64)),
             array_set: f("a0_array_set", &[Ptr, I64, I64], None),
             array_push: f("a0_array_push", &[Ptr, I64], None),
@@ -293,6 +307,10 @@ struct Lowerer<'a> {
     closures_raise: bool,
     /// The pending exception, if the program throws: a flag, and its value (an `any`).
     exception: Option<(IrGlobal, IrGlobal)>,
+    /// The caches of the places that name an object's field (`A0FieldCache`, three words each),
+    /// allocated together at startup: their number, and the global that points at them.
+    field_caches: u32,
+    field_cache_base: IrGlobal,
 }
 
 impl<'a> Lowerer<'a> {
@@ -304,6 +322,7 @@ impl<'a> Lowerer<'a> {
             b.add_global_int("hir.type.box.ref", Type::Ptr, 0),
             b.add_global_int("hir.type.box.any", Type::Ptr, 0),
         ];
+        let field_cache_base = b.add_global_int("hir.field_caches", Type::Ptr, 0);
         let descs = (0..3)
             .map(|k| TypeDesc {
                 global: box_desc[k],
@@ -328,6 +347,8 @@ impl<'a> Lowerer<'a> {
             descs,
             strings: HashMap::new(),
             string_list: Vec::new(),
+            field_caches: 0,
+            field_cache_base,
             type_names: HashMap::new(),
             captured: Vec::new(),
             captures: HashMap::new(),
@@ -599,6 +620,15 @@ impl<'a> Lowerer<'a> {
         for (f, w) in wrappers {
             self.wrapper(f, w);
         }
+        // An `any` can hold an object of any struct or enum, which a debugger shows by its
+        // descriptor's name: describe them all, not only those a typed local needs.
+        for (i, k) in m.types.iter().enumerate() {
+            if let TypeKind::Struct(_, args) | TypeKind::Enum(_, args) = k
+                && args.is_empty()
+            {
+                self.debug_type(TypeId(i as u32));
+            }
+        }
         self.entry();
     }
 
@@ -762,6 +792,12 @@ impl<'a> Lowerer<'a> {
             let a = self.b.global_addr(value);
             let k = self.b.iconst(Type::I64, WORD_ANY as i64);
             self.b.call(self.rt.add_root, &[a, k]);
+        }
+        if self.field_caches > 0 {
+            let size = self.b.iconst(Type::I64, 24 * self.field_caches as i64);
+            let caches = self.b.call(self.rt.alloc, &[size]).unwrap();
+            let a = self.b.global_addr(self.field_cache_base);
+            self.b.store(caches, a);
         }
         for (g, bytes, len) in strings {
             let a = self.b.global_addr(g);
@@ -1133,6 +1169,46 @@ impl<'a> Lowerer<'a> {
         self.b.end_if();
     }
 
+    /// A new place's field cache (`A0FieldCache`), zero until the runtime fills it.
+    fn field_cache(&mut self) -> Value {
+        let k = self.field_caches;
+        self.field_caches += 1;
+        let base = self.b.global_addr(self.field_cache_base);
+        let base = self.b.load(Type::Ptr, base);
+        let off = self.b.iconst(Type::I64, 24 * k as i64);
+        self.b.ptradd(base, off)
+    }
+
+    /// The slot of field `name` in the dynamic object `o` (-1 if it has none): from the cache when
+    /// `o` has the shape the cache saw last, else from the runtime, which fills the cache.
+    fn cached_field(&mut self, o: Value, name: Value, cache: Value) -> Value {
+        let result = self.b.declare_var("slot", Type::I64);
+        let shape = self.load_word(o, 0);
+        let cached = self.load_word(cache, 0);
+        let hit = self.b.icmp(IntCC::Eq, shape, cached);
+        self.b.if_(hit);
+        let index = self.load_word(cache, 1);
+        self.b.set(result, index);
+        self.b.else_();
+        let index = self
+            .b
+            .call(self.rt.object_find_cached, &[o, name, cache])
+            .unwrap();
+        self.b.set(result, index);
+        self.b.end_if();
+        self.b.get(result)
+    }
+
+    /// The address of slot `index` of the dynamic object `o` (`A0Object`: shape, capacity, then
+    /// the pointer to the slots).
+    fn slot_address(&mut self, o: Value, index: Value) -> Value {
+        let slots = self.load_word(o, 2);
+        let slots = self.b.cast(Opcode::Inttoptr, slots, Type::Ptr);
+        let eight = self.b.iconst(Type::I64, 8);
+        let offset = self.b.imul(index, eight);
+        self.b.ptradd(slots, offset)
+    }
+
     fn load_word(&mut self, base: Value, index: u32) -> Value {
         let off = self.b.iconst(Type::I64, 8 * index as i64);
         let a = self.b.ptradd(base, off);
@@ -1326,7 +1402,7 @@ impl<'a> Lowerer<'a> {
             TypeKind::Array(e) => simple(self, DebugKind::Array, &[*e]),
             TypeKind::Map(k, v) => simple(self, DebugKind::Map, &[*k, *v]),
             TypeKind::Nullable(i) => simple(self, DebugKind::Nullable, &[*i]),
-            TypeKind::Interface(_) => simple(self, DebugKind::Object, &[]),
+            TypeKind::Interface(_) | TypeKind::Object => simple(self, DebugKind::Object, &[]),
             TypeKind::Struct(s, _) => {
                 // Named as the object's descriptor is, which interface values are found by.
                 let s = *s;
@@ -1424,7 +1500,8 @@ impl<'a> Lowerer<'a> {
             | ExprKind::Variant(..)
             | ExprKind::Array(_)
             | ExprKind::NewArray
-            | ExprKind::NewMap => true,
+            | ExprKind::NewMap
+            | ExprKind::NewObject => true,
             ExprKind::Binary(BinOp::Add, a, _) => m.expr_type(*a) == TypeId::STRING,
             ExprKind::Builtin(op, args) => builtin_allocates(m, *op, args),
             ExprKind::Cast(a) => m.expr_type(*a) == TypeId::INT && m.expr_type(e) == TypeId::ANY,
@@ -1724,6 +1801,7 @@ impl<'a> Lowerer<'a> {
                 let cap = self.b.iconst(Type::I64, 0);
                 V::Val(self.b.call(self.rt.array_new, &[kind, cap]).unwrap())
             }
+            ExprKind::NewObject => V::Val(self.b.call(self.rt.object_new, &[]).unwrap()),
             ExprKind::NewMap => {
                 let TypeKind::Map(k, v) = *m.kind(ty) else {
                     unreachable!()
@@ -2314,6 +2392,67 @@ impl<'a> Lowerer<'a> {
                 V::Val(self.b.icmp(IntCC::Ne, r, zero))
             }
             Builtin::Keys => V::Val(self.b.call(self.rt.map_keys, &[vs[0].val()]).unwrap()),
+            Builtin::HasField | Builtin::Field => {
+                let (o, name) = (vs[0].val(), vs[1].val());
+                if !matches!(m.expr(args[1]).kind, ExprKind::Str(_)) {
+                    return if op == Builtin::HasField {
+                        let r = self.b.call(self.rt.object_has, &[o, name]).unwrap();
+                        let zero = self.b.iconst(Type::I64, 0);
+                        V::Val(self.b.icmp(IntCC::Ne, r, zero))
+                    } else {
+                        V::Val(self.b.call(self.rt.object_get, &[o, name]).unwrap())
+                    };
+                }
+                let cache = self.field_cache();
+                let index = self.cached_field(o, name, cache);
+                let zero = self.b.iconst(Type::I64, 0);
+                if op == Builtin::HasField {
+                    return V::Val(self.b.icmp(IntCC::Sge, index, zero));
+                }
+                let result = self.b.declare_var("field", Type::I64);
+                let missing = self.b.icmp(IntCC::Slt, index, zero);
+                self.b.if_(missing);
+                // Fails with the field's name.
+                let r = self.b.call(self.rt.object_get, &[o, name]).unwrap();
+                self.b.set(result, r);
+                self.b.else_();
+                let at = self.slot_address(o, index);
+                let w = self.b.load(Type::I64, at);
+                self.b.set(result, w);
+                self.b.end_if();
+                V::Val(self.b.get(result))
+            }
+            Builtin::SetField => {
+                let (o, name) = (vs[0].val(), vs[1].val());
+                let w = self.box_any(vs[2], arg_ty(2));
+                if !matches!(m.expr(args[1]).kind, ExprKind::Str(_)) {
+                    self.b.call(self.rt.object_set, &[o, name, w]);
+                    return V::Unit;
+                }
+                // The cache says which slot the field has in objects of its `shape`, and which
+                // shape setting it leaves them with (another one when it adds the field), if the
+                // slot is within the object's capacity.
+                let cache = self.field_cache();
+                let shape = self.load_word(o, 0);
+                let cached = self.load_word(cache, 0);
+                let index = self.load_word(cache, 1);
+                let cap = self.load_word(o, 1);
+                let same = self.b.icmp(IntCC::Eq, shape, cached);
+                let fits = self.b.icmp(IntCC::Slt, index, cap);
+                let fast = self.b.and(same, fits);
+                self.b.if_(fast);
+                let at = self.slot_address(o, index);
+                self.b.store(w, at);
+                let to = self.load_word(cache, 2);
+                self.store_word(o, 0, to);
+                self.b.else_();
+                self.b.call(self.rt.object_set_cached, &[o, name, w, cache]);
+                self.b.end_if();
+                V::Unit
+            }
+            Builtin::FieldNames => {
+                V::Val(self.b.call(self.rt.object_names, &[vs[0].val()]).unwrap())
+            }
             Builtin::Filled => {
                 let TypeKind::Array(elem) = *m.kind(ty) else {
                     return V::Never;
@@ -2727,7 +2866,11 @@ impl<'a> Lowerer<'a> {
 /// that is not a string yet.
 fn builtin_allocates(m: &HirModule, op: Builtin, args: &[ExprId]) -> bool {
     match op {
-        Builtin::Keys | Builtin::Substr | Builtin::Str | Builtin::Filled => true,
+        Builtin::Keys | Builtin::Substr | Builtin::Str | Builtin::Filled | Builtin::FieldNames => {
+            true
+        }
+        // Boxing an `int` may allocate.
+        Builtin::SetField => m.expr_type(args[2]) == TypeId::INT,
         Builtin::Print | Builtin::Eprint => m.expr_type(args[0]) != TypeId::STRING,
         _ => false,
     }

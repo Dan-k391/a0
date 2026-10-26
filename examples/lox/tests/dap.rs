@@ -3,12 +3,13 @@
 use a0_driver::dap::Client;
 use a0_driver::json::Json;
 
-const PROGRAM: &str = "fun add(a, b) {
+const PROGRAM: &str = "class P { init(x) { this.x = x; this.y = 2; } }
+fun add(a, b, p) {
   var sum = a + b;
   var label = \"sum\";
   return sum;
 }
-print add(1, 2);
+print add(1, 2, P(1));
 print \"done\";
 ";
 
@@ -22,7 +23,7 @@ fn lox_programs_can_be_debugged() {
 
     let exe = std::path::Path::new(env!("CARGO_BIN_EXE_lox"));
     let mut c = Client::start(exe, &["dap"]).unwrap();
-    let launch = c.launch(&path, &[3]);
+    let launch = c.launch(&path, &[4]);
     assert_eq!(launch.get("success"), &Json::Bool(true), "{launch:?}");
     let stopped = c.event("stopped");
     assert_eq!(
@@ -30,8 +31,8 @@ fn lox_programs_can_be_debugged() {
         Some("breakpoint")
     );
     let stack = c.stack();
-    assert_eq!((stack[0].0.as_str(), stack[0].1), ("add", 3), "{stack:?}");
-    assert_eq!(stack.last().unwrap().1, 6, "{stack:?}");
+    assert_eq!((stack[0].0.as_str(), stack[0].1), ("add", 4), "{stack:?}");
+    assert_eq!(stack.last().unwrap().1, 7, "{stack:?}");
     let vars = c.locals(1);
     let shown: Vec<(&str, &str)> = vars
         .iter()
@@ -40,9 +41,12 @@ fn lox_programs_can_be_debugged() {
     for wanted in [("a", "1"), ("b", "2"), ("sum", "3")] {
         assert!(shown.contains(&wanted), "{wanted:?} not in {shown:?}");
     }
+    // An instance's fields are a dynamic object, shown by name.
+    let p = shown.iter().find(|(n, _)| *n == "p").unwrap().1;
+    assert!(p.contains("fields: {x: 1, y: 2}"), "{p}");
     c.resume("next");
     c.event("stopped");
-    assert_eq!(c.stack()[0].1, 4);
+    assert_eq!(c.stack()[0].1, 5);
     let vars = c.locals(1);
     assert!(
         vars.iter().any(|(n, v, _)| n == "label" && v == "\"sum\""),

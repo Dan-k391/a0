@@ -495,6 +495,7 @@ impl HirBuilder {
                     let (k, v) = (arg(self, 0), arg(self, 1));
                     return self.map_type(k, v);
                 }
+                ("object", 0) => return TypeId::OBJECT,
                 _ => {}
             }
         }
@@ -505,7 +506,10 @@ impl HirBuilder {
                     self.type_scope.iter().map(|(n, _)| n.clone()).collect();
                 candidates.extend(self.visible_names(true));
                 candidates.extend(
-                    ["bool", "int", "float", "string", "any", "array", "map"].map(str::to_string),
+                    [
+                        "bool", "int", "float", "string", "any", "array", "map", "object",
+                    ]
+                    .map(str::to_string),
                 );
                 let candidates: Vec<&str> = candidates.iter().map(String::as_str).collect();
                 self.unknown(code::UNKNOWN_TYPE, "type", name, &candidates);

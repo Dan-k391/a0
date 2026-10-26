@@ -18,8 +18,10 @@ struct LoxFunction {
 struct LoxNative { arity: int, code: fn(array<any>, int) -> any }
 // What a Lox `throw` raises: the value, and the line of the `throw` for when nothing catches it.
 struct LoxThrown { value: any, line: int }
-struct LoxClass { name: string, methods: map<string, LoxFunction> }
-struct LoxInstance { class: LoxClass, fields: map<string, any> }
+// A class's methods (`LoxFunction`s) and an instance's fields are dynamic objects, found by name
+// through shapes and caches (docs/hir.md, "Dynamic objects").
+struct LoxClass { name: string, methods: object }
+struct LoxInstance { class: LoxClass, fields: object }
 struct LoxBound { receiver: any, method: LoxFunction }
 
 global depth: int;
@@ -180,17 +182,23 @@ fn invoke(f: LoxFunction, this: any, args: array<any>, line: int) -> any {
 
 // Calls a Lox value with its arguments in an array: functions, methods, classes and natives.
 fn call(callee: any, args: array<any>, line: int) -> any {
+  call_with(callee, () as any, args, line)
+}
+
+// Calls a Lox value found by `find_method` on `receiver`, which a function's code then gets (a
+// plain function's code never uses it: only methods refer to `this`).
+fn call_with(callee: any, receiver: any, args: array<any>, line: int) -> any {
   enter(line);
   let result: any = if callee is LoxFunction {
-    invoke(callee as LoxFunction, () as any, args, line)
+    invoke(callee as LoxFunction, receiver, args, line)
   } else if callee is LoxBound {
     let b = callee as LoxBound;
     invoke(b.method, b.receiver, args, line)
   } else if callee is LoxClass {
     let k = callee as LoxClass;
-    let instance = new LoxInstance { class: k, fields: new map<string, any> } as any;
-    if has(k.methods, "init") {
-      invoke(k.methods["init"], instance, args, line);
+    let instance = new LoxInstance { class: k, fields: new object } as any;
+    if has_field(k.methods, "init") {
+      invoke(field(k.methods, "init") as LoxFunction, instance, args, line);
     } else {
       arity(0, len(args), line);
     }
@@ -206,19 +214,35 @@ fn call(callee: any, args: array<any>, line: int) -> any {
   result
 }
 
-// Calls with zero to three arguments: functions and methods of that arity directly, anything else
-// (classes, natives, wrong arities, errors) through `call`. Written without early returns so that
-// the optimizer inlines them at each call site.
 fn call0(callee: any, line: int) -> any {
+  call_with0(callee, () as any, line)
+}
+
+fn call1(callee: any, a: any, line: int) -> any {
+  call_with1(callee, () as any, a, line)
+}
+
+fn call2(callee: any, a: any, b: any, line: int) -> any {
+  call_with2(callee, () as any, a, b, line)
+}
+
+fn call3(callee: any, a: any, b: any, c: any, line: int) -> any {
+  call_with3(callee, () as any, a, b, c, line)
+}
+
+// Calls with zero to three arguments on a receiver (as `call_with`): functions and methods of that
+// arity directly, anything else (classes, natives, wrong arities, errors) through `call_with`.
+// Written without early returns so that the optimizer inlines them at each call site.
+fn call_with0(callee: any, receiver: any, line: int) -> any {
   if callee is LoxFunction {
     let f = callee as LoxFunction;
     if let code = f.code0 {
       enter(line);
-      let r = code(() as any);
+      let r = code(receiver);
       depth = depth - 1;
       r
     } else {
-      call(callee, new array<any>, line)
+      call_with(callee, receiver, new array<any>, line)
     }
   } else if callee is LoxBound {
     let m = callee as LoxBound;
@@ -228,23 +252,23 @@ fn call0(callee: any, line: int) -> any {
       depth = depth - 1;
       r
     } else {
-      call(callee, new array<any>, line)
+      call_with(callee, receiver, new array<any>, line)
     }
   } else {
-    call(callee, new array<any>, line)
+    call_with(callee, receiver, new array<any>, line)
   }
 }
 
-fn call1(callee: any, a: any, line: int) -> any {
+fn call_with1(callee: any, receiver: any, a: any, line: int) -> any {
   if callee is LoxFunction {
     let f = callee as LoxFunction;
     if let code = f.code1 {
       enter(line);
-      let r = code(() as any, a);
+      let r = code(receiver, a);
       depth = depth - 1;
       r
     } else {
-      call(callee, [a], line)
+      call_with(callee, receiver, [a], line)
     }
   } else if callee is LoxBound {
     let m = callee as LoxBound;
@@ -254,23 +278,23 @@ fn call1(callee: any, a: any, line: int) -> any {
       depth = depth - 1;
       r
     } else {
-      call(callee, [a], line)
+      call_with(callee, receiver, [a], line)
     }
   } else {
-    call(callee, [a], line)
+    call_with(callee, receiver, [a], line)
   }
 }
 
-fn call2(callee: any, a: any, b: any, line: int) -> any {
+fn call_with2(callee: any, receiver: any, a: any, b: any, line: int) -> any {
   if callee is LoxFunction {
     let f = callee as LoxFunction;
     if let code = f.code2 {
       enter(line);
-      let r = code(() as any, a, b);
+      let r = code(receiver, a, b);
       depth = depth - 1;
       r
     } else {
-      call(callee, [a, b], line)
+      call_with(callee, receiver, [a, b], line)
     }
   } else if callee is LoxBound {
     let m = callee as LoxBound;
@@ -280,23 +304,23 @@ fn call2(callee: any, a: any, b: any, line: int) -> any {
       depth = depth - 1;
       r
     } else {
-      call(callee, [a, b], line)
+      call_with(callee, receiver, [a, b], line)
     }
   } else {
-    call(callee, [a, b], line)
+    call_with(callee, receiver, [a, b], line)
   }
 }
 
-fn call3(callee: any, a: any, b: any, c: any, line: int) -> any {
+fn call_with3(callee: any, receiver: any, a: any, b: any, c: any, line: int) -> any {
   if callee is LoxFunction {
     let f = callee as LoxFunction;
     if let code = f.code3 {
       enter(line);
-      let r = code(() as any, a, b, c);
+      let r = code(receiver, a, b, c);
       depth = depth - 1;
       r
     } else {
-      call(callee, [a, b, c], line)
+      call_with(callee, receiver, [a, b, c], line)
     }
   } else if callee is LoxBound {
     let m = callee as LoxBound;
@@ -306,25 +330,49 @@ fn call3(callee: any, a: any, b: any, c: any, line: int) -> any {
       depth = depth - 1;
       r
     } else {
-      call(callee, [a, b, c], line)
+      call_with(callee, receiver, [a, b, c], line)
     }
   } else {
-    call(callee, [a, b, c], line)
+    call_with(callee, receiver, [a, b, c], line)
   }
 }
 
+// `object.name`: a field, or a method bound to the object.
 fn get_property(object: any, name: string, line: int) -> any {
-  if !(object is LoxInstance) {
-    runtime_error("Only instances have properties.", line);
+  if object is LoxInstance {
+    let instance = object as LoxInstance;
+    if has_field(instance.fields, name) {
+      field(instance.fields, name)
+    } else {
+      new LoxBound { receiver: object, method: method(instance.class, name, line) } as any
+    }
+  } else {
+    runtime_error("Only instances have properties.", line)
   }
-  let instance = object as LoxInstance;
-  if has(instance.fields, name) {
-    return instance.fields[name];
+}
+
+// What `object.name(...)` calls, found before the arguments are evaluated as in jlox: a field's
+// value, or the method itself, which `call_with` then calls on the object. Nothing is bound, so a
+// method call allocates nothing (clox's `OP_INVOKE`).
+fn find_method(object: any, name: string, line: int) -> any {
+  if object is LoxInstance {
+    let instance = object as LoxInstance;
+    if has_field(instance.fields, name) {
+      field(instance.fields, name)
+    } else {
+      method(instance.class, name, line) as any
+    }
+  } else {
+    runtime_error("Only instances have properties.", line)
   }
-  if has(instance.class.methods, name) {
-    return new LoxBound { receiver: object, method: instance.class.methods[name] } as any;
+}
+
+fn method(k: LoxClass, name: string, line: int) -> LoxFunction {
+  if has_field(k.methods, name) {
+    field(k.methods, name) as LoxFunction
+  } else {
+    runtime_error("Undefined property '" + name + "'.", line)
   }
-  runtime_error("Undefined property '" + name + "'.", line)
 }
 
 // jlox checks the object before it evaluates the value being assigned.
@@ -335,16 +383,17 @@ fn check_fields(object: any, line: int) {
 }
 
 fn set_property(object: any, name: string, value: any) -> any {
-  (object as LoxInstance).fields[name] = value;
+  set_field((object as LoxInstance).fields, name, value);
   value
 }
 
 fn get_super(superclass: any, receiver: any, name: string, line: int) -> any {
-  let k = superclass as LoxClass;
-  if !has(k.methods, name) {
-    runtime_error("Undefined property '" + name + "'.", line);
-  }
-  new LoxBound { receiver: receiver, method: k.methods[name] } as any
+  new LoxBound { receiver: receiver, method: method(superclass as LoxClass, name, line) } as any
+}
+
+// What `super.name(...)` calls on `this` (see `find_method`).
+fn find_super(superclass: any, name: string, line: int) -> any {
+  method(superclass as LoxClass, name, line) as any
 }
 
 fn check_superclass(superclass: any, line: int) {
@@ -356,13 +405,13 @@ fn check_superclass(superclass: any, line: int) {
 // Methods are copied down: classes never change after they are created, so this is the same as
 // looking them up through the superclass chain.
 fn new_class(name: string, superclass: any) -> LoxClass {
-  let k = new LoxClass { name: name, methods: new map<string, LoxFunction> };
+  let k = new LoxClass { name: name, methods: new object };
   if superclass is LoxClass {
     let inherited = (superclass as LoxClass).methods;
-    let names = keys(inherited);
+    let names = field_names(inherited);
     let i = 0;
     while i < len(names) {
-      k.methods[names[i]] = inherited[names[i]];
+      set_field(k.methods, names[i], field(inherited, names[i]));
       i = i + 1;
     }
   }

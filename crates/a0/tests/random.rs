@@ -55,6 +55,8 @@ enum Ty {
     Arr,
     /// `array<bool>`, whose elements are bytes.
     Flags,
+    /// A dynamic object (`object`).
+    Obj,
     Map,
     Rec,
     Opt,
@@ -66,8 +68,8 @@ enum Ty {
 use Ty::*;
 
 /// The types of parameters, results and locals.
-const VALUES: [Ty; 12] = [
-    Int, Bool, Float, Str, Any, Arr, Flags, Map, Rec, Opt, Shape, Fun,
+const VALUES: [Ty; 13] = [
+    Int, Bool, Float, Str, Any, Arr, Flags, Obj, Map, Rec, Opt, Shape, Fun,
 ];
 
 impl Ty {
@@ -80,6 +82,7 @@ impl Ty {
             Any => "any",
             Arr => "array<int>",
             Flags => "array<bool>",
+            Obj => "object",
             Map => "map<string, int>",
             Rec => "R",
             Opt => "R?",
@@ -164,6 +167,32 @@ fn show_flags(a: array<bool>) -> string {
   out
 }
 
+fn obj(n: int) -> object {
+  let o = new object;
+  set_field(o, "x", n);
+  o
+}
+
+fn oget(o: object, k: string) -> int {
+  if has_field(o, k) {
+    let v = field(o, k);
+    if v is int { v as int } else { -2 }
+  } else {
+    -1
+  }
+}
+
+fn show_obj(o: object) -> string {
+  let ks = field_names(o);
+  let out = "{";
+  let i = 0;
+  while i < len(ks) {
+    out = out + ks[i] + "=" + show_any(field(o, ks[i])) + ";";
+    i = i + 1;
+  }
+  out + "}"
+}
+
 fn mget(m: map<string, int>, k: string) -> int {
   if has(m, k) { m[k] } else { 0 }
 }
@@ -217,6 +246,7 @@ fn show(ty: Ty, name: &str) -> String {
         Any => format!("show_any({name})"),
         Arr => format!("show_arr({name})"),
         Flags => format!("show_flags({name})"),
+        Obj => format!("show_obj({name})"),
         Map => format!("show_map({name})"),
         Rec | Opt => format!("show_opt({name})"),
         Shape => format!("show_shape({name})"),
@@ -352,6 +382,7 @@ impl Gen {
             Flags => r
                 .pick(&["[true, false]", "new array<bool>", "filled(3, true)"])
                 .to_string(),
+            Obj => r.pick(&["new object", "obj(3)", "obj(-1)"]).to_string(),
             Map => "new map<string, int>".to_string(),
             Rec => r
                 .pick(&["new R { n: 1, s: \"r\" }", "new R { n: -4, s: \"\" }"])
@@ -446,6 +477,13 @@ impl Gen {
                     format!("({} {op} {by})", self.expr(Int, ctx, d))
                 }
                 4 => {
+                    if self.rng.chance(30) {
+                        // A name that is a literal once `oget` is inlined, or one made at run time.
+                        let k = self
+                            .rng
+                            .pick(&["\"x\"", "\"y\"", "\"z\"", "(\"x\" + \"\")"]);
+                        return format!("oget({}, {k})", self.expr(Obj, ctx, d));
+                    }
                     let of = self.rng.pick(&[Str, Arr, Flags, Map]);
                     format!("len({})", self.expr(of, ctx, d))
                 }
@@ -589,6 +627,7 @@ impl Gen {
                 format!("filled({n}, {})", self.expr(Int, ctx, d))
             }
             Arr => format!("[{}, {}]", self.expr(Int, ctx, d), self.expr(Int, ctx, d)),
+            Obj => format!("obj({})", self.expr(Int, ctx, d)),
             Flags if self.rng.chance(50) => {
                 let n = self.rng.below(5);
                 format!("filled({n}, {})", self.expr(Bool, ctx, d))
@@ -768,6 +807,16 @@ impl Gen {
                     };
                 }
                 10 => {
+                    let objects = self.locals_of(ctx, Obj, false);
+                    if !objects.is_empty() && self.rng.chance(40) {
+                        let o = self
+                            .rng
+                            .pick(&objects.iter().map(String::as_str).collect::<Vec<_>>())
+                            .to_string();
+                        let k = self.rng.pick(&["x", "y", "z"]);
+                        let ty = self.rng.pick(&[Int, Str, Any]);
+                        return format!("set_field({o}, \"{k}\", {});", self.expr(ty, ctx, e));
+                    }
                     let flags = self.locals_of(ctx, Flags, false);
                     if !flags.is_empty() && self.rng.chance(40) {
                         let a = self
@@ -1213,7 +1262,14 @@ fn the_generator_is_deterministic_and_varied() {
     assert_ne!(generate(7), generate(8));
     // The default run (24 seeds) uses what lowering learned recently.
     let programs: Vec<String> = (0..24).map(generate).collect();
-    for feature in ["filled(", "array<bool>", "fset(", "fget("] {
+    for feature in [
+        "filled(",
+        "array<bool>",
+        "fset(",
+        "fget(",
+        "oget(",
+        "set_field(",
+    ] {
         let uses = programs.iter().filter(|p| p.contains(feature)).count();
         assert!(uses >= 3, "only {uses} programs use {feature}");
     }

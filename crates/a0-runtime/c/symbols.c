@@ -90,6 +90,15 @@ const A0Symbol a0_rt_symbols[] = {
     SYM(a0_array_set),
     SYM(a0_array_push),
     SYM(a0_array_pop),
+    /* dynamic objects */
+    SYM(a0_intern),
+    SYM(a0_object_new),
+    SYM(a0_object_has),
+    SYM(a0_object_get),
+    SYM(a0_object_set),
+    SYM(a0_object_names),
+    SYM(a0_object_find_cached),
+    SYM(a0_object_set_cached),
     /* maps */
     SYM(a0_map_new),
     SYM(a0_map_len),

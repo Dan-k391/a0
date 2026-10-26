@@ -30,6 +30,7 @@ IR plus calls into the default runtime (`a0rt`), so it runs in the interpreter a
 | `string` | reference | immutable bytes (UTF-8 by convention) |
 | `array<T>` | reference | growable, mutable; `array<bool>` keeps a byte per element, the others a 64-bit word |
 | `map<K, V>` | reference | hash map; `K` is `int`, `bool` or `string` |
+| `object` | reference | a dynamic object: `any` fields added by name at run time; see "Dynamic objects" |
 | `S`, `S<T, ...>` | reference | a declared struct: named, mutable fields; possibly generic |
 | `E`, `E<T, ...>` | reference | a declared enum: variants with positional payloads; possibly generic |
 | `fn(T, ...) -> R` | reference | a closure |
@@ -172,6 +173,7 @@ it has no trailing `;`, otherwise to `()`.
 | `E::V(a, b)`, `E<T>::V`, `match e { V(x, y) => ..., _ => ... }` | enum construction and matching |
 | `[a, b]`, `[]`, `new array<T>`, `a[i]` | arrays (index out of range panics) |
 | `new map<K, V>`, `m[k]` | maps (a missing key panics) |
+| `new object` | a dynamic object with no fields |
 | `e as T`, `e is T` | conversions and dynamic type tests |
 | `if c { } else { }`, `while c { }`, `loop { }` | control flow; `if` with `else` is a value |
 | `if let x = e { } else { }` | narrowing: `x` is `e`'s value in the first block when `e: T?` is not null |
@@ -192,6 +194,7 @@ for other references; on `any` see below. `&&`, `||` short-circuit; `!` negates 
 | `filled(n, v)` | a new array of `n` elements, each `v` (a negative `n` panics) |
 | `push(a, v)`, `pop(a)` | append to / remove the last element of an array (`pop` on empty panics) |
 | `has(m, k)`, `remove(m, k)`, `keys(m)` | map membership, removal, keys as an array (deterministic order) |
+| `has_field(o, name)`, `field(o, name)`, `set_field(o, name, v)`, `field_names(o)` | a dynamic object's fields: whether it has one, its value (an `any`; a missing field panics), setting or adding one (any value, as an `any`), the names in the order they were added |
 | `substr(s, start, count)`, `byte_at(s, i)` | string slicing and bytes |
 | `str(x)` | format an `int`, `float`, `bool` (or `string`) as a string (floats: shortest round-trip, `1` not `1.0`) |
 | `print(s)`, `eprint(s)` | write a string to stdout / stderr (no newline added) |
@@ -229,6 +232,28 @@ enum (true for every variant).
 booleans are special NaN patterns, references are tagged pointers, `int`s that fit in 48 bits are
 stored inline, and larger `int`s are boxed on the heap.
 Boxing a null reference yields `()`.
+
+## Dynamic objects
+
+`object` is for dynamically typed languages, whose objects get fields by name at run time (Lox's
+instances, a JavaScript object, a Python `__dict__`). Its fields are `any` values, set with
+`set_field(o, "name", v)` (which adds the field if `o` has none of that name) and read with
+`field(o, "name")` (a missing field panics with ``no field `name` ``), `has_field` and
+`field_names`. Name lookup is the framework's work, and fast (D66):
+
+- Field names are interned: one string object per distinct name, so names compare as pointers.
+- Objects that got the same names in the same order share a shape, which says which slot holds
+  each name; finding a field is a question about the shape, not the object.
+- Where the name is a string literal (after the optimizer: a prelude function inlined with a
+  literal argument counts), lowering keeps a cache at that place in the code: the shape seen last
+  and the slot. An object of that shape is then one comparison and one load away; setting a field
+  that adds it to objects of a cached shape is a comparison and two stores. Other names go through
+  the runtime and a table by shape and name.
+
+A language with classes keeps an instance's fields in an `object` and its class's methods in
+another (`examples/lox/prelude.hir`). Shapes and interned names live as long as the program; a
+program that makes up unboundedly many distinct field names (a dictionary keyed by data) should
+use a `map`.
 
 ## Closures
 

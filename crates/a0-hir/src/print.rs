@@ -681,7 +681,7 @@ impl Printer<'_> {
                 }
                 self.out.push(']');
             }
-            ExprKind::NewArray | ExprKind::NewMap => {
+            ExprKind::NewArray | ExprKind::NewMap | ExprKind::NewObject => {
                 let _ = write!(self.out, "new {}", self.ty(m.expr_type(e)));
             }
             ExprKind::Index(t, i) => {

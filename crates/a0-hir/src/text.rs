@@ -548,6 +548,8 @@ impl<'a> TextParser<'a> {
                     Some(Item::Struct(s)) => self.b.struct_type_args(s, &args),
                     Some(Item::Enum(e)) => self.b.enum_type_args(e, &args),
                     Some(Item::Interface(i)) if args.is_empty() => self.b.interface_type(i),
+                    // Not a keyword, so that it stays free as a name.
+                    None if name == "object" && args.is_empty() => TypeId::OBJECT,
                     _ => {
                         return self.error(
                             node,
@@ -1113,11 +1115,12 @@ impl<'a> TextParser<'a> {
         Ok(match self.b.module().type_tag(t) {
             TypeTag::Array => self.b.new_array(t),
             TypeTag::Map => self.b.new_map(t),
+            TypeTag::Object => self.b.new_object(),
             _ => {
                 return self.error(
                     node,
                     code::SYNTAX,
-                    "new needs a struct literal, an array type or a map type",
+                    "new needs a struct literal, an array, map or object type",
                 );
             }
         })

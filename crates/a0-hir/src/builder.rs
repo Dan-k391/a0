@@ -1396,6 +1396,11 @@ impl HirBuilder {
         self.push(ExprKind::NewMap, map_type)
     }
 
+    /// `new object`: a dynamic object with no fields yet (`has_field`, `field`, `set_field`).
+    pub fn new_object(&mut self) -> ExprId {
+        self.push(ExprKind::NewObject, TypeId::OBJECT)
+    }
+
     pub fn index(&mut self, target: ExprId, index: ExprId) -> ExprId {
         self.push(ExprKind::Index(target, index), TypeId::NEVER)
     }
@@ -1925,6 +1930,7 @@ pub(crate) fn infer(m: &mut HirModule, kind: &ExprKind, hint: TypeId) -> Typed {
             }
             hint
         }
+        ExprKind::NewObject => TypeId::OBJECT,
         ExprKind::Index(target, index) => {
             let (key, elem) = index_types(m, *target)?;
             expect(m, *index, key)?;
@@ -2420,8 +2426,15 @@ fn builtin_type(m: &mut HirModule, op: Builtin, args: &[ExprId]) -> Typed {
         | Builtin::Eprint
         | Builtin::Exit
         | Builtin::Panic => 1,
-        Builtin::Push | Builtin::Has | Builtin::Remove | Builtin::ByteAt | Builtin::Filled => 2,
-        Builtin::Substr => 3,
+        Builtin::FieldNames => 1,
+        Builtin::Push
+        | Builtin::Has
+        | Builtin::Remove
+        | Builtin::ByteAt
+        | Builtin::Filled
+        | Builtin::HasField
+        | Builtin::Field => 2,
+        Builtin::Substr | Builtin::SetField => 3,
     };
     if args.len() != arity {
         let callee = Callee::unknown(format!("`{}`", op.name()));
@@ -2484,6 +2497,19 @@ fn builtin_type(m: &mut HirModule, op: Builtin, args: &[ExprId]) -> Typed {
             TypeKind::Error => TypeId::ERROR,
             _ => return bad(m, "needs a map"),
         },
+        Builtin::HasField | Builtin::Field | Builtin::SetField | Builtin::FieldNames => {
+            expect(m, args[0], TypeId::OBJECT)?;
+            if op != Builtin::FieldNames {
+                expect(m, args[1], TypeId::STRING)?;
+            }
+            match op {
+                Builtin::HasField => TypeId::BOOL,
+                Builtin::Field => TypeId::ANY,
+                // The value, of any type, is stored as an `any`.
+                Builtin::SetField => TypeId::UNIT,
+                _ => m.intern(TypeKind::Array(TypeId::STRING)),
+            }
+        }
         Builtin::Filled => {
             expect(m, args[0], TypeId::INT)?;
             let elem = m.expr_type(args[1]);
@@ -2587,7 +2613,7 @@ pub(crate) fn visit_children(m: &HirModule, e: ExprId, f: &mut dyn FnMut(ExprId)
     use ExprKind::*;
     match &m.expr(e).kind {
         Unit | Bool(_) | Int(_) | Float(_) | Str(_) | Null | Local(_) | Global(_) | Func(..)
-        | Lambda(_) | NewArray | NewMap | Break | Continue => {}
+        | Lambda(_) | NewArray | NewMap | NewObject | Break | Continue => {}
         Let(_, a)
         | SetLocal(_, a)
         | SetGlobal(_, a)

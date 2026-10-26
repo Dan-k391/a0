@@ -25,6 +25,9 @@ const KIND_STRING: i32 = 1;
 const KIND_ARRAY: i32 = 2;
 const KIND_MAP: i32 = 3;
 const KIND_INT: i32 = 4;
+const KIND_OBJECT: i32 = 5;
+/// An array element kind: a byte per element (`A0_ELEM_BYTE`).
+const ELEM_BYTE: u64 = 3;
 /// Elements and entries shown at most, in summaries and as children.
 const SHOWN: usize = 100;
 const SUMMARY: usize = 8;
@@ -208,6 +211,15 @@ fn object(m: &Module, p: u64, depth: u32) -> String {
             (_, KIND_INT) => (word(p) as i64).to_string(),
             (_, KIND_ARRAY) => format!("[…; {}]", word(p)),
             (_, KIND_MAP) => format!("{{…; {}}}", word(p)),
+            (_, KIND_OBJECT) if depth > 1 => "{…}".to_string(),
+            (_, KIND_OBJECT) => {
+                let fields: Vec<String> = fields(p)
+                    .into_iter()
+                    .take(SUMMARY)
+                    .map(|(name, w, _)| format!("{name}: {}", any(m, w, depth + 1)))
+                    .collect();
+                format!("{{{}}}", fields.join(", "))
+            }
             (name, _) => format!("<{name}>"),
         },
     }
@@ -252,10 +264,12 @@ pub fn parts(m: &Module, w: u64, view: View) -> Vec<(String, u64, View)> {
                         let elem = match kind {
                             WORD_REF => View::Object,
                             WORD_ANY => View::Any,
+                            ELEM_BYTE => View::Raw(Type::I1),
                             _ => View::Raw(Type::I64),
                         };
                         elements(w, elem)
                     }
+                    KIND_OBJECT => fields(w),
                     _ => Vec::new(),
                 },
             };
@@ -307,11 +321,32 @@ pub fn parts(m: &Module, w: u64, view: View) -> Vec<(String, u64, View)> {
     }
 }
 
+/// The fields of a dynamic object (`A0Object`: its shape, capacity and slots), in the order they
+/// were added: each shape adds a name (`A0Shape`: parent, name, count).
+fn fields(o: u64) -> Vec<(String, u64, View)> {
+    let slots = word(o + 16);
+    let mut out = Vec::new();
+    let mut shape = word(o);
+    while shape != 0 && word(shape) != 0 {
+        let index = word(shape + 16) - 1;
+        let name = string(word(shape + 8));
+        out.push((
+            name.trim_matches('"').to_string(),
+            word(slots + 8 * index),
+            View::Any,
+        ));
+        shape = word(shape);
+    }
+    out.reverse();
+    out.truncate(SHOWN);
+    out
+}
+
 fn elements(a: u64, elem: View) -> Vec<(String, u64, View)> {
     let len = word(a) as usize;
     let data = word(a + 16);
     // An array of bytes (`A0_ELEM_BYTE` as its element kind, `array<bool>`) or of words.
-    let bytes = word(a + 24) == 3;
+    let bytes = word(a + 24) == ELEM_BYTE;
     (0..len.min(SHOWN))
         .map(|i| {
             let w = if bytes {

@@ -35,6 +35,10 @@ collector run on every allocation; the suite also runs that way.
 - **Functions** become HIR closures `fn(this: any, args: array<any>) -> any` wrapped in a
   `LoxFunction`. The prelude's `call` checks arity, binds methods and creates instances. Captured
   variables, the shadow stack and the collector are the HIR's job, so the compiler never sees them.
+- **Fields and methods** are HIR dynamic objects (`object`, `docs/hir.md`): an instance's fields
+  and a class's methods, found by name through shapes and a cache at each place in the program.
+  `o.m(args)` finds `m` before evaluating the arguments, as jlox does, and calls it on `o` without
+  making a bound method (clox's `OP_INVOKE`).
 - **Globals** are HIR globals, each with a flag saying whether it has been defined yet, so using an
   undefined global is a runtime error, as in jlox.
 - **Classes** copy their superclass's methods on creation; `this` and `super` are ordinary locals that

@@ -172,6 +172,7 @@ impl Mono<'_> {
             TypeKind::String => return TypeId::STRING,
             TypeKind::Any => return TypeId::ANY,
             TypeKind::Never => return TypeId::NEVER,
+            TypeKind::Object => return TypeId::OBJECT,
             // A finished module has no inference variables; this is not reached.
             TypeKind::Var(_) | TypeKind::Error => return TypeId::UNIT,
             TypeKind::Param(owner, i) => {
@@ -563,6 +564,7 @@ impl Mono<'_> {
             ExprKind::Array(elems) => ExprKind::Array(self.exprs(c, &elems, body)),
             ExprKind::NewArray => ExprKind::NewArray,
             ExprKind::NewMap => ExprKind::NewMap,
+            ExprKind::NewObject => ExprKind::NewObject,
             ExprKind::Index(t, i) => ExprKind::Index(self.expr(c, t, body), self.expr(c, i, body)),
             ExprKind::Builtin(op, args) => ExprKind::Builtin(op, self.exprs(c, &args, body)),
             ExprKind::Cast(a) => ExprKind::Cast(self.expr(c, a, body)),

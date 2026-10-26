@@ -613,9 +613,12 @@ impl Opt<'_> {
                             out.insert(l, Replace::Boxed(raw, m.locals[raw.index()].ty));
                         }
                     }
+                    // A string literal reads the one string of its text, so reads of a copy can read
+                    // it too: dynamic objects then see their field names as literals (D66).
                     k @ (ExprKind::Int(_)
                     | ExprKind::Float(_)
                     | ExprKind::Bool(_)
+                    | ExprKind::Str(_)
                     | ExprKind::Unit)
                         if init_data.ty == m.locals[l.index()].ty =>
                     {
@@ -955,7 +958,7 @@ fn map_children(kind: &ExprKind, f: &mut dyn FnMut(ExprId) -> ExprId) -> ExprKin
     let all = |v: &[ExprId], f: &mut dyn FnMut(ExprId) -> ExprId| v.iter().map(|&x| f(x)).collect();
     match kind {
         Unit | Bool(_) | Int(_) | Float(_) | Str(_) | Null | Local(_) | Global(_) | Func(..)
-        | Lambda(_) | NewArray | NewMap | Break | Continue => kind.clone(),
+        | Lambda(_) | NewArray | NewMap | NewObject | Break | Continue => kind.clone(),
         Let(l, a) => Let(*l, f(*a)),
         SetLocal(l, a) => SetLocal(*l, f(*a)),
         SetGlobal(g, a) => SetGlobal(*g, f(*a)),

@@ -210,7 +210,14 @@ enum { A0_WORD_RAW = 0, A0_WORD_REF = 1, A0_WORD_ANY = 2 };
 
 /* Kinds of objects. FIXED objects (structs, enum variants, closures, boxes) are a fixed number of
  * words described by the type's layout; the others have built-in descriptors. */
-enum { A0_KIND_FIXED = 0, A0_KIND_STRING = 1, A0_KIND_ARRAY = 2, A0_KIND_MAP = 3, A0_KIND_INT = 4 };
+enum {
+    A0_KIND_FIXED = 0,
+    A0_KIND_STRING = 1,
+    A0_KIND_ARRAY = 2,
+    A0_KIND_MAP = 3,
+    A0_KIND_INT = 4,
+    A0_KIND_OBJECT = 5
+};
 
 /* Generated code reads three things directly (crates/a0-hir/src/lower.rs): an object's type is the
  * pointer 8 bytes before the object (in the collector's header), a type's family is the field 24
@@ -346,6 +353,49 @@ void a0_map_set(A0Map *m, uint64_t key, uint64_t value);
 int64_t a0_map_remove(A0Map *m, uint64_t key);
 /* The keys in insertion order, as an array with elements of the key's kind. */
 A0Array *a0_map_keys(A0Map *m);
+
+/* ---- Dynamic objects (object.c, D66) ------------------------------------------------------------ *
+ * Objects whose fields, `any` values, are added by name at run time. Names are interned strings;
+ * objects with the same names added in the same order share a shape, which says which slot holds
+ * each name. Generated code reads `shape`, `cap` and `slots` and keeps an A0FieldCache per place
+ * that names a field: when an object's shape is the cache's `shape`, the field is slot `index`
+ * (-1: no such field), and setting it leaves the object with shape `to`. */
+
+typedef struct A0Shape {
+    A0_WORD_PTR(const struct A0Shape *, parent); /* NULL for the empty shape */
+    A0_WORD_PTR(A0String *, name);               /* the name this shape adds: slot count - 1 */
+    int64_t count;                               /* the number of fields */
+    struct A0Shape **children;
+    int64_t child_count, child_cap;
+} A0Shape;
+
+#define A0_OBJECT_INLINE 4
+
+typedef struct A0Object {
+    A0_WORD_PTR(const A0Shape *, shape);
+    int64_t cap;
+    A0_WORD_PTR(uint64_t *, slots);
+    uint64_t inline_slots[A0_OBJECT_INLINE];
+} A0Object;
+
+typedef struct A0FieldCache {
+    A0_WORD_PTR(const A0Shape *, shape);
+    int64_t index;
+    A0_WORD_PTR(const A0Shape *, to);
+} A0FieldCache;
+
+/* The one string with `s`'s text that names are compared against; `s` itself the first time. */
+A0String *a0_intern(A0String *s);
+A0Object *a0_object_new(void);
+int64_t a0_object_has(A0Object *o, A0String *name);
+/* Fails with "no field `name`" if `o` has none. */
+uint64_t a0_object_get(A0Object *o, A0String *name, uint64_t loc, void *frame);
+void a0_object_set(A0Object *o, A0String *name, uint64_t value);
+/* The names of `o`'s fields, in the order they were added. */
+A0Array *a0_object_names(A0Object *o);
+/* Find or set a field, and fill `cache` with what was found (the slow paths of generated code). */
+int64_t a0_object_find_cached(A0Object *o, A0String *name, A0FieldCache *cache);
+void a0_object_set_cached(A0Object *o, A0String *name, uint64_t value, A0FieldCache *cache);
 
 /* A null reference where the runtime needed an object. */
 A0_NORETURN void a0_panic_null(void);

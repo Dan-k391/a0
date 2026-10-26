@@ -1,0 +1,79 @@
+// Dynamic objects: fields added by name at run time, found through shapes and caches; names that
+// are not literals take the runtime's way. Many objects with one shape, a field added later,
+// objects of other shapes at the same place, and more fields than fit inline.
+// expect-stdout: 1 2.5 hello
+// expect-stdout: has x: true, has z: false
+// expect-stdout: sum 4950
+// expect-stdout: mixed 1 30 300
+// expect-stdout: wide 0 1 2 3 4 5 6 7 8 9
+// expect-stdout: names a b c
+// expect-stdout: dynamic 42 true
+// expect-stdout: replaced new
+// expect-stderr: panic: no field `missing`
+// expect-stderr:     at get (tests/hir/objects.hir:26:3)
+// expect-stderr:     at main (tests/hir/objects.hir:77:3)
+// expect-exit: 101
+module "objects";
+
+fn point(x: int, y: int) -> object {
+  let p = new object;
+  set_field(p, "x", x);
+  set_field(p, "y", y);
+  p
+}
+
+fn get(o: object, name: string) -> any {
+  field(o, name)
+}
+
+fn main() -> int {
+  let o = new object;
+  set_field(o, "a", 1);
+  set_field(o, "b", 2.5);
+  set_field(o, "c", "hello");
+  print(str(field(o, "a") as int) + " " + str(field(o, "b") as float) + " " + (field(o, "c") as string) + "\n");
+  print("has x: " + str(has_field(point(1, 2), "x")) + ", has z: " + str(has_field(point(1, 2), "z")) + "\n");
+  let sum = 0;
+  let i = 0;
+  while i < 100 {
+    let p = point(i, 0 - i);
+    sum = sum + (field(p, "x") as int);
+    i = i + 1;
+  }
+  print("sum " + str(sum) + "\n");
+  // One place sees objects of three shapes in turn.
+  let shapes = [point(1, 2), new object, new object];
+  set_field(shapes[1], "y", 0);
+  set_field(shapes[1], "x", 30);
+  set_field(shapes[2], "x", 300);
+  let out = "mixed";
+  let k = 0;
+  while k < 3 {
+    out = out + " " + str(field(shapes[k], "x") as int);
+    k = k + 1;
+  }
+  print(out + "\n");
+  let wide = new object;
+  let names = ["f0", "f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", "f9"];
+  let n = 0;
+  while n < 10 {
+    set_field(wide, names[n], n);
+    n = n + 1;
+  }
+  let text = "wide";
+  n = 0;
+  while n < 10 {
+    text = text + " " + str(get(wide, "f" + str(n)) as int);
+    n = n + 1;
+  }
+  print(text + "\n");
+  let ks = field_names(o);
+  print("names " + ks[0] + " " + ks[1] + " " + ks[2] + "\n");
+  let d = new object;
+  set_field(d, "n" + "um", 42);
+  print("dynamic " + str(field(d, "num") as int) + " " + str(has_field(d, "nu" + "m")) + "\n");
+  set_field(o, "c", "new");
+  print("replaced " + (field(o, "c") as string) + "\n");
+  get(o, "missing");
+  0
+}

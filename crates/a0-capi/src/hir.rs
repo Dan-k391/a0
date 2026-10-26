@@ -1324,6 +1324,11 @@ pub unsafe extern "C" fn a0_hir_new_map(b: *mut A0HirBuilder, map_type: u32) -> 
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn a0_hir_new_object(b: *mut A0HirBuilder) -> u32 {
+    unsafe { with(b, |h| Some(h.b.new_object().0)) }
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn a0_hir_index(b: *mut A0HirBuilder, target: u32, index: u32) -> u32 {
     unsafe {
         with(b, |h| {

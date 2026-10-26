@@ -802,3 +802,32 @@ lowering loads and stores those bytes inline with a stride of one. The array's k
 its elements are, so the runtime, the debugger and C (which sees a `bool *`) read them alike, and
 narrower integer types can join later without another layout. The sieve went from 84 to 50 ms
 and from 16 to 2 MB.
+
+## D66. Fast names for dynamic languages: dynamic objects with shapes, interned names and caches
+
+v0.5 asks that dynamic languages get fast name lookup from the framework, and that Lox use it.
+Lox kept an instance's fields in a `map<string, any>` and a class's methods in another, so a
+property access was runtime calls that hashed and compared strings, a method call first allocated a
+bound method, and an instance was four allocations (the struct, the map and its two tables). The
+framework could have offered interned strings alone (equality by pointer, but still a hash table
+per object), or per-site caches keyed by map (useless when every instance has its own map), or
+what JavaScript engines do: hidden classes. It is the last, as a HIR type `object` with builtins
+`has_field`, `field`, `set_field` and `field_names`:
+
+- Names are interned by the runtime (`a0_intern`), once each, kept for the program's life.
+- An object is a shape and a row of `any` slots (four inline). Shapes form a tree from the empty
+  shape, each adding a name, so objects built alike share one, and a field's slot is a property of
+  the shape. Shapes are never freed.
+- Lowering gives each place whose field name is a literal a cache (shape, slot, and the shape
+  after a set): a hit is a comparison and a load. The caches are words in one block allocated at
+  startup, since the core IR has no mutable data. Other places use the runtime, which keeps a
+  table by shape and name. The optimizer now propagates string literals through `let`s, so a
+  prelude function inlined with a literal name gets a cache at each call site.
+
+Lox's instances and classes keep their fields and methods in objects, and `o.m(args)` looks `m` up
+before evaluating the arguments (jlox's order) and calls it on `o` with no bound method: a plain
+function's code ignores its receiver, since only methods use `this`. Native Lox against the
+previous version and clox (Linux, best of five): `binary_trees` 1546 → 521 ms (clox 1784; the
+collector's share 833 → 134 ms), `zoo` 274 → 112 ms (clox 182), `method_call` 142 → 81 ms (clox
+119), `invocation` 284 → 175 ms (clox 176). The debugger shows an object's fields by name, and
+lowering now describes every struct and enum, so `any` values holding them show their fields too.

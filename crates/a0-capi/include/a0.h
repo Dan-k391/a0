@@ -253,8 +253,8 @@ void a0_hir_clear_span(A0HirBuilder *b);
 /* Checks the module and returns it, or NULL with *diags. Frees the builder either way. */
 A0Hir *a0_hir_finish(A0HirBuilder *b, A0Diagnostics **diags);
 
-/* Types. "unit", "bool", "int", "float", "string", "any" and the names of declared structs and
- * enums are named types; `args` are type arguments (none: inferred). */
+/* Types. "unit", "bool", "int", "float", "string", "any", "object" and the names of declared
+ * structs and enums are named types; `args` are type arguments (none: inferred). */
 A0HirType a0_hir_named_type(A0HirBuilder *b, const char *name, size_t len, const A0HirType *args,
                             size_t arg_count);
 /* A type to infer from how it is used. */
@@ -416,6 +416,9 @@ A0HirExpr a0_hir_match(A0HirBuilder *b, A0HirExpr scrutinee, const A0HirArm *arm
 A0HirExpr a0_hir_array(A0HirBuilder *b, const A0HirExpr *elems, size_t count);
 A0HirExpr a0_hir_new_array(A0HirBuilder *b, A0HirType array_type);
 A0HirExpr a0_hir_new_map(A0HirBuilder *b, A0HirType map_type);
+/* A dynamic object (type "object"), whose `any` fields are added by name at run time with the
+ * builtins has_field, field, set_field and field_names (docs/hir.md). */
+A0HirExpr a0_hir_new_object(A0HirBuilder *b);
 A0HirExpr a0_hir_index(A0HirBuilder *b, A0HirExpr target, A0HirExpr index);
 /* "len", "push", "pop", "has", "remove", "keys", "substr", "byte_at", "str", "print", "eprint",
  * "exit", "panic", "clock" (docs/hir.md). */

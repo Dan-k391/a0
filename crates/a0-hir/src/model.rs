@@ -68,6 +68,8 @@ impl TypeId {
     /// The type of an expression that had an error (already reported). It fits everything and
     /// spreads to what is inferred from it, so one mistake is reported once.
     pub const ERROR: TypeId = TypeId(7);
+    /// A dynamic object: fields of type `any` added by name at run time (D66).
+    pub const OBJECT: TypeId = TypeId(8);
 }
 
 /// The shape of a type (see `docs/hir.md`).
@@ -81,6 +83,7 @@ pub(crate) enum TypeKind {
     Any,
     Never,
     Error,
+    Object,
     Array(TypeId),
     Map(TypeId, TypeId),
     /// A struct and its type arguments (none unless the struct is generic).
@@ -121,6 +124,8 @@ pub enum TypeTag {
     Param,
     /// A type not inferred yet (only while building).
     Var,
+    /// A dynamic object (`object`).
+    Object,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -212,6 +217,10 @@ builtins! {
     Remove = "remove",
     Keys = "keys",
     Filled = "filled",
+    HasField = "has_field",
+    Field = "field",
+    SetField = "set_field",
+    FieldNames = "field_names",
     Substr = "substr",
     ByteAt = "byte_at",
     Str = "str",
@@ -258,6 +267,8 @@ pub(crate) enum ExprKind {
     Array(Vec<ExprId>),
     NewArray,
     NewMap,
+    /// `new object`: a dynamic object with no fields.
+    NewObject,
     Index(ExprId, ExprId),
     Builtin(Builtin, Vec<ExprId>),
     Cast(ExprId),
@@ -623,6 +634,7 @@ impl HirModule {
             TypeKind::Any,
             TypeKind::Never,
             TypeKind::Error,
+            TypeKind::Object,
         ] {
             m.intern(k);
         }
@@ -939,6 +951,7 @@ impl HirModule {
             TypeKind::Any => TypeTag::Any,
             TypeKind::Never => TypeTag::Never,
             TypeKind::Error => TypeTag::Error,
+            TypeKind::Object => TypeTag::Object,
             TypeKind::Array(_) => TypeTag::Array,
             TypeKind::Map(..) => TypeTag::Map,
             TypeKind::Struct(..) => TypeTag::Struct,
@@ -999,6 +1012,7 @@ impl HirModule {
         matches!(
             self.kind(t),
             TypeKind::String
+                | TypeKind::Object
                 | TypeKind::Array(_)
                 | TypeKind::Map(..)
                 | TypeKind::Struct(..)
@@ -1081,6 +1095,7 @@ impl HirModule {
             TypeKind::Any => "any".to_string(),
             TypeKind::Never => "never".to_string(),
             TypeKind::Error => "{error}".to_string(),
+            TypeKind::Object => "object".to_string(),
             TypeKind::Array(e) => format!("array<{}>", name(*e)),
             TypeKind::Map(k, v) => format!("map<{}, {}>", name(*k), name(*v)),
             TypeKind::Struct(s, args) => self.applied(&self.structs[s.index()].name, args, custom),

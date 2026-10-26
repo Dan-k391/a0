@@ -28,6 +28,7 @@ fn main() {
         .file(manifest.join("c/string.c"))
         .file(manifest.join("c/array.c"))
         .file(manifest.join("c/map.c"))
+        .file(manifest.join("c/object.c"))
         .file(manifest.join("c/any.c"))
         .file(manifest.join("c/trace.c"))
         .file(manifest.join("c/std.c"))
