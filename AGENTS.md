@@ -14,6 +14,8 @@ cargo test -p a0-capi --test python # the Python bindings and Pebble (needs Pyth
 WASI_SDK=/path/to/wasi-sdk sh playground/build.sh && node playground/test.mjs target/playground
                                     # the playground, built for WebAssembly (Linux, macOS), and the
                                     # IR and HIR corpus compiled to WebAssembly and run there
+python3 targets/build.py            # the target packs cross-compilation links against (docs/cross.md;
+                                    # Linux, macOS); then `cargo test -p a0 --test programs pack`
 python3 bench/run.py                # the benchmark (docs/benchmarks.md; Linux, macOS; not in CI)
 cargo clippy --workspace --all-targets   # must report no warnings
 cargo fmt --all                     # run before committing
@@ -156,6 +158,7 @@ layer, decision D17). A new crate goes into the table above and into `[workspace
 | The language server or the editor extension | `docs/editors.md` |
 | The debugger (`dap.rs`, debug types, the runtime's hooks) or native debug information | `docs/debugging.md` |
 | The REPL (`repl.rs`, `Language::repl_main`) | `docs/repl.md` |
+| Linking, target packs (`link.rs`, `targets/build.py`, `start_windows.c`) | `docs/cross.md` |
 | Diagnostics: rendering, codes (`a0_diag::codes`), the builder's reporting API | `docs/diagnostics.md` (its code table is tested) |
 | A design choice with alternatives | a new `D<n>` entry in `docs/decisions.md` |
 | A milestone ends | `docs/milestones.md` (done / changed / open questions); `CHANGELOG.md` (under Unreleased) |

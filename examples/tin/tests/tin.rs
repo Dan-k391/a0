@@ -162,7 +162,15 @@ fn in_process(mode: &str, opt: &str, env: &[(&str, &str)]) {
 }
 
 fn native(mode: &str, opt: &str) {
-    let dir = std::env::temp_dir().join(format!("tin-test-{opt}-{}", std::process::id()));
+    native_with(mode, opt, &[]);
+}
+
+fn native_with(mode: &str, opt: &str, env: &[(&str, &str)]) {
+    let dir = std::env::temp_dir().join(format!(
+        "tin-test-{opt}-{}-{}",
+        env.len(),
+        std::process::id()
+    ));
     std::fs::create_dir_all(&dir).unwrap();
     check_all(mode, &|f| {
         let exe = dir.join(format!(
@@ -177,7 +185,8 @@ fn native(mode: &str, opt: &str) {
                 .arg(f.file_name().unwrap())
                 .arg("-o")
                 .arg(&exe)
-                .env("A0_OPT", opt),
+                .env("A0_OPT", opt)
+                .envs(env.iter().copied()),
             "",
         );
         if !build.status.success() {
@@ -216,6 +225,18 @@ fn programs_survive_gc_stress() {
 #[test]
 fn programs_run_natively() {
     native("native", "1");
+}
+
+/// Linked by lld against the host's target pack (D79), cJSON and the C library included, when one
+/// is installed (`targets/build.py`).
+#[test]
+fn programs_run_linked_against_a_target_pack() {
+    let Some(host) = a0_native::Target::host() else {
+        return;
+    };
+    if a0_native::find_pack(host).is_some() {
+        native_with("linked against a target pack", "1", &[("A0_LINK", "pack")]);
+    }
 }
 
 #[test]

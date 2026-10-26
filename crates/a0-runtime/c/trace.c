@@ -132,7 +132,7 @@ size_t a0_rt_trace_text(const uint32_t *ids, size_t count, char *buf, size_t cap
         add_frame(&t, ids[i]);
         shown++;
         if (run > 1) {
-            char line[64];
+            char line[80];
             snprintf(line, sizeof line, "    ... the frame above repeats %zu more times\n", run - 1);
             add(&t, line);
         }

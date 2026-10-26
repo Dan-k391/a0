@@ -162,6 +162,7 @@ A0 is not published on crates.io; depend on it from git (`a0-hir = { git =
 | [docs/editors.md](docs/editors.md) | The language server and editor setup |
 | [docs/c-api.md](docs/c-api.md) | Using A0 from C |
 | [docs/python.md](docs/python.md) | Writing a language in Python |
+| [docs/cross.md](docs/cross.md) | Cross-compilation: building executables for other platforms |
 | [docs/playground.md](docs/playground.md) | The browser playground: building it, how it works |
 | [docs/debugging.md](docs/debugging.md) | The debugger every language gets, and native debug information |
 | [docs/repl.md](docs/repl.md) | The REPL every language gets |
@@ -179,6 +180,7 @@ a0 fmt prog.a0ir                          # print the canonical form
 a0 run prog.a0ir                          # run @main (JIT; A0_INTERP=1 interprets)
 a0 build prog.a0ir                        # native executable for the host
 a0 obj --target aarch64-linux prog.a0ir   # object file for another target
+a0 build --target x86_64-windows prog.hir # executable for another platform (docs/cross.md)
 a0 parse lang.a0g input.txt               # try a grammar: print the tree or the errors
 a0 run prog.hir                           # HIR programs: run, build, fmt, check work the same
 a0 lower prog.hir                         # print the core IR a HIR module lowers to

@@ -1085,3 +1085,30 @@ a stack of call locations the generated code keeps (a store per call), read by t
 the hook the interpreter uses, so failures print what they print natively. The playground compiles
 by default, and `playground/test.mjs` runs the whole IR and HIR corpus compiled in CI. Threads, C
 structs by value and C functions whose C types are narrower on wasm32 are not supported.
+
+## D79. Cross-compilation: lld and target packs
+
+v0.8 asks for cross-compilation with nothing extra to install, as far as licensing allows. A0
+already writes objects for every target (`a0 obj --target`); what an executable needs besides is a
+linker that runs on the host and, for the target, a C library, A0's runtime and compiler-rt's
+builtins. The choices were to require each target's toolchain (a cross gcc, MSVC, Xcode), which is
+what "nothing extra" rules out; to bundle a C compiler (Zig does: it builds the C library on
+demand, at the cost of a C compiler in every installation); or to ship prebuilt libraries per
+target. A0 ships them: a *target pack* is a directory of static libraries built once by
+`targets/build.py`, and lld links against it. A0 still writes no linker of its own: lld comes with
+Rust (`rust-lld` in every toolchain's sysroot), with LLVM, or next to `a0` in a release.
+
+What goes in a pack follows the licenses. Linux executables link statically against musl (MIT), so
+they run on any Linux, whatever its C library. Windows executables use the Universal C Runtime,
+part of Windows since 10, through mingw-w64's import libraries (public domain); the runtime is
+compiled against mingw-w64's headers, and a startup file of A0's own (`start_windows.c`: arguments,
+`atexit`, the TLS directory) replaces the startup code of a C library A0 could not ship. Functions
+mingw-w64 leaves to its own static library (mathematics, some of `stdio`) are imported from
+`ucrtbase.dll` by an import library the build generates. macOS has no pack: its SDK may not be
+redistributed, so building for macOS needs a Mac. aarch64-windows has none yet either: Ubuntu's
+mingw-w64 has no ARM64 libraries; a pack for it can follow the same recipe with llvm-mingw's.
+
+`a0 build --target` (and every language driver's `build --target`) links with the pack whenever the
+target is not the host; `A0_LINK=pack` uses it for the host too, which CI does to run the whole
+corpus through each pack (aarch64 Linux under QEMU). Native builds for the host keep the system's
+linker and C library, which is what a user debugging with gdb or Visual Studio expects.

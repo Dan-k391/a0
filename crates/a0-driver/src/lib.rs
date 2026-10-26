@@ -185,6 +185,8 @@ pub struct Invocation {
     pub args: Vec<String>,
     /// `build -g`: describe the executable for the platform's debugger.
     pub debug: bool,
+    /// `build --target`: the target to build for, if not the host (D79).
+    pub target: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -378,9 +380,19 @@ impl Language {
                 }
             }
             Command::Build => {
-                let Some(target) = a0_native::Target::host() else {
-                    eprintln!("{}: native code is not supported on this host", self.name);
-                    return self.exit_codes.internal;
+                let target = match inv.target.as_deref().map(a0_native::Target::parse) {
+                    Some(Ok(t)) => t,
+                    Some(Err(e)) => {
+                        eprintln!("{}: {e}", self.name);
+                        return self.exit_codes.usage;
+                    }
+                    None => match a0_native::Target::host() {
+                        Some(t) => t,
+                        None => {
+                            eprintln!("{}: native code is not supported on this host", self.name);
+                            return self.exit_codes.internal;
+                        }
+                    },
                 };
                 let output = executable_name(&inv.file, inv.output.as_deref(), target.exe_suffix());
                 let mut opts = a0_native::BuildOptions::default();
@@ -473,6 +485,7 @@ impl Language {
                 output: None,
                 args: Vec::new(),
                 debug: false,
+                target: None,
             });
         }
         if let [explain, code] = args
@@ -484,6 +497,7 @@ impl Language {
                 output: None,
                 args: Vec::new(),
                 debug: false,
+                target: None,
             });
         }
         let (command, rest) = match args.first().map(String::as_str) {
@@ -501,6 +515,7 @@ impl Language {
             output: None,
             args: Vec::new(),
             debug: false,
+            target: None,
         };
         match (command, rest) {
             (Command::Run, rest) => inv.args = rest.to_vec(),
@@ -513,6 +528,10 @@ impl Language {
                         }
                         ("-g", more) if !inv.debug => {
                             inv.debug = true;
+                            rest = more;
+                        }
+                        ("--target", [t, more @ ..]) if inv.target.is_none() => {
+                            inv.target = Some(t.clone());
                             rest = more;
                         }
                         _ => return None,
@@ -536,8 +555,9 @@ impl Language {
             "usage: {n} <command> <file>\n\n\
              commands:\n\
              \x20 run <file> [args...]   interpret the program{run}\n\
-             \x20 build <file> [-o out] [-g]\n\
-             \x20                        compile it to a native executable (-g: for gdb or lldb)\n\
+             \x20 build <file> [-o out] [-g] [--target <target>]\n\
+             \x20                        compile it to a native executable (-g: for gdb or lldb;\n\
+             \x20                        another target needs its pack: targets/build.py)\n\
              \x20 ir <file>              print the core IR\n\
              \x20 hir <file>             print the high-level IR\n\
              \x20 lsp                    serve the Language Server Protocol on stdin/stdout\n\

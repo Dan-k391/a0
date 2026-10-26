@@ -177,14 +177,26 @@ fn invalid_modules_are_rejected_with_diagnostics() {
     assert!(err.summary().contains("no function @main"));
 }
 
+/// Executables for other targets link against target packs (D79); without one, the error says
+/// what is missing.
 #[test]
-fn linking_for_another_target_is_refused() {
+fn linking_for_a_target_without_a_pack_says_why() {
     let host = Target::host().unwrap();
-    let other = Target::ALL.into_iter().find(|&t| t != host).unwrap();
-    let err = a0_native::link_executable(&[], other, Path::new("never"), &Default::default())
-        .unwrap_err();
-    assert!(
-        err.summary()
-            .contains("linking is only supported for the host target")
-    );
+    for (target, why) in [
+        (
+            Target::AARCH64_MACOS,
+            "Apple's SDK, which may not be redistributed",
+        ),
+        (
+            Target::AARCH64_WINDOWS,
+            "there is no target pack for it yet",
+        ),
+    ] {
+        if target == host {
+            continue;
+        }
+        let err = a0_native::link_executable(&[], target, Path::new("never"), &Default::default())
+            .unwrap_err();
+        assert!(err.summary().contains(why), "{}", err.summary());
+    }
 }

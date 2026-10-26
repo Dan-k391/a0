@@ -24,7 +24,7 @@ use a0_ir::Module;
 pub use a0_target::Target;
 pub use codegen::{CodegenOptions, ENTRY_SYMBOL, compile_object};
 pub use jit::{JitOptions, jit_supported, run_main};
-pub use link::{Library, LinkOptions, link_executable};
+pub use link::{Library, LinkOptions, find_pack, link_executable, pack_name};
 pub use thunks::add_thunks;
 
 #[derive(Clone, Debug, Default)]

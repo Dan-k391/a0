@@ -169,31 +169,47 @@ const JIT: &[(&str, &str)] = &[];
 const GC_STRESS: &[(&str, &str)] = &[("A0_GC_STRESS", "1")];
 
 fn native(opt: &str) {
-    let dir = scratch_dir(&format!("native-{opt}"));
+    native_with(opt, &[]);
+}
+
+fn native_with(opt: &str, env: &[(&str, &str)]) {
+    let dir = scratch_dir(&format!("native-{opt}-{}", env.len()));
     check_programs(&|file| {
-        let exe = dir.join(format!(
-            "{}{}",
-            file.file_name()
-                .unwrap()
-                .to_string_lossy()
-                .replace('.', "_"),
-            std::env::consts::EXE_SUFFIX
-        ));
-        let build = run(Command::new(env!("CARGO_BIN_EXE_a0"))
-            .arg("build")
-            .arg(file)
-            .arg("-o")
-            .arg(&exe)
-            .env("A0_OPT", opt));
-        assert!(
-            build.status.success(),
-            "building {} failed:\n{}",
-            file.display(),
-            String::from_utf8_lossy(&build.stderr)
-        );
+        let exe = build_for(&dir, file, None, &[("A0_OPT", opt)], env);
         run(&mut Command::new(&exe))
     });
     std::fs::remove_dir_all(&dir).ok();
+}
+
+/// Builds `file` into `dir` with `a0 build`, for `target` if given, and returns the executable.
+fn build_for(
+    dir: &Path,
+    file: &Path,
+    target: Option<a0_native::Target>,
+    opt: &[(&str, &str)],
+    env: &[(&str, &str)],
+) -> PathBuf {
+    let suffix = target.map_or(std::env::consts::EXE_SUFFIX, |t| t.exe_suffix());
+    let exe = dir.join(format!(
+        "{}{suffix}",
+        file.file_name()
+            .unwrap()
+            .to_string_lossy()
+            .replace('.', "_")
+    ));
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_a0"));
+    cmd.arg("build").arg(file).arg("-o").arg(&exe);
+    if let Some(t) = target {
+        cmd.arg("--target").arg(t.triple());
+    }
+    let build = run(cmd.envs(opt.iter().chain(env).copied()));
+    assert!(
+        build.status.success() && exe.exists(),
+        "building {} failed:\n{}",
+        file.display(),
+        String::from_utf8_lossy(&build.stderr)
+    );
+    exe
 }
 
 #[test]
@@ -329,5 +345,49 @@ sum = NUM (\"+\" NUM)*;
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("expected NUM, found '+'"), "{stderr}");
     assert!(stderr.contains("bad.txt:1:5"), "{stderr}");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// With the host's target pack installed (`targets/build.py`, D79), every program also runs when
+/// linked by lld against the pack instead of by the system's linker, as an executable built on
+/// another machine for this one would be.
+#[test]
+fn programs_linked_against_a_target_pack_match_expectations() {
+    let Some(host) = a0_native::Target::host() else {
+        return;
+    };
+    if a0_native::find_pack(host).is_none() {
+        eprintln!("no target pack for {host}: nothing to check");
+        return;
+    }
+    native_with("1", &[("A0_LINK", "pack")]);
+}
+
+/// Every program links for every other target whose pack is installed, and runs where a runner for
+/// that target is configured: `A0_CROSS_RUNNERS="aarch64-linux=qemu-aarch64,..."` (CI uses QEMU).
+#[test]
+fn programs_link_for_every_installed_pack() {
+    let runners = std::env::var("A0_CROSS_RUNNERS").unwrap_or_default();
+    let dir = scratch_dir("cross");
+    for target in a0_native::Target::ALL {
+        if Some(target) == a0_native::Target::host() || a0_native::find_pack(target).is_none() {
+            continue;
+        }
+        let runner = runners.split(',').find_map(|r| {
+            let (name, command) = r.split_once('=')?;
+            (a0_native::Target::parse(name.trim()).ok()? == target).then(|| command.trim())
+        });
+        match runner {
+            Some(runner) => check_programs(&|file| {
+                let exe = build_for(&dir, file, Some(target), &[], &[]);
+                run(Command::new(runner).arg(&exe))
+            }),
+            None => {
+                for file in programs() {
+                    build_for(&dir, &file, Some(target), &[], &[]);
+                }
+            }
+        }
+    }
     std::fs::remove_dir_all(&dir).ok();
 }

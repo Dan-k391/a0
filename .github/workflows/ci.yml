@@ -1,5 +1,5 @@
 # Builds A0 and runs every test, including native executables linked by the system linker, on each
-# supported host.
+# supported host, and cross-compiled executables linked against the target packs.
 name: CI
 
 on:
@@ -121,3 +121,57 @@ jobs:
         run: WASI_SDK=$HOME/wasi-sdk sh playground/build.sh
       - name: Test
         run: node playground/test.mjs target/playground
+
+  # Cross-compilation (D79): the target packs, built on Linux by targets/build.py, then every
+  # program linked against them for every target. aarch64 Linux executables run under QEMU, and the
+  # Windows job runs every program linked against the Windows pack instead of by MSVC's linker.
+  packs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        run: rustup toolchain install stable --profile minimal && rustup default stable
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: packs-${{ hashFiles('Cargo.lock') }}
+          restore-keys: packs-
+      - name: Install clang, LLVM's tools, mingw-w64 and QEMU
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq clang lld llvm mingw-w64 qemu-user-static
+      - name: Build
+        run: cargo build --workspace --locked
+      - name: Build the packs
+        run: rm -rf target/packs && python3 targets/build.py
+      - name: Test
+        run: cargo test -p a0 --test programs --locked pack && cargo test -p tin --test tin --locked pack
+        env:
+          A0_CROSS_RUNNERS: aarch64-linux=qemu-aarch64-static
+      - uses: actions/upload-artifact@v4
+        with:
+          name: packs
+          path: target/packs
+
+  packs-windows:
+    needs: packs
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        run: rustup toolchain install stable --profile minimal && rustup default stable
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-${{ runner.arch }}-cargo-${{ hashFiles('Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-${{ runner.arch }}-cargo-
+      - uses: actions/download-artifact@v4
+        with:
+          name: packs
+          path: target/packs
+      - name: Test
+        run: cargo test -p a0 --test programs --locked pack && cargo test -p tin --test tin --locked pack
