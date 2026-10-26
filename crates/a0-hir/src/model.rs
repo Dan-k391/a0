@@ -211,6 +211,7 @@ builtins! {
     Has = "has",
     Remove = "remove",
     Keys = "keys",
+    Filled = "filled",
     Substr = "substr",
     ByteAt = "byte_at",
     Str = "str",

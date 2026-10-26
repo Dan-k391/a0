@@ -1,11 +1,6 @@
 // Arrays: the primes below 2,000,000 by the sieve of Eratosthenes, ten times.
 fn count_primes(n: int) -> int {
-  let composite: [bool] = [];
-  let i = 0;
-  while i <= n {
-    push(composite, false);
-    i = i + 1;
-  }
+  let composite = filled(n + 1, false);
   let count = 0;
   let p = 2;
   while p <= n {

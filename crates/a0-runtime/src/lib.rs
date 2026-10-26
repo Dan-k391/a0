@@ -62,6 +62,7 @@ pub const REPORTS_LOCATION: &[&str] = &[
     "a0_string_byte_at",
     "a0_string_panic",
     "a0_array_get",
+    "a0_array_filled",
     "a0_array_set",
     "a0_array_pop",
     "a0_map_get",

@@ -2420,7 +2420,7 @@ fn builtin_type(m: &mut HirModule, op: Builtin, args: &[ExprId]) -> Typed {
         | Builtin::Eprint
         | Builtin::Exit
         | Builtin::Panic => 1,
-        Builtin::Push | Builtin::Has | Builtin::Remove | Builtin::ByteAt => 2,
+        Builtin::Push | Builtin::Has | Builtin::Remove | Builtin::ByteAt | Builtin::Filled => 2,
         Builtin::Substr => 3,
     };
     if args.len() != arity {
@@ -2484,6 +2484,11 @@ fn builtin_type(m: &mut HirModule, op: Builtin, args: &[ExprId]) -> Typed {
             TypeKind::Error => TypeId::ERROR,
             _ => return bad(m, "needs a map"),
         },
+        Builtin::Filled => {
+            expect(m, args[0], TypeId::INT)?;
+            let elem = m.expr_type(args[1]);
+            m.intern(TypeKind::Array(elem))
+        }
         Builtin::Substr => {
             expect(m, args[0], TypeId::STRING)?;
             expect(m, args[1], TypeId::INT)?;

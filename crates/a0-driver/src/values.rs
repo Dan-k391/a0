@@ -310,7 +310,16 @@ pub fn parts(m: &Module, w: u64, view: View) -> Vec<(String, u64, View)> {
 fn elements(a: u64, elem: View) -> Vec<(String, u64, View)> {
     let len = word(a) as usize;
     let data = word(a + 16);
+    // An array of bytes (`A0_ELEM_BYTE` as its element kind, `array<bool>`) or of words.
+    let bytes = word(a + 24) == 3;
     (0..len.min(SHOWN))
-        .map(|i| (format!("[{i}]"), word(data + 8 * i as u64), elem))
+        .map(|i| {
+            let w = if bytes {
+                self::bytes(data + i as u64, 1)[0] as u64
+            } else {
+                word(data + 8 * i as u64)
+            };
+            (format!("[{i}]"), w, elem)
+        })
         .collect()
 }

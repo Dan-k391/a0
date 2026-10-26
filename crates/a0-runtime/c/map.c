@@ -181,7 +181,10 @@ int64_t a0_map_remove(A0Map *m, uint64_t key) {
 /* The caller keeps `m` rooted while the array is allocated. */
 A0Array *a0_map_keys(A0Map *m) {
     check(m);
-    A0Array *a = a0_array_new(m->key_kind == A0_KEY_STRING ? A0_WORD_REF : A0_WORD_RAW, m->count);
+    int64_t kind = m->key_kind == A0_KEY_STRING ? A0_WORD_REF
+                   : m->key_kind == A0_KEY_BOOL ? A0_ELEM_BYTE
+                                                : A0_WORD_RAW;
+    A0Array *a = a0_array_new(kind, m->count);
     for (int64_t i = 0; i < m->used; i++) {
         if (m->entries[i].live) a0_array_push(a, m->entries[i].key);
     }

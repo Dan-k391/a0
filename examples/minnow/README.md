@@ -84,7 +84,8 @@ do that, Minnow was 1513 lines without enums, generics or nullable types.
   `E::V(a)`, `match e { V(x) => e, _ => e }` (arms may be blocks), and closures
   `fn(x: int) -> int { return x + 1; }`, which capture variables by reference.
 - **Builtins**: `print(x)` for numbers, booleans and strings (with a newline), `str(x)`, `len(a)`
-  for arrays, maps and strings, `push(a, x)`, `pop(a)`, `has(m, k)`, `remove(m, k)`, `keys(m)`,
+  for arrays, maps and strings, `filled(n, x)` (an array of `n` copies of `x`), `push(a, x)`,
+  `pop(a)`, `has(m, k)`, `remove(m, k)`, `keys(m)`,
   `substr(s, start, count)` and `byte_at(s, i)`. `new map {}` is an empty map; `m[k]` reads and
   assigns entries.
 - **Programs of several files**, methods, interfaces and the standard library: see above;

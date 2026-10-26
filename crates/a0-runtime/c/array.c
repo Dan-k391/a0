@@ -1,12 +1,17 @@
-/* Arrays: growable vectors of 64-bit words. */
+/* Arrays: growable vectors of 64-bit words, or of bytes (A0_ELEM_BYTE, for `array<bool>`). */
 #include "internal.h"
 
+#include <stdio.h>
 #include <string.h>
 
 static A0Array *check(A0Array *a) {
     if (a == NULL) a0_panic_null();
     return a;
 }
+
+static size_t elem_size(int64_t elem_kind) { return elem_kind == A0_ELEM_BYTE ? 1 : sizeof(uint64_t); }
+
+static size_t bytes_of(A0Array *a, int64_t count) { return elem_size(a->elem_kind) * (size_t)count; }
 
 /* Small arrays keep their first elements inline, after the header, so creating one is a single
  * allocation; growing past them moves the elements to a buffer. */
@@ -16,7 +21,7 @@ static int is_inline(A0Array *a) { return a->data == (uint64_t *)(a + 1); }
 
 A0Array *a0_array_new(int64_t elem_kind, int64_t capacity) {
     if (capacity > 0 && capacity <= INLINE_LIMIT) {
-        size_t size = sizeof(A0Array) + sizeof(uint64_t) * (size_t)capacity;
+        size_t size = sizeof(A0Array) + elem_size(elem_kind) * (size_t)capacity;
         A0Array *a = (A0Array *)a0_gc_alloc(&a0_builtin_array, size);
         a->elem_kind = elem_kind;
         a->data = (uint64_t *)(a + 1);
@@ -26,24 +31,54 @@ A0Array *a0_array_new(int64_t elem_kind, int64_t capacity) {
     A0Array *a = (A0Array *)a0_gc_alloc(&a0_builtin_array, sizeof(A0Array));
     a->elem_kind = elem_kind;
     if (capacity > 0) {
-        a->data = (uint64_t *)a0_gc_buffer_alloc(sizeof(uint64_t) * (size_t)capacity);
+        a->data = (uint64_t *)a0_gc_buffer_alloc(elem_size(elem_kind) * (size_t)capacity);
         a->cap = capacity;
+    }
+    return a;
+}
+
+A0Array *a0_array_filled(int64_t elem_kind, int64_t count, uint64_t value, uint64_t loc, void *frame) {
+    if (count < 0) {
+        char message[96];
+        snprintf(message, sizeof message, "negative array length: %lld", (long long)count);
+        a0_rt_fail(message, loc, frame);
+    }
+    /* A reference value stays reachable: the caller keeps it rooted while the array is allocated. */
+    A0Array *a = a0_array_new(elem_kind, count);
+    a->len = count;
+    if (elem_kind == A0_ELEM_BYTE) {
+        memset(a->data, (int)(uint8_t)value, (size_t)count);
+    } else if (value != 0) {
+        for (int64_t i = 0; i < count; i++) a->data[i] = value;
     }
     return a;
 }
 
 int64_t a0_array_len(A0Array *a) { return check(a)->len; }
 
+static uint64_t load(A0Array *a, int64_t index) {
+    if (a->elem_kind == A0_ELEM_BYTE) return ((uint8_t *)a->data)[index];
+    return a->data[index];
+}
+
+static void store(A0Array *a, int64_t index, uint64_t value) {
+    if (a->elem_kind == A0_ELEM_BYTE) {
+        ((uint8_t *)a->data)[index] = (uint8_t)value;
+    } else {
+        a->data[index] = value;
+    }
+}
+
 uint64_t a0_array_get(A0Array *a, int64_t index, uint64_t loc, void *frame) {
     check(a);
     if (index < 0 || index >= a->len) a0_rt_out_of_bounds(a->len, index, loc, frame);
-    return a->data[index];
+    return load(a, index);
 }
 
 void a0_array_set(A0Array *a, int64_t index, uint64_t value, uint64_t loc, void *frame) {
     check(a);
     if (index < 0 || index >= a->len) a0_rt_out_of_bounds(a->len, index, loc, frame);
-    a->data[index] = value;
+    store(a, index, value);
 }
 
 void a0_array_push(A0Array *a, uint64_t value) {
@@ -51,29 +86,28 @@ void a0_array_push(A0Array *a, uint64_t value) {
     if (a->len == a->cap) {
         int64_t cap = a->cap < 8 ? 8 : a->cap * 2;
         if (is_inline(a)) {
-            uint64_t *data = (uint64_t *)a0_gc_buffer_alloc(sizeof(uint64_t) * (size_t)cap);
-            memcpy(data, a->data, sizeof(uint64_t) * (size_t)a->len);
+            uint64_t *data = (uint64_t *)a0_gc_buffer_alloc(bytes_of(a, cap));
+            memcpy(data, a->data, bytes_of(a, a->len));
             a->data = data;
         } else {
-            a->data = (uint64_t *)a0_gc_buffer_realloc(a->data, sizeof(uint64_t) * (size_t)a->cap,
-                                                       sizeof(uint64_t) * (size_t)cap);
+            a->data = (uint64_t *)a0_gc_buffer_realloc(a->data, bytes_of(a, a->cap), bytes_of(a, cap));
         }
         a->cap = cap;
     }
-    a->data[a->len++] = value;
+    store(a, a->len++, value);
 }
 
 uint64_t a0_array_pop(A0Array *a, uint64_t loc, void *frame) {
     check(a);
     if (a->len == 0) a0_rt_fail("pop from an empty array", loc, frame);
-    return a->data[--a->len];
+    return load(a, --a->len);
 }
 
 void a0_array_trace(A0Array *a) {
-    if (a->elem_kind == A0_WORD_RAW) return;
+    if (a->elem_kind == A0_WORD_RAW || a->elem_kind == A0_ELEM_BYTE) return;
     for (int64_t i = 0; i < a->len; i++) a0_gc_mark_word(a->data[i], a->elem_kind);
 }
 
 void a0_array_finalize(A0Array *a) {
-    if (a->data != NULL && !is_inline(a)) a0_gc_buffer_free(a->data, sizeof(uint64_t) * (size_t)a->cap);
+    if (a->data != NULL && !is_inline(a)) a0_gc_buffer_free(a->data, bytes_of(a, a->cap));
 }

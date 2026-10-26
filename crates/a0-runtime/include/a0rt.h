@@ -308,7 +308,11 @@ A0_NORETURN void a0_string_panic(A0String *message, uint64_t loc, void *frame);
 A0String *a0_string_from_c(const char *s, int64_t required, uint64_t loc, void *frame);
 
 /* ---- Arrays ------------------------------------------------------------------------------------ *
- * Elements are 64-bit words traced as `elem_kind` (A0_WORD_*). */
+ * Elements are 64-bit words traced as `elem_kind` (A0_WORD_*), or bytes (A0_ELEM_BYTE: untraced,
+ * read as the byte zero-extended, written as the word's low byte; `array<bool>`). `data` points at
+ * `len` of them. */
+
+enum { A0_ELEM_BYTE = 3 };
 
 typedef struct A0Array {
     int64_t len;
@@ -318,6 +322,8 @@ typedef struct A0Array {
 } A0Array;
 
 A0Array *a0_array_new(int64_t elem_kind, int64_t capacity);
+/* An array of `count` elements, each `value`; fails if `count` is negative. */
+A0Array *a0_array_filled(int64_t elem_kind, int64_t count, uint64_t value, uint64_t loc, void *frame);
 int64_t a0_array_len(A0Array *a);
 uint64_t a0_array_get(A0Array *a, int64_t index, uint64_t loc, void *frame);
 void a0_array_set(A0Array *a, int64_t index, uint64_t value, uint64_t loc, void *frame);
@@ -328,7 +334,7 @@ uint64_t a0_array_pop(A0Array *a, uint64_t loc, void *frame);
  * Hash maps that remember insertion order. Keys are raw words (ints, booleans) or strings compared by
  * content; values are words traced as `value_kind`. */
 
-enum { A0_KEY_RAW = 0, A0_KEY_STRING = 1 };
+enum { A0_KEY_RAW = 0, A0_KEY_STRING = 1, A0_KEY_BOOL = 2 /* raw, but keys() are bytes */ };
 
 typedef struct A0Map A0Map;
 
@@ -338,7 +344,7 @@ int64_t a0_map_has(A0Map *m, uint64_t key);
 uint64_t a0_map_get(A0Map *m, uint64_t key, uint64_t loc, void *frame);
 void a0_map_set(A0Map *m, uint64_t key, uint64_t value);
 int64_t a0_map_remove(A0Map *m, uint64_t key);
-/* The keys in insertion order, as an array with elements of the key's word kind. */
+/* The keys in insertion order, as an array with elements of the key's kind. */
 A0Array *a0_map_keys(A0Map *m);
 
 /* A null reference where the runtime needed an object. */

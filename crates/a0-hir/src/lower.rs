@@ -41,8 +41,11 @@ const TYPE_ITABLE_OFFSET: i64 = 32;
 const WORD_RAW: u8 = 0;
 const WORD_REF: u8 = 1;
 const WORD_ANY: u8 = 2;
+/// An array whose elements are bytes (`array<bool>`), not words (`A0_ELEM_BYTE` in `a0rt.h`).
+const ELEM_BYTE: u8 = 3;
 const KEY_RAW: i64 = 0;
 const KEY_STRING: i64 = 1;
+const KEY_BOOL: i64 = 2;
 
 /// How to lower a module.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -122,6 +125,7 @@ struct Runtime {
     string_eprint: IrFunc,
     string_panic: IrFunc,
     array_new: IrFunc,
+    array_filled: IrFunc,
     array_get: IrFunc,
     array_set: IrFunc,
     array_push: IrFunc,
@@ -172,6 +176,7 @@ impl Runtime {
             string_eprint: f("a0_string_eprint", &[Ptr], None),
             string_panic: f("a0_string_panic", &[Ptr], None),
             array_new: f("a0_array_new", &[I64, I64], Some(Ptr)),
+            array_filled: f("a0_array_filled", &[I64, I64, I64], Some(Ptr)),
             array_get: f("a0_array_get", &[Ptr, I64], Some(I64)),
             array_set: f("a0_array_set", &[Ptr, I64, I64], None),
             array_push: f("a0_array_push", &[Ptr, I64], None),
@@ -379,6 +384,15 @@ impl<'a> Lowerer<'a> {
             WORD_ANY
         } else {
             WORD_RAW
+        }
+    }
+
+    /// How an array stores elements of type `t`: booleans as bytes, everything else as words.
+    fn elem_kind(&self, t: TypeId) -> u8 {
+        if t == TypeId::BOOL {
+            ELEM_BYTE
+        } else {
+            self.word_kind(t)
         }
     }
 
@@ -1069,38 +1083,53 @@ impl<'a> Lowerer<'a> {
     }
 
     /// The address of element `i` of an array (`A0Array`: length, capacity, then the pointer to
-    /// the elements).
-    fn element_address(&mut self, a: Value, i: Value) -> Value {
+    /// the elements), whose elements are bytes if `bytes`, words otherwise.
+    fn element_address(&mut self, a: Value, i: Value, bytes: bool) -> Value {
         let data = self.load_word(a, 2);
         let data = self.b.cast(Opcode::Inttoptr, data, Type::Ptr);
+        if bytes {
+            return self.b.ptradd(data, i);
+        }
         let eight = self.b.iconst(Type::I64, 8);
         let offset = self.b.imul(i, eight);
         self.b.ptradd(data, offset)
     }
 
-    /// `a[i]`, as a word.
-    fn array_element(&mut self, a: Value, i: Value) -> Value {
+    /// `a[i]`, as a word, for an array of `elem`s.
+    fn array_element(&mut self, a: Value, i: Value, elem: TypeId) -> Value {
+        let bytes = self.elem_kind(elem) == ELEM_BYTE;
         let result = self.b.declare_var("element", Type::I64);
         let bad = self.out_of_bounds(a, i);
         self.b.if_(bad);
         let r = self.b.call(self.rt.array_get, &[a, i]).unwrap();
         self.b.set(result, r);
         self.b.else_();
-        let at = self.element_address(a, i);
-        let w = self.b.load(Type::I64, at);
+        let at = self.element_address(a, i, bytes);
+        let w = if bytes {
+            let byte = self.b.load(Type::I8, at);
+            self.b.cast(Opcode::Zext, byte, Type::I64)
+        } else {
+            self.b.load(Type::I64, at)
+        };
         self.b.set(result, w);
         self.b.end_if();
         self.b.get(result)
     }
 
-    /// `a[i] = w`.
-    fn set_array_element(&mut self, a: Value, i: Value, w: Value) {
+    /// `a[i] = w`, for an array of `elem`s.
+    fn set_array_element(&mut self, a: Value, i: Value, w: Value, elem: TypeId) {
+        let bytes = self.elem_kind(elem) == ELEM_BYTE;
         let bad = self.out_of_bounds(a, i);
         self.b.if_(bad);
         self.b.call(self.rt.array_set, &[a, i, w]);
         self.b.else_();
-        let at = self.element_address(a, i);
-        self.b.store(w, at);
+        let at = self.element_address(a, i, bytes);
+        if bytes {
+            let byte = self.b.cast(Opcode::Trunc, w, Type::I8);
+            self.b.store(byte, at);
+        } else {
+            self.b.store(w, at);
+        }
         self.b.end_if();
     }
 
@@ -1520,8 +1549,8 @@ impl<'a> Lowerer<'a> {
                 };
                 let target = vs[0].val();
                 let vw = self.word_of(vs[2], m.expr_type(value));
-                match m.kind(m.expr_type(t)) {
-                    TypeKind::Array(_) => self.set_array_element(target, vs[1].val(), vw),
+                match *m.kind(m.expr_type(t)) {
+                    TypeKind::Array(elem) => self.set_array_element(target, vs[1].val(), vw, elem),
                     _ => {
                         let kw = self.word_of(vs[1], m.expr_type(i));
                         self.b.call(self.rt.map_set, &[target, kw, vw]);
@@ -1673,7 +1702,7 @@ impl<'a> Lowerer<'a> {
                     TypeKind::Array(t) => *t,
                     _ => TypeId::NEVER,
                 };
-                let kind = self.b.iconst(Type::I64, self.word_kind(elem_ty) as i64);
+                let kind = self.b.iconst(Type::I64, self.elem_kind(elem_ty) as i64);
                 let cap = self.b.iconst(Type::I64, elems.len() as i64);
                 let arr = self.b.call(self.rt.array_new, &[kind, cap]).unwrap();
                 self.spill(arr, ty);
@@ -1691,7 +1720,7 @@ impl<'a> Lowerer<'a> {
                 let TypeKind::Array(elem) = *m.kind(ty) else {
                     unreachable!()
                 };
-                let kind = self.b.iconst(Type::I64, self.word_kind(elem) as i64);
+                let kind = self.b.iconst(Type::I64, self.elem_kind(elem) as i64);
                 let cap = self.b.iconst(Type::I64, 0);
                 V::Val(self.b.call(self.rt.array_new, &[kind, cap]).unwrap())
             }
@@ -1703,6 +1732,8 @@ impl<'a> Lowerer<'a> {
                     Type::I64,
                     if k == TypeId::STRING {
                         KEY_STRING
+                    } else if k == TypeId::BOOL {
+                        KEY_BOOL
                     } else {
                         KEY_RAW
                     },
@@ -1715,8 +1746,8 @@ impl<'a> Lowerer<'a> {
                     return V::Never;
                 };
                 let target = vs[0].val();
-                let w = match m.kind(m.expr_type(t)) {
-                    TypeKind::Array(_) => self.array_element(target, vs[1].val()),
+                let w = match *m.kind(m.expr_type(t)) {
+                    TypeKind::Array(elem) => self.array_element(target, vs[1].val(), elem),
                     _ => {
                         let kw = self.word_of(vs[1], m.expr_type(i));
                         self.b.call(self.rt.map_get, &[target, kw]).unwrap()
@@ -2283,6 +2314,15 @@ impl<'a> Lowerer<'a> {
                 V::Val(self.b.icmp(IntCC::Ne, r, zero))
             }
             Builtin::Keys => V::Val(self.b.call(self.rt.map_keys, &[vs[0].val()]).unwrap()),
+            Builtin::Filled => {
+                let TypeKind::Array(elem) = *m.kind(ty) else {
+                    return V::Never;
+                };
+                let kind = self.b.iconst(Type::I64, self.elem_kind(elem) as i64);
+                let w = self.word_of(vs[1], elem);
+                let call = self.b.call(self.rt.array_filled, &[kind, vs[0].val(), w]);
+                V::Val(call.unwrap())
+            }
             Builtin::Substr => V::Val(
                 self.b
                     .call(
@@ -2687,7 +2727,7 @@ impl<'a> Lowerer<'a> {
 /// that is not a string yet.
 fn builtin_allocates(m: &HirModule, op: Builtin, args: &[ExprId]) -> bool {
     match op {
-        Builtin::Keys | Builtin::Substr | Builtin::Str => true,
+        Builtin::Keys | Builtin::Substr | Builtin::Str | Builtin::Filled => true,
         Builtin::Print | Builtin::Eprint => m.expr_type(args[0]) != TypeId::STRING,
         _ => false,
     }

@@ -1,0 +1,55 @@
+// Arrays allocated at a size with `filled`, and arrays of booleans, which hold a byte per element
+// (C sees them as `bool *`); the GC traces filled arrays of references.
+// expect-stdout: 2 set of 10
+// expect-stdout: abcdab
+// expect-stdout: true true 3
+// expect-stdout: true false
+// expect-stdout: keys true false
+// expect-stdout: memcmp 0 1
+// expect-stdout: empty 0
+// expect-stderr: panic: negative array length: -1
+// expect-stderr:     at main (tests/hir/arrays_filled.hir:53:13)
+// expect-exit: 101
+module "arrays_filled";
+
+extern fn memcmp(array<bool>, array<bool>, int) -> int;
+
+fn count(flags: array<bool>) -> int {
+  let n = 0;
+  let i = 0;
+  while i < len(flags) {
+    if flags[i] { n = n + 1; }
+    i = i + 1;
+  }
+  n
+}
+
+fn main() -> int {
+  let flags = filled(10, false);
+  flags[3] = true;
+  flags[9] = true;
+  print(str(count(flags)) + " set of " + str(len(flags)) + "\n");
+  let words = filled(3, "ab");
+  words[1] = "cd";
+  print(words[0] + words[1] + words[2] + "\n");
+  let bs = [true, false, true];
+  push(bs, true);
+  print(str(bs[3]) + " " + str(pop(bs)) + " " + str(len(bs)) + "\n");
+  let big = filled(100000, true);
+  big[99999] = false;
+  print(str(big[99998]) + " " + str(big[99999]) + "\n");
+  let m = new map<bool, int>;
+  m[true] = 1;
+  m[false] = 2;
+  let ks = keys(m);
+  print("keys " + str(ks[0]) + " " + str(ks[1]) + "\n");
+  // Three bytes: the arrays' first three elements, not part of a word.
+  let a = [true, false, true, true];
+  let b = [true, false, true, false];
+  let same = memcmp(a, b, 3);
+  let differ = if memcmp(a, b, 4) != 0 { 1 } else { 0 };
+  print("memcmp " + str(same) + " " + str(differ) + "\n");
+  print("empty " + str(len(filled(0, 1.5))) + "\n");
+  let bad = filled(0 - 1, 0);
+  0
+}

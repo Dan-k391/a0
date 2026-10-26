@@ -53,6 +53,8 @@ enum Ty {
     Str,
     Any,
     Arr,
+    /// `array<bool>`, whose elements are bytes.
+    Flags,
     Map,
     Rec,
     Opt,
@@ -64,7 +66,9 @@ enum Ty {
 use Ty::*;
 
 /// The types of parameters, results and locals.
-const VALUES: [Ty; 11] = [Int, Bool, Float, Str, Any, Arr, Map, Rec, Opt, Shape, Fun];
+const VALUES: [Ty; 12] = [
+    Int, Bool, Float, Str, Any, Arr, Flags, Map, Rec, Opt, Shape, Fun,
+];
 
 impl Ty {
     fn syntax(self) -> &'static str {
@@ -75,6 +79,7 @@ impl Ty {
             Str => "string",
             Any => "any",
             Arr => "array<int>",
+            Flags => "array<bool>",
             Map => "map<string, int>",
             Rec => "R",
             Opt => "R?",
@@ -140,6 +145,25 @@ fn aset(a: array<int>, i: int, v: int) {
   if i >= 0 && i < len(a) { a[i] = v; }
 }
 
+fn fget(a: array<bool>, i: int) -> bool {
+  if i < 0 || i >= len(a) { return false; }
+  a[i]
+}
+
+fn fset(a: array<bool>, i: int, v: bool) {
+  if i >= 0 && i < len(a) { a[i] = v; }
+}
+
+fn show_flags(a: array<bool>) -> string {
+  let out = "";
+  let i = 0;
+  while i < len(a) {
+    out = out + (if a[i] { "1" } else { "0" });
+    i = i + 1;
+  }
+  out
+}
+
 fn mget(m: map<string, int>, k: string) -> int {
   if has(m, k) { m[k] } else { 0 }
 }
@@ -192,6 +216,7 @@ fn show(ty: Ty, name: &str) -> String {
         Str => name.to_string(),
         Any => format!("show_any({name})"),
         Arr => format!("show_arr({name})"),
+        Flags => format!("show_flags({name})"),
         Map => format!("show_map({name})"),
         Rec | Opt => format!("show_opt({name})"),
         Shape => format!("show_shape({name})"),
@@ -321,7 +346,12 @@ impl Gen {
                     "(2.5 as any)",
                 ])
                 .to_string(),
-            Arr => r.pick(&["[1, 2, 3]", "new array<int>", "[0]"]).to_string(),
+            Arr => r
+                .pick(&["[1, 2, 3]", "new array<int>", "[0]", "filled(2, 5)"])
+                .to_string(),
+            Flags => r
+                .pick(&["[true, false]", "new array<bool>", "filled(3, true)"])
+                .to_string(),
             Map => "new map<string, int>".to_string(),
             Rec => r
                 .pick(&["new R { n: 1, s: \"r\" }", "new R { n: -4, s: \"\" }"])
@@ -416,7 +446,7 @@ impl Gen {
                     format!("({} {op} {by})", self.expr(Int, ctx, d))
                 }
                 4 => {
-                    let of = self.rng.pick(&[Str, Arr, Map]);
+                    let of = self.rng.pick(&[Str, Arr, Flags, Map]);
                     format!("len({})", self.expr(of, ctx, d))
                 }
                 5 => format!("note({})", self.expr(Int, ctx, d)),
@@ -470,7 +500,7 @@ impl Gen {
                 }
                 _ => format!("byte_at(\"hello\", {})", self.rng.below(5)),
             },
-            Bool => match self.rng.below(9) {
+            Bool => match self.rng.below(10) {
                 0 => {
                     let op = self.rng.pick(&["<", "<=", "==", "!=", ">"]);
                     format!(
@@ -509,6 +539,11 @@ impl Gen {
                 }
                 6 => format!("({} == {})", self.expr(Any, ctx, d), self.expr(Any, ctx, d)),
                 7 => format!("({} == null<R>)", self.expr(Opt, ctx, d)),
+                8 => format!(
+                    "fget({}, {})",
+                    self.expr(Flags, ctx, d),
+                    self.expr(Int, ctx, d)
+                ),
                 _ => format!(
                     "has({}, {})",
                     self.expr(Map, ctx, d),
@@ -549,7 +584,21 @@ impl Gen {
                 let from = self.rng.pick(&[Int, Bool, Float, Str, Rec, Unit, Any]);
                 format!("({} as any)", self.expr(from, ctx, d))
             }
+            Arr if self.rng.chance(30) => {
+                let n = self.rng.below(4);
+                format!("filled({n}, {})", self.expr(Int, ctx, d))
+            }
             Arr => format!("[{}, {}]", self.expr(Int, ctx, d), self.expr(Int, ctx, d)),
+            Flags if self.rng.chance(50) => {
+                let n = self.rng.below(5);
+                format!("filled({n}, {})", self.expr(Bool, ctx, d))
+            }
+            Flags => format!(
+                "[{}, {}, {}]",
+                self.expr(Bool, ctx, d),
+                self.expr(Bool, ctx, d),
+                self.expr(Bool, ctx, d)
+            ),
             Map => self.leaf(Map, ctx),
             Rec => format!(
                 "new R {{ n: {}, s: {} }}",
@@ -719,6 +768,22 @@ impl Gen {
                     };
                 }
                 10 => {
+                    let flags = self.locals_of(ctx, Flags, false);
+                    if !flags.is_empty() && self.rng.chance(40) {
+                        let a = self
+                            .rng
+                            .pick(&flags.iter().map(String::as_str).collect::<Vec<_>>())
+                            .to_string();
+                        return match self.rng.below(3) {
+                            0 => format!("push({a}, {});", self.expr(Bool, ctx, e)),
+                            1 => format!("if len({a}) > 0 {{ pop({a}); }}"),
+                            _ => format!(
+                                "fset({a}, {}, {});",
+                                self.expr(Int, ctx, 1),
+                                self.expr(Bool, ctx, e)
+                            ),
+                        };
+                    }
                     let arrays = self.locals_of(ctx, Arr, false);
                     if arrays.is_empty() {
                         continue;
@@ -1146,4 +1211,10 @@ fn optimized_and_unoptimized_random_programs_agree_in_every_mode() {
 fn the_generator_is_deterministic_and_varied() {
     assert_eq!(generate(7), generate(7));
     assert_ne!(generate(7), generate(8));
+    // The default run (24 seeds) uses what lowering learned recently.
+    let programs: Vec<String> = (0..24).map(generate).collect();
+    for feature in ["filled(", "array<bool>", "fset(", "fget("] {
+        let uses = programs.iter().filter(|p| p.contains(feature)).count();
+        assert!(uses >= 3, "only {uses} programs use {feature}");
+    }
 }

@@ -15,7 +15,7 @@ fn norm(p: Point) -> float {
 fn main() {
   let name = \"origin\";
   let p = new Point { x: 3.0, y: 4.0 };
-  let xs = [1, 2, 3];
+  let xs = [1, 2, 3]; let flags = [true, false, true];
   let n = norm(p);
   print(n);
   print(xs[n as int]);
@@ -60,6 +60,8 @@ fn a_program_can_be_debugged() {
     let vars = c.locals(2);
     assert_eq!(value(&vars, "name").1, "\"origin\"");
     assert_eq!(value(&vars, "xs").1, "[1, 2, 3]");
+    // Booleans are stored a byte each.
+    assert_eq!(value(&vars, "flags").1, "[true, false, true]");
 
     // A step to the next line, then out to the caller's next line.
     c.resume("next");

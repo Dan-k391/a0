@@ -111,6 +111,16 @@ fn type_errors_are_reported_with_locations() {
             "`match` does not cover `B`",
         ),
         (
+            "fn main() -> int { let a: array<string> = filled(\"3\", \"x\"); 0 }",
+            "E2001",
+            "expected `int`, found `string`",
+        ),
+        (
+            "fn main() -> int { let a: array<string> = filled(3, 1); 0 }",
+            "E2001",
+            "expected `array<string>`, found `array<int>`",
+        ),
+        (
             "fn main() -> int { break; 0 }",
             "E3001",
             "`break` outside of a loop",

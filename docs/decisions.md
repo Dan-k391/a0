@@ -786,4 +786,19 @@ from 833 to 563 ms. What is left is marking the long-lived data again at every c
 only a generational collector avoids. That needs a write barrier on every store of a reference
 into an object (two helpers in lowering and the runtime's array and map stores, it turned out)
 and is left for when large programs show the need (v0.9). Lox's own share shrinks further with
-objects that keep their fields in slots (D65).
+objects that keep their fields in slots (D66).
+
+## D65. Arrays are allocated at a size with `filled`, and booleans take a byte
+
+v0.5 asks that arrays can be allocated at a size and that elements narrower than a word are
+stored compactly; the benchmark's sieve paid for both (16 MB of 64-bit booleans, filled by
+`push`). Allocation at a size could be `new array<T>(n)`, which needs a default value of every
+type (references have none, D23), or a builtin that takes the value: `filled(n, v)`, an array of
+`n` copies of `v`, one runtime call. Any language reaches it by name.
+
+The only HIR type narrower than a word is `bool`, so `array<bool>` keeps a byte per element (the
+runtime's element kind `A0_ELEM_BYTE`; maps with `bool` keys give their keys as such arrays), and
+lowering loads and stores those bytes inline with a stride of one. The array's kind says how wide
+its elements are, so the runtime, the debugger and C (which sees a `bool *`) read them alike, and
+narrower integer types can join later without another layout. The sieve went from 84 to 50 ms
+and from 16 to 2 MB.

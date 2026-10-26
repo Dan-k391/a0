@@ -28,7 +28,7 @@ IR plus calls into the default runtime (`a0rt`), so it runs in the interpreter a
 | `float` | value | IEEE double |
 | `any` | value | holds any value; see "Dynamic values" |
 | `string` | reference | immutable bytes (UTF-8 by convention) |
-| `array<T>` | reference | growable, mutable |
+| `array<T>` | reference | growable, mutable; `array<bool>` keeps a byte per element, the others a 64-bit word |
 | `map<K, V>` | reference | hash map; `K` is `int`, `bool` or `string` |
 | `S`, `S<T, ...>` | reference | a declared struct: named, mutable fields; possibly generic |
 | `E`, `E<T, ...>` | reference | a declared enum: variants with positional payloads; possibly generic |
@@ -137,7 +137,8 @@ fn main() -> int {
 - `extern fn` declares a C function (D47). It takes `int` (`int64_t`), `float` (`double`), `bool`
   (an `int64_t` 0 or 1), `string` (a NUL-terminated `const char *` to the string's own bytes, so a
   string with a NUL byte looks shorter) and arrays of `int`, `float` or `bool` (a pointer to the
-  array's 64-bit elements, which the function may change but not add to), and `T?` of the last two
+  array's elements, `int64_t *`, `double *` or `bool *`, which the function may change but not add
+  to), and `T?` of the last two
   (`NULL` for null). It returns `int`, `float`, `bool` (C's `bool`), `unit` or `string`, which is
   copied (`string?` if it may return `NULL`; for `string`, `NULL` panics). The interpreter finds
   the function in the runtime, in the tables a language registers, or else in the process (the C
@@ -188,6 +189,7 @@ for other references; on `any` see below. `&&`, `||` short-circuit; `!` negates 
 | Builtin | Meaning |
 |---|---|
 | `len(x)` | length of a string (bytes), array or map |
+| `filled(n, v)` | a new array of `n` elements, each `v` (a negative `n` panics) |
 | `push(a, v)`, `pop(a)` | append to / remove the last element of an array (`pop` on empty panics) |
 | `has(m, k)`, `remove(m, k)`, `keys(m)` | map membership, removal, keys as an array (deterministic order) |
 | `substr(s, start, count)`, `byte_at(s, i)` | string slicing and bytes |
