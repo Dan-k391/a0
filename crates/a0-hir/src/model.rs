@@ -388,6 +388,8 @@ pub(crate) struct ExprData {
 #[derive(Clone)]
 pub(crate) struct InlineSite {
     pub callee: FuncId,
+    /// The closure body inlined, when the call was of a known closure (`callee` is its function).
+    pub closure: Option<BodyId>,
     pub call: Option<Span>,
     /// The site the function around the call was itself inlined at.
     pub parent: Option<u32>,

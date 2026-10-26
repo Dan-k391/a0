@@ -1,0 +1,94 @@
+// Calls of known closures are inlined (the closure passed to an inlined function, or bound to a
+// local never assigned): captured variables stay shared with the closure and the code around it,
+// early returns become values, arguments are evaluated once and in order, and a failure inside
+// shows the closure as a frame.
+// expect-stdout: fold 45
+// expect-stdout: count 3 total 6
+// expect-stdout: shared 11 11
+// expect-stdout: sign -1 0 1
+// expect-stdout: args a b 3
+// expect-stdout: loop 0 2 4
+// expect-stdout: copy 14
+// expect-stdout: kept 12 13
+// expect-stderr: panic: index out of bounds: the length is 2 but the index is 5
+// expect-stderr:     at main::{closure} (tests/hir/inline_closures.hir:92:47)
+// expect-stderr:     at each (tests/hir/inline_closures.hir:33:5)
+// expect-stderr:     at main (tests/hir/inline_closures.hir:92:3)
+// expect-exit: 101
+module "inline_closures";
+
+fn fold(xs: array<int>, init: int, f: fn(int, int) -> int) -> int {
+  let acc = init;
+  let i = 0;
+  while i < len(xs) {
+    acc = f(acc, xs[i]);
+    i = i + 1;
+  }
+  acc
+}
+
+fn each(xs: array<int>, f: fn(int)) {
+  let i = 0;
+  while i < len(xs) {
+    f(xs[i]);
+    i = i + 1;
+  }
+}
+
+fn twice(f: fn(int) -> int, x: int) -> int {
+  f(f(x))
+}
+
+fn note(s: string) -> string {
+  print(s + " ");
+  s
+}
+
+fn main() -> int {
+  let xs = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9];
+  print("fold " + str(fold(xs, 0, fn(a: int, b: int) -> int { a + b })) + "\n");
+
+  let count = 0;
+  let total = 0;
+  each([1, 2, 3], fn(x: int) { count = count + 1; total = total + x; });
+  print("count " + str(count) + " total " + str(total) + "\n");
+
+  // The closure escapes too: inlined calls and the closure share `n`.
+  let n = 10;
+  let bump = fn() -> int { n = n + 1; n };
+  let keep = new array<fn() -> int>;
+  push(keep, bump);
+  let a = bump();
+  print("shared " + str(a) + " " + str(n) + "\n");
+
+  let sign = fn(x: int) -> int {
+    if x < 0 { return -1; }
+    if x == 0 { return 0; }
+    1
+  };
+  print("sign " + str(sign(-5)) + " " + str(sign(0)) + " " + str(sign(9)) + "\n");
+
+  let join = fn(p: string, q: string) -> int { len(p) + len(q) + 1 };
+  print("args ");
+  let j = join(note("a"), note("b"));
+  print(str(j) + "\n");
+
+  print("loop");
+  let k = 0;
+  while k < 3 {
+    let doubled = fn() -> int { k * 2 };
+    print(" " + str(doubled()));
+    k = k + 1;
+  }
+  print("\n");
+
+  let add3 = fn(x: int) -> int { x + 3 };
+  let alias = add3;
+  print("copy " + str(twice(alias, 8)) + "\n");
+
+  print("kept " + str(bump()) + " " + str(keep[0]()) + "\n");
+
+  let small = [1, 2];
+  each(xs, fn(i: int) { if i == 5 { print(str(small[i])); } });
+  0
+}

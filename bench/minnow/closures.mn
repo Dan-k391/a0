@@ -1,0 +1,26 @@
+// Closures: a higher-order function (fold) called 100,000 times over 1,000 numbers with a closure
+// that captures a variable, as code written with map and fold is.
+fn fold(xs: [int], init: int, f: fn(int, int) -> int) -> int {
+  let acc = init;
+  for x in xs {
+    acc = f(acc, x);
+  }
+  return acc;
+}
+
+fn main() {
+  let xs: [int] = [];
+  let i = 0;
+  while i < 1000 {
+    push(xs, i);
+    i = i + 1;
+  }
+  let total = 0;
+  let k = 0;
+  while k < 100000 {
+    let scale = k % 7;
+    total = total + fold(xs, k, fn(acc: int, x: int) -> int { return acc + x * scale; });
+    k = k + 1;
+  }
+  print(total);
+}

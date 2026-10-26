@@ -449,7 +449,10 @@ impl<'a> Lowerer<'a> {
         }
         let s = self.m.inline_sites[site as usize].clone();
         let parent = s.parent.map(|p| self.ir_site(p));
-        let callee = self.m.funcs[s.callee.index()].name.clone();
+        let callee = match s.closure {
+            Some(body) => closure_trace_name(self.m, body),
+            None => self.m.funcs[s.callee.index()].name.clone(),
+        };
         let id = self.b.add_inline_site(&callee, s.call, parent);
         self.inline_ids.insert(site, id);
         id
@@ -1054,11 +1057,7 @@ impl<'a> Lowerer<'a> {
             *n += 1;
             let (params, ret) = self.signature(id, true);
             let f = self.b.declare_function(&name, &params, ret);
-            let trace_name = match &body.name {
-                Some(name) => name.clone(),
-                None => format!("{}::{{closure}}", m.funcs[body.func.index()].name),
-            };
-            self.b.set_trace_name(f, &trace_name);
+            self.b.set_trace_name(f, &closure_trace_name(m, id));
             self.lambda_funcs.insert(id, f);
             let g = self.b.add_global_int(&format!("{name}.type"), Type::Ptr, 0);
             let mut layout = vec![WORD_RAW];
@@ -3845,5 +3844,14 @@ fn builtin_allocates(m: &HirModule, op: Builtin, args: &[ExprId]) -> bool {
         Builtin::SetField => m.expr_type(args[2]) == TypeId::INT,
         Builtin::Print | Builtin::Eprint => m.expr_type(args[0]) != TypeId::STRING,
         _ => false,
+    }
+}
+
+/// What stack traces call a closure.
+fn closure_trace_name(m: &HirModule, body: BodyId) -> String {
+    let data = &m.bodies[body.index()];
+    match &data.name {
+        Some(name) => name.clone(),
+        None => format!("{}::{{closure}}", m.funcs[data.func.index()].name),
     }
 }

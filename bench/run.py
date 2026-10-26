@@ -35,6 +35,8 @@ CLOX_FILES = [
 # chunk), and zoo_batch, which runs for a fixed time instead of a fixed amount of work.
 LOX_PROGRAMS = ["fib", "binary_trees", "method_call", "invocation", "equality", "zoo"]
 NATIVE = ["fib", "sieve", "nbody", "binarytrees"]
+# Programs in Minnow, C and Go only (Tin has no closures).
+MINNOW_ONLY = ["closures"]
 # Each Kaleidoscope program's last line with the same calls doing no work, for LLVM's tutorial:
 # its JIT compiles a function when a call first needs it, so the calls must stay.
 TRIVIAL = {
@@ -241,7 +243,7 @@ def main():
     w("## Minnow against C and Go\n")
     w("| Program | Minnow build | no HIR optimizer | clang -O0 | clang -O2 | go build | Minnow run | no HIR optimizer | Minnow JIT (`run`) | clang -O0 | clang -O2 | Go |")
     w("|---|---|---|---|---|---|---|---|---|---|---|---|")
-    for prog in NATIVE:
+    for prog in NATIVE + MINNOW_ONLY:
         mn = BENCH / "minnow" / f"{prog}.mn"
         exe = str(WORK / f"mn-{prog}")
         b_mn, _ = timed([minnow, "build", str(mn), "-o", exe], runs)
