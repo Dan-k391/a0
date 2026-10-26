@@ -1157,7 +1157,8 @@ Every language with modules gets them from `a0-driver`, so the choices are the d
   build; now both go through the package.
 - **Reproducible means byte for byte**: compiling was already deterministic; file names in trace
   tables are the package-relative names (`json@<commit>/src/x.mn`, never the cache's path); linking
-  adds no time stamps (`/Brepro`). A test builds twice, a second apart, and compares.
+  adds no time stamps (`/Brepro`; on macOS `ZERO_AR_DATE=1` and, without `-g`, `-S`). A test
+  builds twice, a second apart, and compares.
 
 Versions and version requirements (semver resolution) are left out: with git, a tag or a commit
 says which version, and nothing reads `version` yet.

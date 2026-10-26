@@ -174,6 +174,14 @@ pub fn link_objects(
                 .args(&object_paths)
                 .args(&libs)
                 .arg(format!("-Wl,-stack_size,{:#x}", opts.stack_size));
+            // ld64 records the objects it read, with their paths (in the scratch directory) and
+            // times, for debuggers, and the executable's UUID hashes them: without debug
+            // information they are left out, and the times are zero, so that the same program
+            // links to the same bytes (D81).
+            cmd.env("ZERO_AR_DATE", "1");
+            if !opts.debug_info {
+                cmd.arg("-Wl,-S");
+            }
             cmd
         }
     };

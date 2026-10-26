@@ -100,7 +100,9 @@ file is complete.
 The same sources and lock file give the same executable, byte for byte: A0's compilation is
 deterministic, git dependencies are pinned, file names in traces are the package-relative names
 diagnostics show (`json@3f1c0de0b8e5/src/parser.mn` for a git dependency, not the cache's path), and
-linking adds no time stamps (`/Brepro` on Windows). A test builds a package with a path and a git
+linking adds no time stamps (`/Brepro` on Windows; on macOS `ZERO_AR_DATE=1`, and `-S` keeps the
+linker's record of the objects it read, with their temporary paths, out of executables without
+`-g`). A test builds a package with a path and a git
 dependency twice, a second apart, and compares the executables (`examples/minnow/tests/packages.rs`).
 Building in another directory changes the paths debug information (`-g`) records.
 

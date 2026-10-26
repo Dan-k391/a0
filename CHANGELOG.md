@@ -6,6 +6,14 @@ APIs. `docs/milestones.md` has the details of each step, with measurements.
 
 ## [Unreleased]
 
+### Fixed
+
+- Builds on macOS are reproducible: two builds of a package differed, because Apple's linker
+  recorded the temporary paths and times of the objects it read. It now gets `ZERO_AR_DATE=1`, and
+  `-S` without `-g`.
+- The tests that threads speed programs up no longer count the time every run takes whatever its
+  work (in `run`, compiling), which made them fail on fast machines.
+
 ## [1.0.0] - 2026-10-26
 
 Stable: a compatibility promise with versioned text formats and a deprecation process, B0 (the
@@ -440,7 +448,9 @@ three example languages, editor support and a C API.
   IR, the HIR, editors and the C API; design decisions and milestone summaries.
 - **CI** on x86-64 and aarch64 Linux, aarch64 macOS and x86-64 Windows, with rustfmt and clippy.
 
-[Unreleased]: https://github.com/Dan-k391/a0/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/Dan-k391/a0/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/Dan-k391/a0/compare/v0.9.0...v1.0.0
+[0.9.0]: https://github.com/Dan-k391/a0/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/Dan-k391/a0/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/Dan-k391/a0/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/Dan-k391/a0/compare/v0.5.0...v0.6.0

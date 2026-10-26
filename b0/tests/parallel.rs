@@ -34,17 +34,21 @@ fn count(out: &str) -> &str {
     out.split(" (").next().unwrap_or(out)
 }
 
-fn check(mode: &str, threads: usize, run: &mut dyn FnMut(usize) -> Command) {
-    let (one, t1) = timed(|| run(1));
-    let (many, tn) = timed(|| run(threads));
+fn check(mode: &str, threads: usize, work: u64, run: &mut dyn FnMut(usize, u64) -> Command) {
+    // What every run costs whatever its work (starting, and in `run` compiling), which no number
+    // of threads shortens: a run that counts almost nothing measures it.
+    let (_, fixed) = timed(|| run(1, 1000));
+    let (one, t1) = timed(|| run(1, work));
+    let (many, tn) = timed(|| run(threads, work));
     assert_eq!(count(&one), count(&many), "{mode}");
     // Twice the threads should take well under the time; leave room for a busy machine.
-    let ratio = tn.as_secs_f64() / t1.as_secs_f64();
+    let counting = |t: Duration| t.saturating_sub(fixed).as_secs_f64();
+    let ratio = counting(tn) / counting(t1);
     let limit = if threads == 2 { 0.85 } else { 0.75 };
-    eprintln!("{mode}: 1 thread {t1:?}, {threads} threads {tn:?} ({ratio:.2})");
+    eprintln!("{mode}: 1 thread {t1:?}, {threads} threads {tn:?}, fixed {fixed:?} ({ratio:.2})");
     assert!(
         ratio < limit,
-        "{mode}: {threads} threads took {tn:?}, one took {t1:?} ({ratio:.2} of it)"
+        "{mode}: {threads} threads took {tn:?}, one took {t1:?}, of which {fixed:?} is fixed ({ratio:.2} of it)"
     );
 }
 
@@ -59,20 +63,26 @@ fn more_threads_count_faster_in_every_mode() {
     let b0 = env!("CARGO_BIN_EXE_b0");
     let file = program();
 
-    let mut interpreted = |n: usize| {
+    let mut interpreted = |n: usize, work: u64| {
         let mut cmd = Command::new(b0);
-        cmd.arg("run").arg(&file).arg(n.to_string()).arg("400000");
+        cmd.arg("run")
+            .arg(&file)
+            .arg(n.to_string())
+            .arg(work.to_string());
         cmd.env("A0_INTERP", "1");
         cmd
     };
-    check("interpreted", threads, &mut interpreted);
+    check("interpreted", threads, 400000, &mut interpreted);
 
-    let mut jit = |n: usize| {
+    let mut jit = |n: usize, work: u64| {
         let mut cmd = Command::new(b0);
-        cmd.arg("run").arg(&file).arg(n.to_string()).arg("2000000");
+        cmd.arg("run")
+            .arg(&file)
+            .arg(n.to_string())
+            .arg(work.to_string());
         cmd
     };
-    check("JIT", threads, &mut jit);
+    check("JIT", threads, 4000000, &mut jit);
 
     let dir = std::env::temp_dir().join(format!("b0-parallel-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
@@ -89,11 +99,11 @@ fn more_threads_count_faster_in_every_mode() {
         "{}",
         String::from_utf8_lossy(&build.stderr)
     );
-    let mut native = |n: usize| {
+    let mut native = |n: usize, work: u64| {
         let mut cmd = Command::new(&exe);
-        cmd.arg(n.to_string()).arg("3000000");
+        cmd.arg(n.to_string()).arg(work.to_string());
         cmd
     };
-    check("native", threads, &mut native);
+    check("native", threads, 3000000, &mut native);
     std::fs::remove_dir_all(&dir).ok();
 }
