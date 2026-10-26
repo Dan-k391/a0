@@ -292,13 +292,18 @@ uint64_t a0_thread_spawn(void *closure, uint64_t loc, void *frame) {
     mutex_init(&t->lock);
     cond_init(&t->finished);
     object->state = t;
-    /* From here on, the heap is shared. */
+    /* From here on, the heap is shared. Waiting for it, this thread counts as stopped, so the
+     * handle (not in the list of running threads yet) is on its stack meanwhile. */
     a0_threads_active = 1;
+    uint64_t *root = a0_gc_frame_push(1);
+    root[0] = a0_any_from_ref(object);
     a0_heap_enter();
     t->id = next_id++;
     t->next_running = running;
     running = t;
     a0_heap_leave();
+    root[0] = 0;
+    a0_gc_frame_pop(1);
 #if defined(_WIN32)
     t->handle = CreateThread(NULL, THREAD_STACK, thread_main, t, STACK_SIZE_PARAM_IS_A_RESERVATION, NULL);
     if (t->handle == NULL) a0_rt_fail("cannot start a thread", loc, frame);
