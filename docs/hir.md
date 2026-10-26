@@ -157,6 +157,11 @@ fn main() -> int {
   as pointers to their objects, `any` as its 64-bit word; see `a0rt.h`). It may allocate: its
   reference arguments stay rooted during the call. The standard library is built on these
   (`docs/std.md`). Several modules may declare the same C function, with the same signature.
+- A program that declares the runtime's `a0_thread_spawn` (as `std.thread` does) starts threads
+  (D75, D76). Lowering then keeps the exception in flight in the current thread's slots instead of
+  globals, does not use per-site field caches, and, with the collector, polls for a collection at
+  every loop head and function entry (a load and a branch), so that collections can stop every
+  thread. Programs without threads are lowered as before.
 - The entry point is `fn main() -> int`, `fn main()` or `main` returning a sized integer (`i32` for
   C's `int main`); its result is the exit status, as a C `int`.
 - Memory management is the program's choice (D72): `gc`, precise tracing collection, the default;
@@ -246,6 +251,10 @@ Both styles of error handling are the HIR's, and work the same in both backends:
 `e as T`: between any two number types (integers wrap or extend by the source's sign, floats to
 integers truncate and saturate, NaN to 0, floats round to `f32`); any value to `any`; `any` to
 any type it holds (panics with `expected T` otherwise; `()` becomes null for `T?`); `T` to `T?`.
+`any` to a type parameter `T` too, for generic code that keeps values in `any` (`std.thread`): once
+`T` is known it is checked where it can be (numbers are checked to be numbers), and arrays, maps,
+functions and pointers are taken as they are, since what a generic function put in an `any` it
+takes out as the same type.
 
 `e is T` tests the type held by an `any`: `unit`, `bool`, `int`, `float`, `string`, a struct, or an
 enum (true for every variant).

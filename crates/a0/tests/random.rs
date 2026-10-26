@@ -308,6 +308,9 @@ struct Gen {
     current: usize,
     cost: u64,
     fresh: u32,
+    /// Main runs some calls on threads of their own (joined at once, so output keeps its order):
+    /// lowering then polls for collections and keeps exceptions per thread.
+    threaded: bool,
 }
 
 impl Gen {
@@ -1137,16 +1140,30 @@ impl Gen {
         };
         let mut main = Vec::new();
         for i in 0..n {
+            let on_thread = self.threaded && self.rng.chance(60);
             if self.funcs[i].ret == Unit {
-                main.push(format!(
-                    "print(\"f{i}\\n\"); {}",
-                    self.call(i, &ctx, 2) + ";"
-                ));
+                let call = self.call(i, &ctx, 2);
+                let call = if on_thread {
+                    format!("a0_thread_join(a0_thread_spawn(fn() -> any {{ {call}; () as any }}))")
+                } else {
+                    call
+                };
+                main.push(format!("print(\"f{i}\\n\"); {call};"));
                 continue;
             }
             let r = format!("r{i}");
             let call = self.call(i, &ctx, 2);
             let ty = self.funcs[i].ret;
+            // Types `any` converts back to.
+            let call =
+                if on_thread && matches!(ty, Int | Bool | Float | Str | Any | Rec | Opt | Shape) {
+                    format!(
+                        "a0_thread_join(a0_thread_spawn(fn() -> any {{ ({call}) as any }})) as {}",
+                        ty.syntax()
+                    )
+                } else {
+                    call
+                };
             main.push(format!("let {r} = {call};"));
             main.push(format!("print(\"f{i} \" + {} + \"\\n\");", show(ty, &r)));
             ctx.locals.push(Local {
@@ -1176,14 +1193,28 @@ impl Gen {
 }
 
 fn generate(seed: u64) -> String {
-    let program = Gen {
+    // One program in three runs calls on threads.
+    let threaded = seed % 3 == 1;
+    let mut program = Gen {
         rng: Rng::new(seed),
         funcs: Vec::new(),
         current: 0,
         cost: 0,
         fresh: 0,
+        threaded,
     }
     .program();
+    if threaded {
+        program = program.replacen(
+            ";
+",
+            ";
+extern \"a0\" fn a0_thread_spawn(fn() -> any) -> any;
+extern \"a0\" fn a0_thread_join(any) -> any;
+",
+            1,
+        );
+    }
     // One program in four manages its memory itself: no collector, no frames, nothing freed.
     if seed % 4 == 3 {
         program.replacen(

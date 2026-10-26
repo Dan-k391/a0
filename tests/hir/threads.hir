@@ -1,0 +1,117 @@
+// Threads, from the runtime's functions directly (std.thread is HIR over them): each thread has its
+// own exception in flight, dynamic objects work without field caches, loops poll for collections
+// while other threads allocate, and an exception nothing catches on a thread ends the program with
+// the thread's trace and where it was spawned.
+// expect-stdout: exceptions: 6810 6811 6812
+// expect-stdout: objects: 4950
+// expect-stdout: allocating: 1225 1225 1225
+// expect-stdout: channel: 45
+// expect-stderr: panic: uncaught exception: from a thread
+// expect-stderr:     at fails (tests/hir/threads.hir:36:3)
+// expect-stderr:     at main::{closure} (tests/hir/threads.hir:114:41)
+// expect-stderr:     in thread 10, spawned
+// expect-stderr:     at main (tests/hir/threads.hir:114:11)
+// expect-exit: 101
+module "threads";
+
+extern "a0" fn a0_thread_spawn(fn() -> any) -> any;
+extern "a0" fn a0_thread_join(any) -> any;
+extern "a0" fn a0_chan_new(int) -> any;
+extern "a0" fn a0_chan_send(any, any);
+extern "a0" fn a0_chan_recv(any) -> any;
+extern "a0" fn a0_chan_close(any);
+
+struct Node { value: int, next: Node? }
+
+fn fib(n: int) -> int {
+  if n < 2 { n } else { fib(n - 1) + fib(n - 2) }
+}
+
+fn checked(i: int) -> int {
+  if i % 2 == 1 { throw i }
+  i
+}
+
+fn fails() -> int {
+  throw "from a thread"
+}
+
+fn sum_list(n: int) -> int {
+  let head = null<Node>;
+  let i = 0;
+  while i < n {
+    head = new Node { value: i, next: head };
+    i = i + 1;
+  }
+  let total = 0;
+  while head != null<Node> {
+    total = total + head!.value;
+    head = head!.next;
+  }
+  total
+}
+
+fn main() -> int {
+  // Each thread throws and catches its own exceptions while the others do.
+  let ts = new array<any>;
+  let k = 0;
+  while k < 3 {
+    let base = k;
+    push(ts, a0_thread_spawn(fn() -> any {
+      let caught = 0;
+      let i = 0;
+      while i < 10 {
+        caught = caught + try { checked(i) } catch e { e as int };
+        i = i + 1;
+      }
+      (caught + fib(20) + base) as any
+    }));
+    k = k + 1;
+  }
+  print("exceptions: " + str(a0_thread_join(ts[0]) as int) + " " + str(a0_thread_join(ts[1]) as int)
+    + " " + str(a0_thread_join(ts[2]) as int) + "\n");
+
+  // Dynamic objects on a thread.
+  let o = a0_thread_spawn(fn() -> any {
+    let obj = new object;
+    let i = 0;
+    set_field(obj, "total", 0);
+    while i < 100 {
+      set_field(obj, "total", (field(obj, "total") as int + i) as any);
+      i = i + 1;
+    }
+    field(obj, "total")
+  });
+  print("objects: " + str(a0_thread_join(o) as int) + "\n");
+
+  // Three threads allocate lists at once: collections stop them all.
+  let a = a0_thread_spawn(fn() -> any { sum_list(50) as any });
+  let b = a0_thread_spawn(fn() -> any { sum_list(50) as any });
+  let c = a0_thread_spawn(fn() -> any { sum_list(50) as any });
+  print("allocating: " + str(a0_thread_join(a) as int) + " " + str(a0_thread_join(b) as int) + " "
+    + str(a0_thread_join(c) as int) + "\n");
+
+  // Values through a channel.
+  let ch = a0_chan_new(4);
+  let producer = a0_thread_spawn(fn() -> any {
+    let i = 0;
+    while i < 10 {
+      a0_chan_send(ch, i as any);
+      i = i + 1;
+    }
+    a0_chan_close(ch);
+    () as any
+  });
+  let total = 0;
+  let n = 0;
+  while n < 10 {
+    total = total + a0_chan_recv(ch) as int;
+    n = n + 1;
+  }
+  a0_thread_join(producer);
+  print("channel: " + str(total) + "\n");
+
+  let t = a0_thread_spawn(fn() -> any { fails() as any });
+  a0_thread_join(t);
+  0
+}

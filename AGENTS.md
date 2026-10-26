@@ -117,7 +117,12 @@ layer, decision D17). A new crate goes into the table above and into `[workspace
   optimizer or runtime behavior.
 - **Random programs**: `crates/a0/tests/random.rs` generates seeded HIR programs and requires the
   eight modes to agree (`A0_RANDOM_PROGRAMS`, `A0_RANDOM_SEED` to fuzz longer). When the optimizer or
-  lowering learns something new, teach the generator to produce it.
+  lowering learns something new, teach the generator to produce it. One program in four manages its
+  memory itself and one in three runs calls on threads.
+- **Threads**: races show up on machines with few processors more than on many. After touching
+  the collector, the runtime's locks or threaded lowering, run a threaded program under
+  `A0_GC_STRESS=1` many times pinned to two and four processors (`taskset -c 0,1` on Linux), as
+  CI's runners have; `examples/minnow/tests/parallel.rs` checks that threads really run at once.
 - HIR text must round-trip: `print(parse(print(m))) == print(m)` is tested for every corpus file.
 - Example languages test interpreted, JIT and native output (`examples/*/tests`), and the JIT
   under GC stress, optimized and not. The Lox suite must stay at all 241 passing in all eight modes, and the tests of A0's extensions to

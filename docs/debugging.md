@@ -27,6 +27,11 @@ optimizer so that every function keeps its frame. It supports:
 - **Failures**: a panic stops the program where it happened (reason `exception`, with the
   message) before its calls unwind, so its stack and locals can be inspected; continuing ends it
   with status 101, as it would end anyway.
+- **Threads** (`std.thread`): each is listed (`threads`; 1 is the main thread, then 2, 3, ... as
+  started, the numbers stack traces use) and announced as it starts and ends (`thread` events).
+  When one stops, the others pause at their next line, so every thread's stack and locals can be
+  shown; a thread that is waiting (for a channel, for another thread) shows no stack until it runs
+  again. Steps belong to the thread that stopped; continuing lets every thread go.
 
 The program's output becomes the client's debug console output; its standard input is empty,
 since the protocol uses it. Globals are not shown.
@@ -97,5 +102,9 @@ locals from the names and types the builder knows. Three things help:
   Values are read from the runtime's objects by their debug types (`values.rs`).
 - The runtime gives the debugger the program's output, its failures and its end
   (`a0_rt_set_output`, `a0_rt_set_fail_hook`, `a0_rt_set_exit_hook`).
+- Threads the program starts are run by the interpreter with the same hook (each thread has its
+  own interpreter state over the shared program, and tells the hook when it starts and ends). A
+  thread that reaches a line while another is stopped waits in the hook, where the stopped thread
+  can read its frames.
 - Native debug information is DWARF written with `gimli` from the locations Cranelift reports for
   each instruction (`a0-native/src/dwarf.rs`), relocated against the program's functions.
