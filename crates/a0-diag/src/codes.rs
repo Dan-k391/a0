@@ -115,6 +115,8 @@ codes! {
         "A number written in the program takes the integer type expected of it, and must fit in it: an 8-bit unsigned integer holds 0 to 255, a signed one -128 to 127. Write a number that fits, or convert a value of a wider type with a conversion, which wraps.";
     INLINE_VALUE = "E2024", "not possible with an inline value",
         "An inline struct's value is its bytes, with no identity and no type information of its own, so it cannot be compared with `==`, held as an `any` or a map's value, or used as an interface. Compare its fields, or use a struct that is not inline.";
+    NO_ADDRESS = "E2025", "cannot take the address",
+        "A pointer can point at a variable, a field or an element that holds plain data: a number, a boolean, a pointer or an inline struct. Other values (references, `any`) have no address a pointer can hold, and a value that is not stored anywhere has none at all. Store it in a variable first.";
 
     OUTSIDE_LOOP = "E3001", "outside a loop",
         "Leaving or continuing a loop is only possible inside a loop.";

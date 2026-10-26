@@ -182,6 +182,10 @@ pub const KEYWORDS: &[&str] = &[
     "shl",
     "shr",
     "inline",
+    "offset",
+    "data",
+    "addr",
+    "size_of",
 ];
 
 /// A name as the text format writes it: as is if it is an identifier and not a keyword, otherwise
@@ -568,6 +572,7 @@ impl HirBuilder {
                 | TypeKind::Bool
                 | TypeKind::SizedInt(..)
                 | TypeKind::F32
+                | TypeKind::Ptr(_)
                 | TypeKind::Error
         ) || self.m.inline_struct(t).is_some()
     }
@@ -611,6 +616,7 @@ impl HirBuilder {
             m.exprs[i].ty = m.resolve(m.exprs[i].ty);
             let kind = match m.exprs[i].kind.clone() {
                 ExprKind::Is(e, t) => ExprKind::Is(e, m.resolve(t)),
+                ExprKind::SizeOf(t) => ExprKind::SizeOf(m.resolve(t)),
                 ExprKind::Call(f, targs, args) => {
                     let targs = targs.into_iter().map(|t| m.resolve(t)).collect();
                     ExprKind::Call(f, targs, args)
@@ -690,6 +696,17 @@ impl HirBuilder {
 
     pub fn array_type(&mut self, elem: TypeId) -> TypeId {
         self.m.intern(TypeKind::Array(elem))
+    }
+
+    /// `ptr<T>`: a raw address of `T`s (plain data: numbers, booleans, pointers, inline structs),
+    /// neither traced by the collector nor checked (D71).
+    pub fn ptr_type(&mut self, elem: TypeId) -> TypeId {
+        self.m.intern(TypeKind::Ptr(elem))
+    }
+
+    /// `size_of::<T>()`: the bytes a `T` takes in memory, as an `int`.
+    pub fn size_of(&mut self, t: TypeId) -> ExprId {
+        self.push(ExprKind::SizeOf(t), TypeId::NEVER)
     }
 
     pub fn map_type(&mut self, key: TypeId, value: TypeId) -> TypeId {
@@ -981,7 +998,7 @@ impl HirBuilder {
                     ret,
                     TypeId::INT | TypeId::FLOAT | TypeId::BOOL | TypeId::UNIT
                 )
-                || matches!(self.m.kind(ret), TypeKind::SizedInt(..)))
+                || matches!(self.m.kind(ret), TypeKind::SizedInt(..) | TypeKind::Ptr(_)))
             {
                 let tn = self.m.display_type(ret);
                 self.misuse(&format!(
@@ -1017,7 +1034,7 @@ impl HirBuilder {
     fn c_param(&self, t: TypeId) -> bool {
         let scalar = |t: TypeId| {
             matches!(t, TypeId::INT | TypeId::FLOAT | TypeId::BOOL)
-                || matches!(self.m.kind(t), TypeKind::SizedInt(..))
+                || matches!(self.m.kind(t), TypeKind::SizedInt(..) | TypeKind::Ptr(_))
         };
         if scalar(t) {
             return true;
@@ -2208,6 +2225,7 @@ pub(crate) fn infer(m: &mut HirModule, kind: &ExprKind, hint: TypeId) -> Typed {
             hint
         }
         ExprKind::NewObject => TypeId::OBJECT,
+        ExprKind::SizeOf(_) => TypeId::INT,
         ExprKind::Index(target, index) => {
             let (key, elem) = index_types(m, *target)?;
             expect(m, *index, key)?;
@@ -2546,7 +2564,7 @@ fn field_type(m: &mut HirModule, object: ExprId, field: u32) -> Typed {
 fn index_types(m: &mut HirModule, target: ExprId) -> Result<(TypeId, TypeId), TypeErr> {
     let t = m.expr_type(target);
     match m.kind(t) {
-        TypeKind::Array(e) => Ok((TypeId::INT, *e)),
+        TypeKind::Array(e) | TypeKind::Ptr(e) => Ok((TypeId::INT, *e)),
         TypeKind::Map(k, v) => Ok((*k, *v)),
         TypeKind::Never => Ok((TypeId::NEVER, TypeId::NEVER)),
         TypeKind::Error => Ok((TypeId::ERROR, TypeId::ERROR)),
@@ -2755,7 +2773,8 @@ fn builtin_type(m: &mut HirModule, op: Builtin, args: &[ExprId]) -> Typed {
         | Builtin::Eprint
         | Builtin::Exit
         | Builtin::Panic => 1,
-        Builtin::FieldNames => 1,
+        Builtin::FieldNames | Builtin::Data | Builtin::Addr => 1,
+        Builtin::Offset => 2,
         Builtin::Push
         | Builtin::Has
         | Builtin::Remove
@@ -2826,6 +2845,48 @@ fn builtin_type(m: &mut HirModule, op: Builtin, args: &[ExprId]) -> Typed {
             TypeKind::Error => TypeId::ERROR,
             _ => return bad(m, "needs a map"),
         },
+        Builtin::Offset => match m.kind(t0).clone() {
+            TypeKind::Ptr(_) => {
+                expect(m, args[1], TypeId::INT)?;
+                t0
+            }
+            TypeKind::Never | TypeKind::Error => t0,
+            _ => return bad(m, "needs a pointer"),
+        },
+        Builtin::Data => match m.kind(t0).clone() {
+            TypeKind::Array(e) if plain(m, e) => m.intern(TypeKind::Ptr(e)),
+            TypeKind::String => m.intern(TypeKind::Ptr(TypeId::U8)),
+            TypeKind::Never | TypeKind::Error => TypeId::ERROR,
+            _ => return bad(m, "needs a string or an array of plain data"),
+        },
+        Builtin::Addr => {
+            let place = matches!(
+                m.expr(args[0]).kind,
+                ExprKind::Local(_)
+                    | ExprKind::Field(..)
+                    | ExprKind::FieldName(..)
+                    | ExprKind::Index(..)
+            );
+            if matches!(m.kind(t0), TypeKind::Never | TypeKind::Error) {
+                TypeId::ERROR
+            } else if !place || !plain(m, t0) {
+                let what = if place {
+                    format!("holds {}, which is not plain data", m.quote_type(t0))
+                } else {
+                    "is not a variable, a field or an element".to_string()
+                };
+                return Err(TypeErr::At(
+                    Some(args[0]),
+                    Problem::new(
+                        code::NO_ADDRESS,
+                        format!("cannot take the address of this: it {what}"),
+                    )
+                    .label("no address"),
+                ));
+            } else {
+                m.intern(TypeKind::Ptr(t0))
+            }
+        }
         Builtin::HasField | Builtin::Field | Builtin::SetField | Builtin::FieldNames => {
             expect(m, args[0], TypeId::OBJECT)?;
             if op != Builtin::FieldNames {
@@ -2915,6 +2976,20 @@ pub(crate) fn testable(m: &HirModule, t: TypeId) -> bool {
     }
 }
 
+/// Whether a value of type `t` is plain data: no reference the collector must see, so that it can
+/// be pointed at and copied as bytes.
+pub(crate) fn plain(m: &HirModule, t: TypeId) -> bool {
+    matches!(
+        m.kind(t),
+        TypeKind::Int
+            | TypeKind::Float
+            | TypeKind::Bool
+            | TypeKind::SizedInt(..)
+            | TypeKind::F32
+            | TypeKind::Ptr(_)
+    ) || m.inline_struct(t).is_some()
+}
+
 fn numeric(k: &TypeKind) -> bool {
     matches!(
         k,
@@ -2929,6 +3004,12 @@ fn cast_allowed(m: &HirModule, from: TypeId, to: TypeId) -> bool {
         // Between numbers of any kinds: integers wrap or extend, floats round, and floats to
         // integers truncate and saturate.
         || (numeric(fk) && numeric(tk))
+        || matches!(
+            (fk, tk),
+            (TypeKind::Ptr(_), TypeKind::Ptr(_))
+                | (TypeKind::Ptr(_), TypeKind::Int | TypeKind::SizedInt(64, false))
+                | (TypeKind::Int | TypeKind::SizedInt(64, false), TypeKind::Ptr(_))
+        )
         || matches!(tk, TypeKind::Any)
         || (matches!(fk, TypeKind::Any) && testable(m, to))
         || matches!(tk, TypeKind::Nullable(inner) if m.same(from, *inner))
@@ -2961,7 +3042,7 @@ pub(crate) fn visit_children(m: &HirModule, e: ExprId, f: &mut dyn FnMut(ExprId)
     use ExprKind::*;
     match &m.expr(e).kind {
         Unit | Bool(_) | Int(_) | Float(_) | Str(_) | Null | Local(_) | Global(_) | Func(..)
-        | Lambda(_) | NewArray | NewMap | NewObject | Break | Continue => {}
+        | Lambda(_) | NewArray | NewMap | NewObject | SizeOf(_) | Break | Continue => {}
         Let(_, a)
         | SetLocal(_, a)
         | SetGlobal(_, a)

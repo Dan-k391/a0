@@ -315,6 +315,26 @@ pub unsafe extern "C" fn a0_hir_named_type(
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn a0_hir_ptr_type(b: *mut A0HirBuilder, elem: u32) -> u32 {
+    unsafe {
+        with(b, |h| {
+            let elem = h.t(elem)?;
+            Some(h.b.ptr_type(elem).0)
+        })
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn a0_hir_size_of(b: *mut A0HirBuilder, t: u32) -> u32 {
+    unsafe {
+        with(b, |h| {
+            let t = h.t(t)?;
+            Some(h.b.size_of(t).0)
+        })
+    }
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn a0_hir_array_type(b: *mut A0HirBuilder, elem: u32) -> u32 {
     unsafe {
         with(b, |h| {

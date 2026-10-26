@@ -166,6 +166,16 @@ fn main() -> int { let v = new V { x: 1 }; v as any; 0 }",
             "cannot be converted",
         ),
         (
+            "fn main() -> int { let s = \"x\"; addr(s); 0 }",
+            "E2025",
+            "it holds `string`, which is not plain data",
+        ),
+        (
+            "fn main() -> int { addr(1 + 2); 0 }",
+            "E2025",
+            "it is not a variable, a field or an element",
+        ),
+        (
             "fn main() -> int { break; 0 }",
             "E3001",
             "`break` outside of a loop",

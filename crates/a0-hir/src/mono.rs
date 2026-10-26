@@ -181,6 +181,7 @@ impl Mono<'_> {
                 return subst.args[i as usize];
             }
             TypeKind::Array(e) => TypeKind::Array(self.ty(e, subst)),
+            TypeKind::Ptr(e) => TypeKind::Ptr(self.ty(e, subst)),
             TypeKind::Map(a, b) => TypeKind::Map(self.ty(a, subst), self.ty(b, subst)),
             TypeKind::Nullable(inner) => {
                 let inner = self.ty(inner, subst);
@@ -567,6 +568,7 @@ impl Mono<'_> {
             ExprKind::NewArray => ExprKind::NewArray,
             ExprKind::NewMap => ExprKind::NewMap,
             ExprKind::NewObject => ExprKind::NewObject,
+            ExprKind::SizeOf(t) => ExprKind::SizeOf(self.ty(t, &c.subst)),
             ExprKind::Index(t, i) => ExprKind::Index(self.expr(c, t, body), self.expr(c, i, body)),
             ExprKind::Builtin(op, args) => ExprKind::Builtin(op, self.exprs(c, &args, body)),
             ExprKind::Cast(a) => ExprKind::Cast(self.expr(c, a, body)),

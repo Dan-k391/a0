@@ -411,6 +411,8 @@ HIR_FUNCTIONS = {
     "named_type": "sU:u",
     "fresh_type": ":u",
     "array_type": "u:u",
+    "ptr_type": "u:u",
+    "size_of": "u:u",
     "map_type": "uu:u",
     "fn_type": "Uu:u",
     "nullable_type": "u:u",

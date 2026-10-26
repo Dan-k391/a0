@@ -108,6 +108,8 @@ pub(crate) enum TypeKind {
     /// `Int`).
     SizedInt(u32, bool),
     F32,
+    /// `ptr<T>`: a raw address of `T`s, neither traced nor checked.
+    Ptr(TypeId),
     Array(TypeId),
     Map(TypeId, TypeId),
     /// A struct and its type arguments (none unless the struct is generic).
@@ -153,6 +155,8 @@ pub enum TypeTag {
     /// `i8` .. `u64`.
     SizedInt,
     F32,
+    /// `ptr<T>`.
+    Ptr,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -265,6 +269,9 @@ builtins! {
     Field = "field",
     SetField = "set_field",
     FieldNames = "field_names",
+    Offset = "offset",
+    Data = "data",
+    Addr = "addr",
     Substr = "substr",
     ByteAt = "byte_at",
     Str = "str",
@@ -313,6 +320,8 @@ pub(crate) enum ExprKind {
     NewMap,
     /// `new object`: a dynamic object with no fields.
     NewObject,
+    /// `size_of::<T>()`: the bytes a `T` takes in memory (an inline struct's C size).
+    SizeOf(TypeId),
     Index(ExprId, ExprId),
     Builtin(Builtin, Vec<ExprId>),
     Cast(ExprId),
@@ -1004,6 +1013,7 @@ impl HirModule {
             TypeKind::Object => TypeTag::Object,
             TypeKind::SizedInt(..) => TypeTag::SizedInt,
             TypeKind::F32 => TypeTag::F32,
+            TypeKind::Ptr(_) => TypeTag::Ptr,
             TypeKind::Array(_) => TypeTag::Array,
             TypeKind::Map(..) => TypeTag::Map,
             TypeKind::Struct(..) => TypeTag::Struct,
@@ -1163,6 +1173,7 @@ impl HirModule {
                 format!("{}{bits}", if *signed { "i" } else { "u" })
             }
             TypeKind::F32 => "f32".to_string(),
+            TypeKind::Ptr(t) => format!("ptr<{}>", name(*t)),
             TypeKind::Array(e) => format!("array<{}>", name(*e)),
             TypeKind::Map(k, v) => format!("map<{}, {}>", name(*k), name(*v)),
             TypeKind::Struct(s, args) => self.applied(&self.structs[s.index()].name, args, custom),

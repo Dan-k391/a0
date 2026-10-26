@@ -708,6 +708,9 @@ impl Printer<'_> {
                 }
                 self.out.push(']');
             }
+            ExprKind::SizeOf(t) => {
+                let _ = write!(self.out, "size_of::<{}>()", self.ty(t));
+            }
             ExprKind::NewArray | ExprKind::NewMap | ExprKind::NewObject => {
                 let _ = write!(self.out, "new {}", self.ty(m.expr_type(e)));
             }

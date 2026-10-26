@@ -35,6 +35,7 @@ IR plus calls into the default runtime (`a0rt`), so it runs in the interpreter a
 | `object` | reference | a dynamic object: `any` fields added by name at run time; see "Dynamic objects" |
 | `S`, `S<T, ...>` | reference | a declared struct: named, mutable fields; possibly generic |
 | `S` (`inline struct`) | value | an inline struct: its fields live where it is used; see "Inline structs" |
+| `ptr<T>` | value | a raw address of `T`s (plain data), unchecked and untraced; see "Pointers" |
 | `E`, `E<T, ...>` | reference | a declared enum: variants with positional payloads; possibly generic |
 | `fn(T, ...) -> R` | reference | a closure |
 | `I` | reference | a declared interface: any struct or enum that implements it; see "Methods and interfaces" |
@@ -266,6 +267,25 @@ have no identity and no type information of their own: they cannot be compared w
 converted to `any` or thrown, be a map's value or a field of a dynamic object, nor be used as
 interfaces (E2024); they can satisfy bounds of generic functions. Builder: `set_struct_inline`
 after `declare_struct`; text: `inline struct`.
+
+## Pointers
+
+`ptr<T>` is a raw address of values of a plain type `T` (numbers, booleans, pointers, inline
+structs): what a systems language and C pass around (D71). Nothing about it is checked or traced:
+
+| Form | Meaning |
+|---|---|
+| `p[i]`, `p[i] = v` | element `i` at `p` (`p[i].x` for inline structs), no bounds check |
+| `offset(p, n)` | `p` moved by `n` elements |
+| `addr(place)` | the address of a local (which then lives in memory), a field, or an element (checked) |
+| `data(a)` | an array's elements (`ptr<T>`), or a string's bytes (`ptr<u8>`), valid until it grows |
+| `size_of::<T>()` | the bytes a `T` takes (C's `sizeof`) |
+| `p as ptr<U>`, `p as int`, `n as ptr<T>` | conversions; `0 as ptr<T>` is a null pointer |
+
+C functions take and return pointers (`extern fn malloc(int) -> ptr<u8>;`). Checked operations stay
+the default: arrays check their bounds and references cannot be null; a pointer is the way out a
+language chooses where it needs one. A pointer does not keep what it points at alive, so a pointer
+into an object of the collector is only good while something else holds the object.
 
 ## Dynamic objects
 

@@ -432,6 +432,8 @@ pub enum DebugKind {
     Float32,
     /// The address of an inline struct's bytes, whose fields are at their offsets.
     Inline,
+    /// A raw address, of values of the first element type.
+    Pointer,
 }
 
 impl DebugKind {
@@ -452,6 +454,7 @@ impl DebugKind {
         DebugKind::UInt,
         DebugKind::Float32,
         DebugKind::Inline,
+        DebugKind::Pointer,
     ];
 
     pub fn name(self) -> &'static str {
@@ -472,6 +475,7 @@ impl DebugKind {
             DebugKind::UInt => "uint",
             DebugKind::Float32 => "float32",
             DebugKind::Inline => "inline",
+            DebugKind::Pointer => "pointer",
         }
     }
 

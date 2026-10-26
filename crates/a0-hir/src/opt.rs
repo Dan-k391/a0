@@ -565,9 +565,14 @@ impl Opt<'_> {
                 continue;
             };
             self.walk(root, &mut |m, e| {
-                let (l, write) = match m.exprs[e.index()].kind {
-                    ExprKind::Local(l) => (l, false),
-                    ExprKind::SetLocal(l, _) => (l, true),
+                let (l, write) = match &m.exprs[e.index()].kind {
+                    ExprKind::Local(l) => (*l, false),
+                    ExprKind::SetLocal(l, _) => (*l, true),
+                    // A pointer to a local can change it at any time.
+                    ExprKind::Builtin(Builtin::Addr, args) => match m.exprs[args[0].index()].kind {
+                        ExprKind::Local(l) => (l, true),
+                        _ => return,
+                    },
                     _ => return,
                 };
                 *if write { &mut u.writes } else { &mut u.reads }
@@ -964,7 +969,7 @@ fn map_children(kind: &ExprKind, f: &mut dyn FnMut(ExprId) -> ExprId) -> ExprKin
     let all = |v: &[ExprId], f: &mut dyn FnMut(ExprId) -> ExprId| v.iter().map(|&x| f(x)).collect();
     match kind {
         Unit | Bool(_) | Int(_) | Float(_) | Str(_) | Null | Local(_) | Global(_) | Func(..)
-        | Lambda(_) | NewArray | NewMap | NewObject | Break | Continue => kind.clone(),
+        | Lambda(_) | NewArray | NewMap | NewObject | SizeOf(_) | Break | Continue => kind.clone(),
         Let(l, a) => Let(*l, f(*a)),
         SetLocal(l, a) => SetLocal(*l, f(*a)),
         SetGlobal(g, a) => SetGlobal(*g, f(*a)),

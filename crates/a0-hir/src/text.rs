@@ -563,6 +563,7 @@ impl<'a> TextParser<'a> {
                     Some(Item::Interface(i)) if args.is_empty() => self.b.interface_type(i),
                     // Not keywords, so that they stay free as names.
                     None if name == "object" && args.is_empty() => TypeId::OBJECT,
+                    None if name == "ptr" && args.len() == 1 => self.b.ptr_type(args[0]),
                     None if args.is_empty() && numeric_type(&name).is_some() => {
                         numeric_type(&name).unwrap()
                     }
@@ -845,6 +846,15 @@ impl<'a> TextParser<'a> {
             let targs = self.type_args(name_node)?;
             // A backquoted name is always a declared item, never a builtin.
             let quoted = self.tree.text(name_node).starts_with('`');
+            if name == "size_of"
+                && !quoted
+                && self.lookup_local(&name).is_none()
+                && self.value_item(&name).is_none()
+                && let Some([t]) = targs.as_deref()
+            {
+                self.at(node);
+                return Ok(self.b.size_of(*t));
+            }
             if self.lookup_local(&name).is_none() {
                 if let Some(op) = Builtin::from_name(&name).filter(|_| !quoted) {
                     let args = self.args(node)?;

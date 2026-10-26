@@ -260,6 +260,8 @@ A0HirType a0_hir_named_type(A0HirBuilder *b, const char *name, size_t len, const
 /* A type to infer from how it is used. */
 A0HirType a0_hir_fresh_type(A0HirBuilder *b);
 A0HirType a0_hir_array_type(A0HirBuilder *b, A0HirType elem);
+/* ptr<T>: a raw, unchecked address of T values (plain data). */
+A0HirType a0_hir_ptr_type(A0HirBuilder *b, A0HirType elem);
 A0HirType a0_hir_map_type(A0HirBuilder *b, A0HirType key, A0HirType value);
 A0HirType a0_hir_fn_type(A0HirBuilder *b, const A0HirType *params, size_t param_count,
                          A0HirType ret);
@@ -418,6 +420,8 @@ A0HirExpr a0_hir_match(A0HirBuilder *b, A0HirExpr scrutinee, const A0HirArm *arm
 A0HirExpr a0_hir_array(A0HirBuilder *b, const A0HirExpr *elems, size_t count);
 A0HirExpr a0_hir_new_array(A0HirBuilder *b, A0HirType array_type);
 A0HirExpr a0_hir_new_map(A0HirBuilder *b, A0HirType map_type);
+/* size_of::<T>(): the bytes a T takes in memory, as an int. */
+A0HirExpr a0_hir_size_of(A0HirBuilder *b, A0HirType t);
 /* A dynamic object (type "object"), whose `any` fields are added by name at run time with the
  * builtins has_field, field, set_field and field_names (docs/hir.md). */
 A0HirExpr a0_hir_new_object(A0HirBuilder *b);

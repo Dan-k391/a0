@@ -238,6 +238,8 @@ enum Storage {
     Boxed(Var, u32),
     /// A local of an inline struct type: the address of its bytes, in a stack slot.
     Inline(Var),
+    /// A local whose address is taken (`addr`): the address of its stack slot, which holds it.
+    Memory(Var),
 }
 
 /// The result of lowering an expression.
@@ -311,6 +313,8 @@ struct Lowerer<'a> {
     scoped: Vec<bool>,
     /// Locals assigned after their declaration.
     reassigned: Vec<bool>,
+    /// Locals whose address is taken (`addr`), which live in memory.
+    addressed: Vec<bool>,
     f: Option<FnState>,
     /// The IR inline site of each HIR one, made when first needed.
     inline_ids: HashMap<u32, a0_ir::InlineId>,
@@ -399,6 +403,7 @@ impl<'a> Lowerer<'a> {
             captured: Vec::new(),
             captures: HashMap::new(),
             scoped: Vec::new(),
+            addressed: Vec::new(),
             reassigned: Vec::new(),
             f: None,
             inline_ids: HashMap::new(),
@@ -747,6 +752,66 @@ impl<'a> Lowerer<'a> {
         )
     }
 
+    /// The address of element `i` of the `elem`s at `p`, unchecked.
+    fn pointee(&mut self, p: Value, i: Value, elem: TypeId) -> Value {
+        let size = self.b.iconst(Type::I64, self.size_align(elem).0 as i64);
+        let off = self.b.imul(i, size);
+        self.b.ptradd(p, off)
+    }
+
+    /// The address of a place: a local (which then lives in memory), a field of an object or an
+    /// inline struct, or an element of an array (checked) or behind a pointer.
+    fn address_of(&mut self, e: ExprId) -> V {
+        let m = self.m;
+        match m.expr(e).kind {
+            ExprKind::Local(l) => match self.st().storage[&l] {
+                Storage::Memory(v) | Storage::Inline(v) => V::Val(self.b.get(v)),
+                Storage::Boxed(var, _) => {
+                    let bx = self.b.get(var);
+                    V::Val(bx)
+                }
+                _ => unreachable!("an addressed local lives in memory"),
+            },
+            ExprKind::Field(o, f) => {
+                let v = self.expr(o);
+                let V::Val(obj) = v else { return v };
+                let ot = m.expr_type(o);
+                match *m.kind(ot) {
+                    TypeKind::Struct(s, _) if m.inline_struct(ot).is_some() => {
+                        V::Val(self.at_offset(obj, self.inline_offset(s, f)))
+                    }
+                    TypeKind::Struct(s, _) => {
+                        V::Val(self.at_offset(obj, 8 * self.field_word(s, f)))
+                    }
+                    _ => V::Val(self.at_offset(obj, 8 * f)),
+                }
+            }
+            ExprKind::Index(t, i) => {
+                let Some(vs) = self.operands(&[t, i], false) else {
+                    return V::Never;
+                };
+                let (target, index) = (vs[0].val(), vs[1].val());
+                match *m.kind(m.expr_type(t)) {
+                    TypeKind::Ptr(elem) => V::Val(self.pointee(target, index, elem)),
+                    TypeKind::Array(elem) if m.inline_struct(elem).is_some() => {
+                        V::Val(self.element_place(target, index, elem))
+                    }
+                    TypeKind::Array(elem) => {
+                        let (size, _) = self.elem_layout(elem);
+                        let bad = self.out_of_bounds(target, index);
+                        self.b.if_(bad);
+                        self.b.call(self.rt.array_get, &[target, index]);
+                        self.b.unreachable();
+                        self.b.end_if();
+                        V::Val(self.element_address(target, index, size))
+                    }
+                    _ => unreachable!("only arrays and pointers have addressable elements"),
+                }
+            }
+            _ => unreachable!("the builder checked that `addr` takes a place"),
+        }
+    }
+
     /// Appends `v` to an array of `elem`s.
     fn push_element(&mut self, arr: Value, v: V, elem: TypeId) {
         if self.m.inline_struct(elem).is_some() {
@@ -1013,6 +1078,7 @@ impl<'a> Lowerer<'a> {
         let m = self.m;
         self.scoped = vec![false; m.locals.len()];
         self.reassigned = vec![false; m.locals.len()];
+        self.addressed = vec![false; m.locals.len()];
         let mut stack: Vec<ExprId> = m.bodies.iter().filter_map(|b| b.root).collect();
         while let Some(e) = stack.pop() {
             match &m.expr(e).kind {
@@ -1024,6 +1090,13 @@ impl<'a> Lowerer<'a> {
                     }
                 }
                 ExprKind::SetLocal(l, _) => self.reassigned[l.index()] = true,
+                ExprKind::Builtin(Builtin::Addr, args) => {
+                    if let Some(&a) = args.first()
+                        && let ExprKind::Local(l) = m.expr(a).kind
+                    {
+                        self.addressed[l.index()] = true;
+                    }
+                }
                 ExprKind::IfLet(l, ..) | ExprKind::Try(_, l, _) => self.scoped[l.index()] = true,
                 _ => {}
             }
@@ -1733,6 +1806,10 @@ impl<'a> Lowerer<'a> {
                 (Storage::Var(var), Some(v)) => self.b.set(var, v),
                 // The caller passes a copy of its own: the parameter is that memory.
                 (Storage::Inline(var), Some(v)) => self.b.set(var, v),
+                (Storage::Memory(var), Some(v)) => {
+                    let at = self.b.get(var);
+                    self.store_at(at, V::Val(v), t);
+                }
                 (Storage::Rooted(var, s), Some(v)) => {
                     self.b.set(var, v);
                     self.store_slot(s, v, t);
@@ -1790,6 +1867,12 @@ impl<'a> Lowerer<'a> {
                 self.b.set(var, null);
                 Storage::Boxed(var, self.alloc_slot())
             }
+            Some(_) if self.addressed[l.index()] && self.m.inline_struct(data.ty).is_none() => {
+                let var = self.b.declare_var(&data.name, Type::Ptr);
+                let memory = self.temp(data.ty);
+                self.b.set(var, memory);
+                Storage::Memory(var)
+            }
             Some(_) if self.m.inline_struct(data.ty).is_some() => {
                 let var = self.b.declare_var(&data.name, Type::Ptr);
                 self.describe_local(var, l, false);
@@ -1845,6 +1928,7 @@ impl<'a> Lowerer<'a> {
             TypeKind::SizedInt(_, false) => simple(self, DebugKind::UInt, &[]),
             TypeKind::Float => simple(self, DebugKind::Float, &[]),
             TypeKind::F32 => simple(self, DebugKind::Float32, &[]),
+            TypeKind::Ptr(e) => simple(self, DebugKind::Pointer, &[*e]),
             TypeKind::Bool => simple(self, DebugKind::Bool, &[]),
             TypeKind::String => simple(self, DebugKind::String, &[]),
             TypeKind::Any => simple(self, DebugKind::Any, &[]),
@@ -2133,6 +2217,11 @@ impl<'a> Lowerer<'a> {
                     return V::Never;
                 };
                 let target = vs[0].val();
+                if let TypeKind::Ptr(elem) = *m.kind(m.expr_type(t)) {
+                    let at = self.pointee(target, vs[1].val(), elem);
+                    self.store_at(at, vs[2], elem);
+                    return V::Unit;
+                }
                 if let TypeKind::Array(elem) = *m.kind(m.expr_type(t))
                     && m.inline_struct(elem).is_some()
                 {
@@ -2351,6 +2440,7 @@ impl<'a> Lowerer<'a> {
                 V::Val(self.b.call(self.rt.array_new, &[kind, cap]).unwrap())
             }
             ExprKind::NewObject => V::Val(self.b.call(self.rt.object_new, &[]).unwrap()),
+            ExprKind::SizeOf(t) => V::Val(self.b.iconst(Type::I64, self.size_align(t).0 as i64)),
             ExprKind::NewMap => {
                 let TypeKind::Map(k, v) = *m.kind(ty) else {
                     unreachable!()
@@ -2373,6 +2463,10 @@ impl<'a> Lowerer<'a> {
                     return V::Never;
                 };
                 let target = vs[0].val();
+                if let TypeKind::Ptr(elem) = *m.kind(m.expr_type(t)) {
+                    let at = self.pointee(target, vs[1].val(), elem);
+                    return self.load_at(at, elem);
+                }
                 if let TypeKind::Array(elem) = *m.kind(m.expr_type(t))
                     && m.inline_struct(elem).is_some()
                 {
@@ -2746,6 +2840,10 @@ impl<'a> Lowerer<'a> {
         match self.st().storage[&l] {
             Storage::None => V::Unit,
             Storage::Var(v) | Storage::Rooted(v, _) | Storage::Inline(v) => V::Val(self.b.get(v)),
+            Storage::Memory(v) => {
+                let at = self.b.get(v);
+                self.load_at(at, t)
+            }
             Storage::Boxed(var, _) => {
                 let bx = self.b.get(var);
                 self.object_field(bx, 0, t)
@@ -2763,7 +2861,7 @@ impl<'a> Lowerer<'a> {
                 self.b.set(var, v);
                 self.store_slot(s, v, t);
             }
-            Storage::Inline(var) => {
+            Storage::Inline(var) | Storage::Memory(var) => {
                 let at = self.b.get(var);
                 self.store_at(at, V::Val(v), t);
             }
@@ -2946,6 +3044,9 @@ impl<'a> Lowerer<'a> {
 
     fn builtin(&mut self, op: Builtin, args: &[ExprId], ty: TypeId) -> V {
         let m = self.m;
+        if op == Builtin::Addr {
+            return self.address_of(args[0]);
+        }
         let allocates = builtin_allocates(m, op, args);
         let Some(vs) = self.operands(args, allocates) else {
             return V::Never;
@@ -3052,6 +3153,22 @@ impl<'a> Lowerer<'a> {
             Builtin::FieldNames => {
                 V::Val(self.b.call(self.rt.object_names, &[vs[0].val()]).unwrap())
             }
+            Builtin::Offset => {
+                let TypeKind::Ptr(elem) = *m.kind(ty) else {
+                    return V::Never;
+                };
+                V::Val(self.pointee(vs[0].val(), vs[1].val(), elem))
+            }
+            // A string's bytes after its length and hash; an array's element pointer.
+            Builtin::Data if arg_ty(0) == TypeId::STRING => {
+                let off = self.b.iconst(Type::I64, 16);
+                V::Val(self.b.ptradd(vs[0].val(), off))
+            }
+            Builtin::Data => {
+                let w = self.load_word(vs[0].val(), 2);
+                V::Val(self.b.cast(Opcode::Inttoptr, w, Type::Ptr))
+            }
+            Builtin::Addr => unreachable!("lowered as a place, before its operand"),
             Builtin::Filled => {
                 let TypeKind::Array(elem) = *m.kind(ty) else {
                     return V::Never;
@@ -3135,6 +3252,13 @@ impl<'a> Lowerer<'a> {
         }
         if let Some(c) = self.numeric_cast(v, from, to) {
             return V::Val(c);
+        }
+        // Pointers: between element types, and to and from integers.
+        match (m.kind(from), m.kind(to)) {
+            (TypeKind::Ptr(_), TypeKind::Ptr(_)) => return V::Val(v),
+            (TypeKind::Ptr(_), _) => return V::Val(self.b.cast(Opcode::Ptrtoint, v, Type::I64)),
+            (_, TypeKind::Ptr(_)) => return V::Val(self.b.cast(Opcode::Inttoptr, v, Type::Ptr)),
+            _ => {}
         }
         self.unpack_any(v, to)
     }

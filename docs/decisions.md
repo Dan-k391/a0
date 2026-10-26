@@ -907,7 +907,21 @@ keeps small copies in registers within a function.
 
 To keep the collector precise, inline structs hold only numbers, booleans and other inline structs
 (E1015) and take no type parameters, and an inline value cannot become an `any` (E2024), which is
-also why it cannot be thrown or compared with `==`. A mode without the collector (D71) can relax
+also why it cannot be thrown or compared with `==`. A mode without the collector (D72) can relax
 the first. The debugger shows inline values by their fields at their offsets (`DebugKind::Inline`,
 fields with offsets and sizes); an inline payload of an enum variant shifts the words of the fields
 after it, which the debugger does not know yet.
+
+## D71. Raw pointers are the unchecked way, chosen where a language asks for it
+
+v0.6 asks for raw pointers, explicit layout and unchecked access, with checked operations as the
+default. The HIR gains `ptr<T>` for plain `T` (numbers, booleans, pointers, inline structs): a
+value, neither traced nor checked, indexed with `p[i]`, moved with `offset`, made from places with
+`addr` (a local whose address is taken lives in a stack slot instead of a variable, and the
+optimizer treats taking it as an assignment), from arrays and strings with `data`, and converted to
+and from integers. `size_of::<T>()` gives C's sizes, and inline structs give C's layouts, which is
+the explicit layout C interoperation needs; packed or reordered layouts can come when a language
+needs them. Unchecked access is pointer access: a language that wants an unchecked array index
+writes `data(a)[i]`, and everything else keeps its checks (bounds, nulls, conversions). Pointers
+into the collector's objects do not keep them alive; in a language without the collector (D72)
+that question does not arise.

@@ -21,6 +21,7 @@ impl HirModule {
         let r = |m: &mut HirModule, x: TypeId| m.resolve(x);
         let k = match k {
             TypeKind::Array(e) => TypeKind::Array(r(self, e)),
+            TypeKind::Ptr(e) => TypeKind::Ptr(r(self, e)),
             TypeKind::Map(a, b) => TypeKind::Map(r(self, a), r(self, b)),
             TypeKind::Struct(s, args) => {
                 TypeKind::Struct(s, args.into_iter().map(|a| r(self, a)).collect())
@@ -48,7 +49,7 @@ impl HirModule {
         let t = self.shallow(t);
         match &self.types[t.index()] {
             TypeKind::Var(_) => Some(t),
-            TypeKind::Array(e) | TypeKind::Nullable(e) => self.first_var(*e),
+            TypeKind::Array(e) | TypeKind::Nullable(e) | TypeKind::Ptr(e) => self.first_var(*e),
             TypeKind::Map(a, b) => self.first_var(*a).or_else(|| self.first_var(*b)),
             TypeKind::Struct(_, args) | TypeKind::Enum(_, args) => {
                 args.iter().find_map(|&a| self.first_var(a))
@@ -65,7 +66,7 @@ impl HirModule {
         let t = self.shallow(t);
         match &self.types[t.index()] {
             TypeKind::Var(w) => *w == v,
-            TypeKind::Array(e) | TypeKind::Nullable(e) => self.occurs(v, *e),
+            TypeKind::Array(e) | TypeKind::Nullable(e) | TypeKind::Ptr(e) => self.occurs(v, *e),
             TypeKind::Map(a, b) => self.occurs(v, *a) || self.occurs(v, *b),
             TypeKind::Struct(_, args) | TypeKind::Enum(_, args) => {
                 args.iter().any(|&a| self.occurs(v, a))
@@ -93,6 +94,7 @@ impl HirModule {
             (TypeKind::Var(v), _) => self.bind(v, b),
             (_, TypeKind::Var(v)) => self.bind(v, a),
             (TypeKind::Array(x), TypeKind::Array(y))
+            | (TypeKind::Ptr(x), TypeKind::Ptr(y))
             | (TypeKind::Nullable(x), TypeKind::Nullable(y)) => self.unify(x, y),
             (TypeKind::Map(k1, v1), TypeKind::Map(k2, v2)) => {
                 self.unify(k1, k2) && self.unify(v1, v2)
@@ -177,6 +179,7 @@ impl HirModule {
         }
         match (&self.types[a.index()], &self.types[b.index()]) {
             (TypeKind::Array(x), TypeKind::Array(y))
+            | (TypeKind::Ptr(x), TypeKind::Ptr(y))
             | (TypeKind::Nullable(x), TypeKind::Nullable(y)) => self.same(*x, *y),
             (TypeKind::Map(k1, v1), TypeKind::Map(k2, v2)) => {
                 self.same(*k1, *k2) && self.same(*v1, *v2)
@@ -207,6 +210,7 @@ impl HirModule {
         let k = match k {
             TypeKind::Param(item, i) if item == owner => return args[i as usize],
             TypeKind::Array(e) => TypeKind::Array(s(self, e)),
+            TypeKind::Ptr(e) => TypeKind::Ptr(s(self, e)),
             TypeKind::Map(a, b) => TypeKind::Map(s(self, a), s(self, b)),
             TypeKind::Struct(st, xs) => {
                 TypeKind::Struct(st, xs.into_iter().map(|x| s(self, x)).collect())

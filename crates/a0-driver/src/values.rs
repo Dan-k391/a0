@@ -131,6 +131,7 @@ fn summary(m: &Module, w: u64, view: View, depth: u32) -> String {
     match m.debug_type_kind(t) {
         DebugKind::Int => (w as i64).to_string(),
         DebugKind::UInt => w.to_string(),
+        DebugKind::Pointer => format!("0x{w:x}"),
         DebugKind::Float => float(w),
         DebugKind::Float32 => float((f32::from_bits(w as u32) as f64).to_bits()),
         DebugKind::Bool => (w & 1 != 0).to_string(),

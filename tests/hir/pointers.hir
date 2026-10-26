@@ -1,0 +1,60 @@
+// Raw pointers: memory from C, indexed without checks, pointer arithmetic and conversions, the
+// addresses of locals, fields and elements, the elements of arrays and strings handed to C, and
+// sizes. Checked access stays the default: an array index out of bounds still panics.
+// expect-stdout: sum 0+10+20+30 = 60
+// expect-stdout: offset 8 bytes, size_of i32 4, Pair 16, Rgb 3
+// expect-stdout: through addr: 7, field 9, element 42
+// expect-stdout: memset 7 7 7 0, strlen 5
+// expect-stdout: null true, not null false
+// expect-stdout: node 5 -> 6
+// expect-stderr: panic: index out of bounds: the length is 2 but the index is 2
+// expect-stderr:     at main (tests/hir/pointers.hir:58:13)
+// expect-exit: 101
+module "pointers";
+
+extern fn malloc(int) -> ptr<i32>;
+extern fn free(ptr<i32>);
+extern fn memset(ptr<u8>, int, int) -> ptr<u8>;
+extern fn strlen(ptr<u8>) -> int;
+
+inline struct Pair { a: int, b: int }
+inline struct Rgb { r: u8, g: u8, b: u8 }
+inline struct Node { value: int, next: ptr<Node> }
+
+fn main() -> int {
+  let p = malloc(4 * size_of::<i32>());
+  let i = 0;
+  while i < 4 {
+    p[i] = (i * 10) as i32;
+    i = i + 1;
+  }
+  print("sum " + str(p[0]) + "+" + str(p[1]) + "+" + str(p[2]) + "+" + str(p[3]) + " = " + str(p[0] + p[1] + p[2] + p[3]) + "\n");
+  let q = offset(p, 2);
+  print("offset " + str((q as int) - (p as int)) + " bytes, size_of i32 " + str(size_of::<i32>()) + ", Pair " + str(size_of::<Pair>()) + ", Rgb " + str(size_of::<Rgb>()) + "\n");
+  free(p);
+
+  let x = 5;
+  let px = addr(x);
+  px[0] = 7;
+  let pair = new Pair { a: 1, b: 2 };
+  let pb = addr(pair.b);
+  pb[0] = 9;
+  let xs = [40, 41, 42];
+  let pe = addr(xs[2]);
+  print("through addr: " + str(x) + ", field " + str(pair.b) + ", element " + str(pe[0]) + "\n");
+
+  let bytes: array<u8> = [0, 0, 0, 0];
+  memset(data(bytes), 7, 3);
+  print("memset " + str(bytes[0]) + " " + str(bytes[1]) + " " + str(bytes[2]) + " " + str(bytes[3]) + ", strlen " + str(strlen(data("hello"))) + "\n");
+
+  let nothing = 0 as ptr<int>;
+  print("null " + str(nothing == (0 as ptr<int>)) + ", not null " + str(px == nothing) + "\n");
+
+  let second = new Node { value: 6, next: 0 as ptr<Node> };
+  let first = new Node { value: 5, next: addr(second) };
+  print("node " + str(first.value) + " -> " + str(first.next[0].value) + "\n");
+
+  let two = [1, 2];
+  let bad = addr(two[2]);
+  0
+}

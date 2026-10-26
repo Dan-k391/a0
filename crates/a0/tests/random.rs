@@ -904,11 +904,31 @@ impl Gen {
                 11 => {
                     // A field of an inline local: the local's own copy changes, no other.
                     let points = self.locals_of(ctx, Pt, false);
+                    let ints = self.locals_of(ctx, Int, true);
+                    // A write through a pointer to a local, which the optimizer must see.
+                    if !ints.is_empty() && self.rng.chance(20) {
+                        let x = self
+                            .rng
+                            .pick(&ints.iter().map(String::as_str).collect::<Vec<_>>())
+                            .to_string();
+                        let p = self.name("q");
+                        return format!(
+                            "let {p} = addr({x}); {p}[0] = {};",
+                            self.expr(Int, ctx, e)
+                        );
+                    }
                     if !points.is_empty() && self.rng.chance(40) {
                         let p = self
                             .rng
                             .pick(&points.iter().map(String::as_str).collect::<Vec<_>>())
                             .to_string();
+                        if self.rng.chance(25) {
+                            let q = self.name("q");
+                            return format!(
+                                "let {q} = addr({p}.a); {q}[0] = {};",
+                                self.expr(Int, ctx, e)
+                            );
+                        }
                         return if self.rng.chance(50) {
                             format!("{p}.a = {};", self.expr(Int, ctx, e))
                         } else {
@@ -1332,6 +1352,7 @@ fn the_generator_is_deterministic_and_varied() {
     for feature in [
         ": P",
         ".a = ",
+        "= addr(",
         "filled(",
         "array<bool>",
         "fset(",
