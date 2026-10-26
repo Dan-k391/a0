@@ -230,11 +230,12 @@ cargo test
 through both backends and under GC stress, optimized and not; generated random programs, which must
 agree in all those modes; snapshots of each language's rendered diagnostics and runtime errors; the
 language servers; the C API from a C program; and the tutorial's listings and commands. CI runs the same on
-x86-64 and aarch64 Linux, aarch64 macOS and x86-64 Windows.
+x86-64 and aarch64 Linux, macOS and Windows, and runs executables cross-compiled with the target
+packs.
 
 ## Status
 
-Version 0.7.0 (`CHANGELOG.md`). Not yet: cross-compiled executables (object files for other
-targets work), compiling languages to WebAssembly (A0 itself runs there, in the playground),
-variables in native debug information and PDB for Windows' debuggers (`lang dap` covers both),
-aarch64 Windows. A0 is MIT-licensed.
+Version 0.8.0 (`CHANGELOG.md`). Builds for x86-64 and aarch64 Linux, macOS and Windows, and for
+WebAssembly in the playground; cross-compiles to Linux and Windows from any host with target packs
+(`docs/cross.md`). Not yet: large-program tooling (manifests, dependencies, incremental
+compilation), stable APIs. A0 is MIT-licensed.

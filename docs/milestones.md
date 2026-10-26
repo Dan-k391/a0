@@ -1059,11 +1059,74 @@ Nothing in A0 changed for the benchmark. What it found along the way:
   but `lang dap` debugs in the interpreter only.
 - The playground has no threads (WebAssembly in the browser would need shared memory and workers).
 
+## M26. v0.8: everywhere
+
+**Done**
+
+- Cross-compilation (D79, `docs/cross.md`): `build --target` makes executables for x86-64 and
+  aarch64 Linux (static, against musl) and x86-64 Windows (against the Universal C Runtime) from
+  any host, linked by lld (`rust-lld` comes with every Rust toolchain) against *target packs*:
+  3-4 MB of static libraries per target that `targets/build.py` builds from sources whose licenses
+  allow shipping them (musl, mingw-w64's import libraries, compiler-rt's builtins, A0's runtime
+  and the example languages' C runtimes), with a startup file of A0's own for Windows. macOS gets
+  no pack: Apple's SDK may not be redistributed. CI builds the packs on Linux and runs the whole
+  IR and HIR corpus and Tin's programs (which call cJSON and the C library) through each: on
+  Linux natively and under QEMU for aarch64, and on Windows with the Windows pack.
+- A WebAssembly target for compiled languages (D78): `crates/a0-wasm` translates the core IR to
+  WebAssembly directly (structured control flow maps onto it; Cranelift has no WebAssembly
+  backend), as modules that link at instantiation against the runtime built for wasm32. The
+  playground compiles programs by default and interprets on request; CI runs the corpus compiled
+  in Node, all of it but threads, C structs passed by value and C functions whose C types are
+  narrower on wasm32.
+- Native debug information on Windows (D80): CodeView (`a0-native/src/codeview.rs`) with line
+  tables, procedures, frame-relative locals and type records; the linker writes `<program>.pdb`
+  with a natvis file that shows strings as text and arrays as their elements. cdb, WinDbg and
+  Visual Studio stop at `file:line`, show the stack and the variables; a test drives cdb where it
+  is installed. Programs cross-compiled for Windows get the same through lld-link.
+- Variables in native debug information (D80): with `-g` every source variable has a stack slot
+  that each assignment also stores to, at a fixed offset from the frame pointer, and DWARF and
+  CodeView describe it with a type from the IR's debug types: numbers and booleans as such, strings
+  as C strings (DWARF) or through natvis, structs as pointers to structures of their fields,
+  arrays with their length and elements, captured variables as what their boxes hold. gdb and
+  lldb print them (`tests/debuginfo.rs`).
+- Intel macOS (`macos-15-intel`) and Windows ARM64 (`windows-11-arm`) run the whole test suite in
+  CI, beside x86-64 and aarch64 Linux, aarch64 macOS and x86-64 Windows.
+- aarch64-windows (D77): Cranelift supports it; `cranelift-object` lacked the COFF ARM64
+  relocations for `adrp`/`add`, which a patched copy in `vendor/` adds (a two-line mapping, to drop
+  when upstream has it). A0 builds, tests and links natively on Windows ARM64.
+- The benchmark (`docs/benchmarks.md`): code generation is v0.7's and so are the numbers, within
+  noise. Linking with lld and a target pack builds Minnow's programs in 38–45 ms instead of
+  171–189 ms with gcc's `cc` (lld itself takes about 10 ms); the static musl executables run as
+  fast, except `binarytrees`, 20% slower with musl's allocator.
+
+**Changed**
+
+- `a0_native::link_executable` links with lld and a pack whenever the target is not the host
+  (`A0_LINK=pack` for the host too); `find_pack` and `pack_name` are public; `LinkOptions` gains
+  `natvis`. Every language driver takes `build --target <target>`. `lang build -g` on Windows no
+  longer notes that debug information is missing.
+- `-g` stores every assignment to a variable's stack slot as well (only with `-g`, which already
+  turns the optimizers off).
+- The playground's engine exports the runtime to compiled modules (`docs/playground.md`).
+
+**Open questions**
+
+- Packs are built, not shipped: release artifacts (v1.0) should carry them next to `a0`, where it
+  looks first, so that cross-compiling needs nothing at all.
+- aarch64-windows has no pack yet (Ubuntu's mingw-w64 has no ARM64 libraries; llvm-mingw's would
+  do), and macOS none at all.
+- Native variables are visible in the whole function, before their declaration too, and two
+  variables of one name in different blocks both show; lexical scopes from the HIR's blocks would
+  fix both. Optimized code (`-O` with `-g`) would need Cranelift's value locations.
+- WebAssembly is the playground's only: a compiled module needs the runtime instance the
+  playground provides, so the command line has no wasm32 target. A WASI build of the runtime to
+  link with would give it standalone modules.
+
 ## Overall open questions
 
 None at the moment.
 
 Settled since earlier milestones: nullable references are narrowed with `if let` rather than flow
-typing (D34); aarch64-windows is out of scope; the collector lives in `a0rt`
+typing (D34); aarch64-windows is supported (D77); the collector lives in `a0rt`
 (D16); linking on Linux and macOS is tested in CI on every push (M8); a reusable language driver
 exists (M7); D2's line for C-bindable APIs held when the library was bound in C (M16).

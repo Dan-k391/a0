@@ -6,6 +6,39 @@ APIs. `docs/milestones.md` has the details of each step, with measurements.
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-10-26
+
+Everywhere: executables for other platforms from any host, compiled programs in the browser,
+native debug information on Windows and for variables, and CI on every platform A0 supports.
+Milestone M26 in `docs/milestones.md`.
+
+### Added
+
+- **Cross-compilation** (D79, `docs/cross.md`): `build --target` (in `a0` and every language
+  driver) links executables for x86-64 and aarch64 Linux and x86-64 Windows with lld against
+  *target packs*, which `targets/build.py` builds from shippable sources (musl, mingw-w64's import
+  libraries for the Universal C Runtime, compiler-rt's builtins, A0's runtime and the example
+  languages' C runtimes). Linux executables are static. macOS has no pack (Apple's SDK may not be
+  redistributed).
+- **A WebAssembly backend** (D78): `crates/a0-wasm` compiles the core IR to WebAssembly modules
+  that link against the runtime built for wasm32; the playground runs programs compiled by
+  default.
+- **Native debug information on Windows** (D80): CodeView in objects and a PDB with a natvis file
+  beside the executable, for Visual Studio, WinDbg and cdb.
+- **Variables in native debug information** (D80): with `-g`, gdb, lldb and Windows' debuggers show
+  every source variable with its type: numbers, booleans, strings, structs, arrays, captured
+  variables.
+- **aarch64-windows** (D77), through a patched copy of `cranelift-object` in `vendor/`.
+- CI on Intel macOS and Windows ARM64, and a job that builds the target packs and runs the corpus
+  through them (aarch64 under QEMU, Windows on Windows).
+
+### Changed
+
+- `a0_native::link_executable` uses lld and a target pack for targets other than the host
+  (`A0_LINK=pack` for the host too); `find_pack`, `pack_name` and `LinkOptions::natvis` are new.
+- `-g` keeps every source variable in a stack slot as well, which each assignment stores to.
+- The playground's engine exports the runtime's functions, memory and table to compiled modules.
+
 ## [0.7.0] - 2026-10-26
 
 Concurrency: threads that run at the same time and share memory, channels between them, and a
@@ -305,7 +338,8 @@ three example languages, editor support and a C API.
   IR, the HIR, editors and the C API; design decisions and milestone summaries.
 - **CI** on x86-64 and aarch64 Linux, aarch64 macOS and x86-64 Windows, with rustfmt and clippy.
 
-[Unreleased]: https://github.com/Dan-k391/a0/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/Dan-k391/a0/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/Dan-k391/a0/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/Dan-k391/a0/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/Dan-k391/a0/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/Dan-k391/a0/compare/v0.4.0...v0.5.0

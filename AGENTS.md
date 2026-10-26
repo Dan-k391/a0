@@ -22,8 +22,9 @@ cargo fmt --all                     # run before committing
 ```
 
 CI (`.github/workflows/ci.yml`) builds and runs every test, native linking included, on x86-64 and
-aarch64 Linux, aarch64 macOS and x86-64 Windows, and checks rustfmt and clippy (`-D warnings`). Keep
-it green; a test that only passes on one OS is a bug.
+aarch64 Linux, macOS and Windows, builds the target packs and runs the corpus through them
+(`docs/cross.md`), and checks rustfmt and clippy (`-D warnings`). Keep it green; a test that only
+passes on one OS is a bug.
 
 Needs a C compiler: MSVC on Windows (found automatically), `cc` on Linux/macOS. Useful while
 debugging: `a0 run|build|fmt|check file.a0ir|file.hir`, `a0 lower file.hir` (the core IR a HIR
@@ -144,6 +145,13 @@ layer, decision D17). A new crate goes into the table above and into `[workspace
   to rewrite the listings and outputs, then reread the prose around them.
 - Object emission is checked for every supported target; aarch64-windows needs the patched
   `cranelift-object` in `vendor/` (`vendor/README.md`).
+- Native debug information (`crates/a0/tests/debuginfo.rs`): DWARF and CodeView are read back from
+  objects on every host, and gdb, lldb or cdb debugs a built executable where one is installed.
+  After changing `dwarf.rs`, `codeview.rs` or what `-g` does in codegen, run them with a debugger
+  present (on Windows, WinDbg's cdb: `winget install Microsoft.WinDbg`).
+- Cross-compilation: with packs built (`python3 targets/build.py`), `cargo test -p a0 --test
+  programs pack` and `cargo test -p tin --test tin pack`; `A0_CROSS_RUNNERS` runs other targets'
+  executables (QEMU).
 - Runtime or GC changes: run the Lox suite under GC stress, and prove the stress test still fails
   when roots are broken if you touch rooting.
 

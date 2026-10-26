@@ -2,7 +2,7 @@
   "name": "a0-languages",
   "displayName": "A0 languages",
   "description": "Editor support for languages built on A0: diagnostics, highlighting, outline, go to definition and hover from each language's `lsp` command, and debugging from its `dap` command.",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "publisher": "a0",
   "license": "MIT",
   "private": true,
