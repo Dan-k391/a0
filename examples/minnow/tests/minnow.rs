@@ -470,9 +470,15 @@ fn emitted_hir_round_trips_through_text() {
         };
         let root = f.to_string_lossy().into_owned();
         let mut read = |p: &Path| std::fs::read_to_string(p).ok();
-        let program =
-            a0_driver::program::load(&minnow::grammar(), &modules, &root, &mut read, &mut sm)
-                .unwrap();
+        let program = a0_driver::program::load(
+            &minnow::grammar(),
+            &modules,
+            &root,
+            None,
+            &mut read,
+            &mut sm,
+        )
+        .unwrap();
         let printed = a0_driver::program::compile(&program, &modules, "test")
             .unwrap()
             .to_string();

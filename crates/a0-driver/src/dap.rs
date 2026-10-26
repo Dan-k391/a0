@@ -227,7 +227,16 @@ fn prepare(lang: &Language, args: &Json) -> Result<Prepared, String> {
         .map_err(|e| format!("{}: cannot read {path}: {e}\n", lang.name))?;
     let mut sources = SourceMap::new();
     let compiled = match lang.modules {
-        Some(modules) => lang.compile_program(&modules, &path, &text, &mut sources),
+        Some(modules) => {
+            let packages = lang
+                .packages_of(Path::new(&path), &mut sources, &mut Vec::new())
+                .map_err(|d| {
+                    lang.codes
+                        .apply(&d)
+                        .render_with(&sources, &RenderOptions::default())
+                })?;
+            lang.compile_program(&modules, &path, &text, packages.as_ref(), &mut sources)
+        }
         None => {
             let id: SourceId = sources.add(&path, &text);
             (lang.compile)(&text, id)

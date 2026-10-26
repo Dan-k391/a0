@@ -454,3 +454,75 @@ fn edits_are_analyzed_once_they_pause() {
     let hover = result(&messages, 1).get("contents").get("value");
     assert!(hover.as_str().unwrap().contains("let x = 49"), "{hover}");
 }
+
+/// Imports resolve through the package (D81): from a file in a subdirectory, `helpers` is the
+/// package's `src/helpers.mn` and `util` its dependency's library. A broken manifest gets the
+/// diagnostics.
+#[test]
+fn packages_are_known_to_the_server() {
+    let dir = std::env::temp_dir().join(format!("minnow-lsp-pkg-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let write = |rel: &str, text: &str| {
+        let path = dir.join(rel);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, text).unwrap();
+    };
+    write("util/minnow.toml", "[package]\nname = \"util\"\n");
+    write(
+        "util/src/lib.mn",
+        "pub fn twice(x: int) -> int {\n  return x * 2;\n}\n",
+    );
+    write(
+        "app/minnow.toml",
+        "[package]\nname = \"app\"\n\n[dependencies]\nutil = { path = \"../util\" }\n",
+    );
+    write("app/src/main.mn", "fn main() {\n}\n");
+    write(
+        "app/src/helpers.mn",
+        "pub fn three() -> int {\n  return 3;\n}\n",
+    );
+    let text = "import util;\nimport helpers;\n\npub fn get() -> int {\n  return util.twice(helpers.three());\n}\n";
+    let uri = a0_driver::lsp::path_to_uri(&dir.join("app/src/net/http.mn"));
+    let minnow = Path::new(env!("CARGO_BIN_EXE_minnow"));
+    let messages = session(minnow, &uri, text, &[("textDocument/definition", 4, 15)]).unwrap();
+    let published = |messages: &[Json]| -> Vec<(String, Vec<String>)> {
+        messages
+            .iter()
+            .filter(|m| m.get("method").as_str() == Some("textDocument/publishDiagnostics"))
+            .map(|m| {
+                let p = m.get("params");
+                let texts = p
+                    .get("diagnostics")
+                    .as_array()
+                    .iter()
+                    .map(|d| d.get("message").as_str().unwrap().to_string())
+                    .collect();
+                (p.get("uri").as_str().unwrap().to_string(), texts)
+            })
+            .collect()
+    };
+    let found = published(&messages);
+    assert!(found.contains(&(uri.clone(), Vec::new())), "{found:?}");
+    let target = &result(&messages, 1).as_array()[0];
+    assert!(
+        target
+            .get("uri")
+            .as_str()
+            .unwrap()
+            .ends_with("/util/src/lib.mn"),
+        "{target}"
+    );
+    // A manifest error is the manifest's.
+    write(
+        "app/minnow.toml",
+        "[package]\nname = \"app\"\n\n[dependencies]\nutil = { paht = \"../util\" }\n",
+    );
+    let messages = session(minnow, &uri, text, &[]).unwrap();
+    std::fs::remove_dir_all(&dir).ok();
+    let found = published(&messages);
+    assert!(
+        found.iter().any(|(u, d)| u.ends_with("/app/minnow.toml")
+            && d.iter().any(|m| m.contains("unknown key `paht`"))),
+        "{found:?}"
+    );
+}

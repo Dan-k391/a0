@@ -91,7 +91,8 @@ layer, decision D17). A new crate goes into the table above and into `[workspace
 - Programs of several files are the driver's (`a0-driver/src/program.rs`, D46): it finds imports
   through the grammar's `@import` rules and compiles every file into one HIR builder, a module
   each. Languages never read files themselves; the language server does the same with open
-  documents.
+  documents. Packages (`package.rs`, D81) give a program its manifest and dependencies; builds
+  must stay reproducible (`examples/minnow/tests/packages.rs` compares two builds byte for byte).
 - The standard library is HIR text (`crates/a0-hir/std/*.hir`) over `extern "a0"` C functions in
   `crates/a0-runtime/c/std.c` (D48, `docs/std.md`); prefer writing a library function in HIR, and
   add a builtin to the HIR only for what the library cannot express.
@@ -167,6 +168,7 @@ layer, decision D17). A new crate goes into the table above and into `[workspace
 | The debugger (`dap.rs`, debug types, the runtime's hooks) or native debug information | `docs/debugging.md` |
 | The REPL (`repl.rs`, `Language::repl_main`) | `docs/repl.md` |
 | Linking, target packs (`link.rs`, `targets/build.py`, `start_windows.c`) | `docs/cross.md` |
+| Packages, manifests, lock files (`package.rs`, `program.rs`) | `docs/packages.md` |
 | Diagnostics: rendering, codes (`a0_diag::codes`), the builder's reporting API | `docs/diagnostics.md` (its code table is tested) |
 | A design choice with alternatives | a new `D<n>` entry in `docs/decisions.md` |
 | A milestone ends | `docs/milestones.md` (done / changed / open questions); `CHANGELOG.md` (under Unreleased) |

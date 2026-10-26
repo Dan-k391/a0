@@ -1132,3 +1132,32 @@ different types one name (`box`), and strings are named `a0::string`, since WinD
 visualizer to a type named `string`. Strings and arrays are shown through a natvis file the linker
 embeds in the PDB; DWARF shows strings as C strings through a location expression instead. CI runs
 cdb where the runner has it, and every host checks the CodeView of objects for both Windows targets.
+
+## D81. Packages: a manifest per language, path and git dependencies, a lock file
+
+v0.9 asks for a manifest, dependencies (local and git) and reproducible builds through the driver.
+Every language with modules gets them from `a0-driver`, so the choices are the driver's:
+
+- **The manifest is TOML, named after the language** (`minnow.toml`). TOML is what Cargo, pyproject
+  and others taught people to expect; naming the file after the language keeps each language's
+  projects its own (a language built on A0 need not mention A0). A0 reads the small subset
+  manifests need with a reader of its own (`package.rs`, about 300 lines), which gives errors with
+  spans, rendered and coded like every other diagnostic (`E5001`–`E5006`), instead of adding the
+  `toml` crate and its dependencies.
+- **Dependencies are directories or git repositories, with no registry.** A registry is a service
+  to run; git hosting exists. Git dependencies are fetched by running `git` (so credentials,
+  proxies and SSH work as they do for git) rather than through a git library, into a cache shared
+  by all languages (`A0_HOME`, `~/.a0`), one checkout per commit.
+- **A lock file pins every git dependency to a commit**, written by builds and refreshed only by
+  `update`; `--locked` refuses to change it. Path dependencies need no pin: they are part of the
+  checkout.
+- **Imports resolve through packages**: a module's path starts at its package's source directory
+  (the main or library file's), or with a dependency's name. Before, it started at the root file's
+  directory, so a file analyzed on its own in the editor could resolve differently than in the
+  build; now both go through the package.
+- **Reproducible means byte for byte**: compiling was already deterministic; file names in trace
+  tables are the package-relative names (`json@<commit>/src/x.mn`, never the cache's path); linking
+  adds no time stamps (`/Brepro`). A test builds twice, a second apart, and compares.
+
+Versions and version requirements (semver resolution) are left out: with git, a tag or a commit
+says which version, and nothing reads `version` yet.

@@ -3,9 +3,11 @@
 //! The root file's imports (found with the grammar's `@import` annotations) are loaded, theirs in
 //! turn, and every file is compiled in dependency order into one HIR builder, each into a module of
 //! its own: the root file's names stay as they are, and another file's are `module.item`. A module
-//! name is resolved from the root file's directory (`text.json` is `text/json.<ext>` there); a
-//! string path from the importing file's. Imports may not form a cycle. Modules named `std` or
-//! `std.*` are the standard library's (`a0_hir::std_modules`), never files.
+//! name is resolved from its package's source directory (`text.json` is `text/json.<ext>` there;
+//! without a package, the root file's directory), or names a dependency (`json` is the package
+//! `json`'s library, `json.parser` a module of it, `package.rs`); a string path is resolved from
+//! the importing file's directory. Imports may not form a cycle. Modules named `std` or `std.*`
+//! are the standard library's (`a0_hir::std_modules`), never files.
 
 use std::collections::HashMap;
 use std::path::{Component, Path, PathBuf};
@@ -16,6 +18,7 @@ use a0_hir::{HirBuilder, HirModule};
 use a0_syntax::{Grammar, Import, SyntaxTree};
 
 use crate::Modules;
+use crate::package::{Package, Packages};
 
 /// One file of a program.
 pub struct ProgramFile {
@@ -55,12 +58,14 @@ pub fn normalize(path: &Path) -> PathBuf {
 }
 
 /// Loads the program whose root file is `root` (as written by the user, which is how diagnostics
-/// name it; other files are named relative to it). `read` gives a file's text, or `None` if it
-/// cannot be read. Syntax errors in any file, missing modules and import cycles are reported.
+/// name it; other files are named relative to it), in the root package of `packages` if given.
+/// `read` gives a file's text, or `None` if it cannot be read. Syntax errors in any file, missing
+/// modules and import cycles are reported.
 pub fn load(
     grammar: &Grammar,
     modules: &Modules,
     root: &str,
+    packages: Option<&Packages>,
     read: &mut dyn FnMut(&Path) -> Option<String>,
     sources: &mut SourceMap,
 ) -> Result<Program, Diagnostics> {
@@ -69,23 +74,41 @@ pub fn load(
         .parent()
         .map(Path::to_path_buf)
         .unwrap_or_default();
-    let shown_dir = Path::new(root)
-        .parent()
-        .map(Path::to_path_buf)
-        .unwrap_or_default();
+    let shown_dir = Path::new(root).parent().map(display).unwrap_or_default();
+    // Without a package, the root file's directory is the one package's.
+    let alone;
+    let packages = match packages {
+        Some(p) => p,
+        None => {
+            alone = Packages {
+                list: vec![Package {
+                    prefix: String::new(),
+                    src: root_dir.clone(),
+                    shown: shown_dir.clone(),
+                    lib: None,
+                    deps: Vec::new(),
+                }],
+                ..Packages::default()
+            };
+            &alone
+        }
+    };
     let mut diags = Diagnostics::new();
     let Some(text) = read(&root_path) else {
         diags.error("io", &format!("cannot read {root}"), None);
         return Err(diags);
     };
-    // Every file found so far, by index: its path, its name in diagnostics and its text.
-    let mut found: Vec<(PathBuf, String, String)> = vec![(root_path, root.to_string(), text)];
+    // Every file found so far, by index: its path, its name in diagnostics, its text, its package
+    // and its module's name.
+    let root_module = module_name(&packages.list[0], &root_path, 0);
+    let mut found: Vec<(PathBuf, String, String, usize, String)> =
+        vec![(root_path, root.to_string(), text, 0, root_module)];
     let mut by_path: HashMap<PathBuf, usize> = HashMap::new();
     by_path.insert(found[0].0.clone(), 0);
     let mut files: Vec<ProgramFile> = Vec::new();
     while files.len() < found.len() {
         let index = files.len();
-        let (path, shown, text) = found[index].clone();
+        let (path, shown, text, package, module) = found[index].clone();
         let source = sources.add(&shown, &text);
         let (tree, parse) = grammar.parse(&text, source);
         diags.extend(parse);
@@ -114,15 +137,29 @@ pub fn load(
                 );
                 continue;
             }
-            let (target, shown_target) = if import.literal {
+            let (target, shown_target, target_package) = if import.literal {
                 let rel = Path::new(&import.file);
-                (normalize(&dir.join(rel)), display(&shown_base.join(rel)))
-            } else {
-                let rel = format!("{}.{}", import.file, modules.extension);
                 (
-                    normalize(&root_dir.join(&rel)),
-                    display(&shown_dir.join(&rel)),
+                    normalize(&dir.join(rel)),
+                    display(&shown_base.join(rel)),
+                    package,
                 )
+            } else {
+                match resolve(packages, package, &import.module, modules.extension) {
+                    Ok(found) => found,
+                    Err(why) => {
+                        diags.push(
+                            Diagnostic::error(
+                                code::UNKNOWN_MODULE,
+                                &format!("cannot find module `{}`", import.module),
+                            )
+                            .with_span(import.path_span)
+                            .with_primary_label("no file for this module")
+                            .with_note(&why),
+                        );
+                        continue;
+                    }
+                }
             };
             if let Some(&known) = by_path.get(&target) {
                 imports.push((import, known));
@@ -130,9 +167,10 @@ pub fn load(
             }
             match read(&target) {
                 Some(text) => {
+                    let name = module_name(&packages.list[target_package], &target, found.len());
                     by_path.insert(target.clone(), found.len());
                     imports.push((import, found.len()));
-                    found.push((target, shown_target, text));
+                    found.push((target, shown_target, text, target_package, name));
                 }
                 None => diags.push(
                     Diagnostic::error(
@@ -145,7 +183,6 @@ pub fn load(
                 ),
             }
         }
-        let module = module_name(&root_dir, &path, index);
         files.push(ProgramFile {
             path,
             source,
@@ -176,20 +213,79 @@ pub fn load(
     Ok(Program { files: sorted })
 }
 
-/// The name of the module in `path`: its path from `root_dir` without the extension, segments
-/// joined with `.`; a file outside the root directory is named after its stem, made unique.
-fn module_name(root_dir: &Path, path: &Path, index: usize) -> String {
+/// Where the module `module` imported by a file of package `from` is: its file, how diagnostics
+/// name it, and its package. Its first name may be a dependency's.
+fn resolve(
+    packages: &Packages,
+    from: usize,
+    module: &str,
+    extension: &str,
+) -> Result<(PathBuf, String, usize), String> {
+    let segments: Vec<&str> = module.split('.').collect();
+    let package = &packages.list[from];
+    if let Some(&(_, dep)) = package.deps.iter().find(|(name, _)| name == segments[0]) {
+        let target = &packages.list[dep];
+        if segments.len() == 1 {
+            let Some(lib) = &target.lib else {
+                return Err(format!(
+                    "the package `{}` has no library file (lib.{extension})",
+                    segments[0]
+                ));
+            };
+            let rel = lib
+                .strip_prefix(&target.src)
+                .map(display)
+                .unwrap_or_default();
+            return Ok((lib.clone(), join(&target.shown, &rel), dep));
+        }
+        let rel = format!("{}.{extension}", segments[1..].join("/"));
+        return Ok((
+            normalize(&target.src.join(&rel)),
+            join(&target.shown, &rel),
+            dep,
+        ));
+    }
+    let rel = format!("{}.{extension}", segments.join("/"));
+    Ok((
+        normalize(&package.src.join(&rel)),
+        join(&package.shown, &rel),
+        from,
+    ))
+}
+
+fn join(dir: &str, rel: &str) -> String {
+    if dir.is_empty() {
+        rel.to_string()
+    } else {
+        format!("{dir}/{rel}")
+    }
+}
+
+/// The name of the module in `path`, of `package`: its path from the package's directory without
+/// the extension, segments joined with `.`, after the package's own name (its library file is the
+/// package's name alone); a file outside the directory is named after its stem, made unique.
+fn module_name(package: &Package, path: &Path, index: usize) -> String {
+    if package.lib.as_deref() == Some(path) && !package.prefix.is_empty() {
+        return package.prefix.clone();
+    }
     let stem = path.with_extension("");
-    match stem.strip_prefix(root_dir) {
+    let local = match stem.strip_prefix(&package.src) {
         Ok(rel) => rel
             .components()
             .map(|c| c.as_os_str().to_string_lossy().into_owned())
             .collect::<Vec<_>>()
             .join("."),
-        Err(_) => format!(
-            "{}#{index}",
-            stem.file_name().unwrap_or_default().to_string_lossy()
-        ),
+        Err(_) => {
+            return format!(
+                "{}#{index}",
+                stem.file_name().unwrap_or_default().to_string_lossy()
+            );
+        }
+    };
+    if package.prefix.is_empty() {
+        local
+    } else {
+        format!("{}.{local}", package.prefix)
     }
 }
 

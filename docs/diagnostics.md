@@ -93,6 +93,12 @@ list matches it.
 | E3001 | outside a loop |
 | E4001 | no entry point |
 | E4002 | invalid entry point |
+| E5001 | invalid manifest |
+| E5002 | invalid manifest entry |
+| E5003 | dependency not found |
+| E5004 | dependency cannot be fetched |
+| E5005 | lock file out of date |
+| E5006 | no package here |
 | W0001 | unused variable |
 | W0002 | unreachable code |
 

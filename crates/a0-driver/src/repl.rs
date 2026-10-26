@@ -164,7 +164,7 @@ fn ends_early(g: &Grammar, text: &str) -> bool {
 fn check(lang: &Language, text: &str) -> Result<(), String> {
     let mut sources = SourceMap::new();
     let compiled = match lang.modules {
-        Some(modules) => lang.compile_program(&modules, "<repl>", text, &mut sources),
+        Some(modules) => lang.compile_program(&modules, "<repl>", text, None, &mut sources),
         None => {
             let id = sources.add("<repl>", text);
             (lang.compile)(text, id)

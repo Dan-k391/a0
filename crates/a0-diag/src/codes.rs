@@ -2,10 +2,10 @@
 //! explanation of each (`lang explain E0201`).
 //!
 //! Every kind of problem has its own code, and a code never changes meaning. `E0xxx` are syntax
-//! errors, `E1xxx` names, `E2xxx` types, `E3xxx` control flow, `E4xxx` the entry point and `Wxxxx`
-//! warnings. Problems that only a language's own code can cause (a malformed tree, a misused
-//! builder) keep descriptive codes such as `hir.tree`; they are bugs to report to the language's
-//! authors, not errors in a program.
+//! errors, `E1xxx` names, `E2xxx` types, `E3xxx` control flow, `E4xxx` the entry point, `E5xxx`
+//! packages and `Wxxxx` warnings. Problems that only a language's own code can cause (a malformed
+//! tree, a misused builder) keep descriptive codes such as `hir.tree`; they are bugs to report to
+//! the language's authors, not errors in a program.
 //!
 //! The explanations speak of concepts, not syntax, since each language writes them its own way.
 
@@ -127,6 +127,19 @@ codes! {
         "A program needs a `main` function, which is where it starts.";
     BAD_ENTRY = "E4002", "invalid entry point",
         "The `main` function takes no parameters and returns nothing or an integer, the program's exit status.";
+
+    MANIFEST_SYNTAX = "E5001", "invalid manifest",
+        "The package's manifest is not valid TOML of the kind it uses: tables in brackets, `key = value` lines, values that are strings in double quotes, numbers, booleans, arrays or inline tables in braces.";
+    MANIFEST_KEY = "E5002", "invalid manifest entry",
+        "The manifest has a table, a key or a value the package format does not know, or lacks one it needs. `[package]` takes `name` (required), `version`, `main` and `lib`; `[dependencies]` gives each dependency `path = \"...\"` or `git = \"...\"` with an optional `branch`, `tag` or `rev`.";
+    DEPENDENCY_NOT_FOUND = "E5003", "dependency not found",
+        "A dependency names a directory with no package in it (no manifest), or a package whose library file is missing. A path is relative to the directory of the manifest that names it.";
+    DEPENDENCY_FETCH = "E5004", "dependency cannot be fetched",
+        "Fetching a git dependency failed: git is not installed, the repository cannot be reached, or it has no such branch, tag or commit. The message has git's own words.";
+    LOCK_OUT_OF_DATE = "E5005", "lock file out of date",
+        "The build was asked to use the lock file as it is (`--locked`), but the lock file does not pin every git dependency the manifest names. Build once without `--locked` to update it, and commit it.";
+    NO_PACKAGE = "E5006", "no package here",
+        "The command was given no file, so it looks for a package: a manifest in the current directory or one of its parents. There is none. Give a file, or create a manifest.";
 
     UNUSED_VARIABLE = "W0001", "unused variable",
         "The variable is declared but its value is never read. Remove it, or start its name with an underscore to show that this is intended.";

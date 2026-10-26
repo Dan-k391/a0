@@ -21,7 +21,9 @@ For a language with modules, a document is analyzed as the main file of its prog
 imports are read from documents open in the editor or from disk, their diagnostics are published
 for them, and go-to-definition on another module's item (`util.twice`) opens that file; hovering
 over one, or over the standard library's (`str.split`), shows its signature. Types on hover and
-definitions keep working while the program has errors.
+definitions keep working while the program has errors. A document in a package (`docs/packages.md`) resolves
+its imports through the package, its dependencies included (git ones from the cache `build`
+fetched them into), and problems in the manifests are published for the manifests.
 
 The server keeps whole documents (full sync). An edit reindexes the document only; the program is
 analyzed again once edits pause for 200 ms, or before a request that needs it (hover, definition,

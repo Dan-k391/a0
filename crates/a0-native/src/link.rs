@@ -117,7 +117,9 @@ pub fn link_executable(
             let mut cmd = cc::windows_registry::find(target.triple(), "link.exe").ok_or_else(|| {
                 link_error("cannot find the MSVC linker (link.exe); install the Visual Studio C++ build tools")
             })?;
+            // `/Brepro`: no time stamps, so that the same program links to the same bytes (D81).
             cmd.arg("/NOLOGO")
+                .arg("/Brepro")
                 .arg(format!("/OUT:{}", output.display()))
                 .arg("/SUBSYSTEM:CONSOLE")
                 .arg(format!("/STACK:{}", opts.stack_size))
@@ -342,6 +344,7 @@ fn link_with_pack(
     cmd.args(&flavor_args);
     if windows {
         cmd.arg("/nologo")
+            .arg("/Brepro")
             .arg(format!("/out:{}", output.display()))
             .arg("/subsystem:console")
             .arg("/entry:mainCRTStartup")

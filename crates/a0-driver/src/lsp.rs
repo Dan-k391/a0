@@ -698,8 +698,11 @@ impl Server<'_> {
 
     fn update(&mut self, uri: &str, text: String) {
         let mut sources = SourceMap::new();
-        let source = SourceId(0);
+        // The edited file's source: the first, unless manifests come before it.
+        let mut source = SourceId(0);
         let mut files: Vec<(SourceId, String)> = Vec::new();
+        // The manifests of its package and its dependencies, whose errors go to them.
+        let mut manifests: Vec<(SourceId, PathBuf)> = Vec::new();
         let mut program_files: Vec<FileInfo> = Vec::new();
         // What is known about a program with errors still helps (types, definitions).
         let mut partial: Option<HirModule> = None;
@@ -727,9 +730,26 @@ impl Server<'_> {
                 };
                 let root_name = path.to_string_lossy().into_owned();
                 catch_unwind(AssertUnwindSafe(|| -> Result<Program, CompileError> {
-                    let loaded =
-                        program::load(grammar, &modules, &root_name, &mut read, &mut sources)
-                            .map_err(CompileError::Diagnostics)?;
+                    // Imports resolve through the file's package (D81); git dependencies come
+                    // from the cache `build` fetched them into.
+                    let packages = match self.lang.packages_of(&path, &mut sources, &mut manifests)
+                    {
+                        Ok(p) => p,
+                        Err(d) => {
+                            source = sources.add(&root_name, &text);
+                            return Err(CompileError::Diagnostics(d));
+                        }
+                    };
+                    source = SourceId(sources.len());
+                    let loaded = program::load(
+                        grammar,
+                        &modules,
+                        &root_name,
+                        packages.as_ref(),
+                        &mut read,
+                        &mut sources,
+                    )
+                    .map_err(CompileError::Diagnostics)?;
                     files = loaded
                         .files
                         .iter()
@@ -785,6 +805,7 @@ impl Server<'_> {
         if !files.iter().any(|(id, _)| *id == source) {
             files.push((source, uri.to_string()));
         }
+        files.extend(manifests.iter().map(|(id, p)| (*id, path_to_uri(p))));
         let lines = Lines::new(&text);
         let index = self.grammar.as_ref().map(|g| {
             let (tree, _) = g.parse(&text, source);

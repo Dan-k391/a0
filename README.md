@@ -84,6 +84,7 @@ You need Rust and a C compiler (MSVC on Windows, `cc` on Linux and macOS).
 git clone https://github.com/Dan-k391/a0 && cd a0
 cargo build --release
 target/release/minnow run examples/minnow/tests/programs/closures.mn
+minnow build                              # in a package: minnow.toml (docs/packages.md)
 target/release/lox examples/lox/tests/craftinginterpreters/test/benchmark/fib.lox
 target/release/kaleidoscope build examples/kaleidoscope/tests/programs/mandelbrot.k -o mandel
 ./mandel
@@ -162,6 +163,7 @@ A0 is not published on crates.io; depend on it from git (`a0-hir = { git =
 | [docs/editors.md](docs/editors.md) | The language server and editor setup |
 | [docs/c-api.md](docs/c-api.md) | Using A0 from C |
 | [docs/python.md](docs/python.md) | Writing a language in Python |
+| [docs/packages.md](docs/packages.md) | Packages: manifests, dependencies, lock files, reproducible builds |
 | [docs/cross.md](docs/cross.md) | Cross-compilation: building executables for other platforms |
 | [docs/playground.md](docs/playground.md) | The browser playground: building it, how it works |
 | [docs/debugging.md](docs/debugging.md) | The debugger every language gets, and native debug information |

@@ -6,6 +6,20 @@ APIs. `docs/milestones.md` has the details of each step, with measurements.
 
 ## [Unreleased]
 
+### Added
+
+- **Packages** (D81, `docs/packages.md`): a manifest named after the language (`minnow.toml`)
+  with the program's main file and its dependencies, from directories or git repositories (fetched
+  with `git` into a shared cache, pinned in a lock file); `run`, `build`, `ir` and `hir` without a
+  file take the package, `update` refreshes the lock file and `--locked` refuses to change it.
+  The language server and the debugger resolve imports through packages. Builds are reproducible,
+  byte for byte. New diagnostic codes `E5001`–`E5006`.
+
+### Changed
+
+- A module's imports resolve from its package's source directory, so a file analyzed on its own
+  (in the editor) resolves them as the build does. MSVC and lld-link link with `/Brepro`.
+
 ## [0.8.0] - 2026-10-26
 
 Everywhere: executables for other platforms from any host, compiled programs in the browser,

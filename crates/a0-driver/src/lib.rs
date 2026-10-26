@@ -7,6 +7,9 @@
 //! lang run <file> [args...]      run the program, compiled into memory (`A0_INTERP=1`: interpret it)
 //! lang build <file> [-o output]  compile it to a native executable for the host (`.exe` added
 //!                                on Windows)
+//! lang run|build|ir|hir          the same for the package the current directory is in
+//!                                (`package.rs`; `run -- args` passes arguments)
+//! lang update                    take the newest commits of the package's git dependencies
 //! lang ir <file>                 print the core IR
 //! lang hir <file>                print the HIR (languages that compile to the HIR)
 //! lang lsp                       serve the Language Server Protocol on stdin and stdout
@@ -27,6 +30,7 @@
 pub mod dap;
 pub mod json;
 pub mod lsp;
+pub mod package;
 pub mod program;
 mod repl;
 pub mod snapshots;
@@ -187,6 +191,8 @@ pub struct Invocation {
     pub debug: bool,
     /// `build --target`: the target to build for, if not the host (D79).
     pub target: Option<String>,
+    /// `--locked`: use the package's lock file as it is (D81).
+    pub locked: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -202,6 +208,8 @@ pub enum Command {
     Repl,
     /// `explain <code>`: the code is the invocation's `file`.
     Explain,
+    /// `update`: re-resolve the package's git dependencies and rewrite its lock file.
+    Update,
 }
 
 /// Whether `run` interprets the program (`A0_INTERP=1`, or a host without native code) rather
@@ -209,6 +217,22 @@ pub enum Command {
 pub fn interpret() -> bool {
     std::env::var("A0_INTERP").is_ok_and(|v| !v.is_empty() && v != "0")
         || !a0_native::jit_supported()
+}
+
+/// How usage messages name a command.
+fn command_word(command: Command) -> &'static str {
+    match command {
+        Command::Run => "run",
+        Command::Build => "build",
+        Command::Ir => "ir",
+        Command::Hir => "hir",
+        _ => "update",
+    }
+}
+
+/// Whether `root` (as given to the compiler) is the package's main file.
+fn packages_main_is(packages: &package::Packages, root: &str) -> bool {
+    packages.main.as_deref() == Some(program::normalize(Path::new(root)).as_path())
 }
 
 /// Where `build` writes the executable: `-o`'s name, or the source file's stem, with the platform's
@@ -267,6 +291,101 @@ impl Language {
                 }
             };
         }
+        let mut inv = inv;
+        let mut sources = SourceMap::new();
+        // The package the program is in, if the language has modules (D81): without a file, the
+        // one the current directory is in.
+        let mut packages = None;
+        if let Some(modules) = self.modules
+            && inv.file != "-"
+        {
+            let from = if inv.file.is_empty() {
+                std::env::current_dir().unwrap_or_default()
+            } else {
+                Path::new(&inv.file).to_path_buf()
+            };
+            match package::find_manifest(&from, self.name) {
+                Some(manifest) => {
+                    let options = package::LoadOptions {
+                        fetch: true,
+                        locked: inv.locked,
+                        update: inv.command == Command::Update,
+                    };
+                    let loaded = package::load(
+                        &manifest,
+                        self.name,
+                        modules.extension,
+                        options,
+                        &mut sources,
+                        &mut Vec::new(),
+                    );
+                    match loaded {
+                        Ok(p) => packages = Some(p),
+                        Err(d) => {
+                            let d = self.codes.apply(&d);
+                            eprint!("{}", d.render_with(&sources, &RenderOptions::stderr()));
+                            return self.exit_codes.compile;
+                        }
+                    }
+                }
+                None if inv.file.is_empty() => {
+                    let d: Diagnostics = a0_diag::Diagnostic::error(
+                        a0_diag::codes::NO_PACKAGE,
+                        &format!(
+                            "no {}.toml in this directory or its parents, and no file to {}",
+                            self.name,
+                            command_word(inv.command)
+                        ),
+                    )
+                    .with_help(&format!(
+                        "give a file: `{} {} <file>`",
+                        self.name,
+                        command_word(inv.command)
+                    ))
+                    .into();
+                    eprint!(
+                        "{}",
+                        self.codes
+                            .apply(&d)
+                            .render_with(&sources, &RenderOptions::stderr())
+                    );
+                    return self.exit_codes.usage;
+                }
+                None => {}
+            }
+        }
+        if inv.command == Command::Update {
+            return 0;
+        }
+        if inv.file.is_empty() {
+            let packages = packages.as_ref().expect("checked above");
+            let Some(main) = &packages.main else {
+                eprintln!(
+                    "{}: the package {} has no main file (src/main.{})",
+                    self.name,
+                    packages.name,
+                    self.modules.map_or("", |m| m.extension)
+                );
+                return self.exit_codes.usage;
+            };
+            let cwd = std::env::current_dir().unwrap_or_default();
+            inv.file = main
+                .strip_prefix(&cwd)
+                .unwrap_or(main)
+                .to_string_lossy()
+                .replace('\\', "/");
+            if inv.command == Command::Build && inv.output.is_none() {
+                let out = packages.dir.join("build");
+                let _ = std::fs::create_dir_all(&out);
+                let out = out.join(&packages.name);
+                inv.output = Some(
+                    out.strip_prefix(&cwd)
+                        .unwrap_or(&out)
+                        .to_string_lossy()
+                        .into_owned(),
+                );
+            }
+        }
         // `-` is standard input (the REPL runs its programs this way); imports are found from the
         // current directory then.
         let read = if inv.file == "-" {
@@ -282,14 +401,15 @@ impl Language {
                 return self.exit_codes.io;
             }
         };
-        let mut sources = SourceMap::new();
         let name = match inv.file.as_str() {
             "-" if std::env::var_os("A0_REPL").is_some() => "<repl>",
             "-" => "<stdin>",
             file => file,
         };
         let compiled = match self.modules {
-            Some(modules) => self.compile_program(&modules, name, &text, &mut sources),
+            Some(modules) => {
+                self.compile_program(&modules, name, &text, packages.as_ref(), &mut sources)
+            }
             None => {
                 let id = sources.add(name, &text);
                 (self.compile)(&text, id)
@@ -408,7 +528,12 @@ impl Language {
                     Err(d) => self.internal_error(&d, &sources),
                 }
             }
-            Command::Hir | Command::Lsp | Command::Dap | Command::Repl | Command::Explain => {
+            Command::Hir
+            | Command::Lsp
+            | Command::Dap
+            | Command::Repl
+            | Command::Explain
+            | Command::Update => {
                 unreachable!("handled above")
             }
         }
@@ -421,6 +546,7 @@ impl Language {
         modules: &Modules,
         root: &str,
         text: &str,
+        packages: Option<&package::Packages>,
         sources: &mut SourceMap,
     ) -> Result<Program, CompileError> {
         let Some(grammar) = self
@@ -438,18 +564,47 @@ impl Language {
                 std::fs::read_to_string(p).ok()
             }
         };
-        let loaded = program::load(&grammar, modules, root, &mut read, sources)
+        let loaded = program::load(&grammar, modules, root, packages, &mut read, sources)
             .map_err(CompileError::Diagnostics)?;
-        let name = Path::new(root)
-            .file_stem()
-            .map(|s| s.to_string_lossy().into_owned())
-            .unwrap_or_default();
+        let name = match packages {
+            Some(p) if packages_main_is(p, root) => p.name.clone(),
+            _ => Path::new(root)
+                .file_stem()
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or_default(),
+        };
         let m = program::compile(&loaded, modules, &name).map_err(CompileError::Diagnostics)?;
         let entry = a0_hir::check_entry(&m);
         if entry.has_errors() {
             return Err(CompileError::Diagnostics(entry));
         }
         Ok(Program::Hir(m))
+    }
+
+    /// The package `file` is in, loaded without fetching anything (for the debugger and the
+    /// language server; `build` fetches): `None` without a manifest or for a language without
+    /// modules. `read` collects the manifests' sources and paths.
+    pub fn packages_of(
+        &self,
+        file: &Path,
+        sources: &mut SourceMap,
+        read: &mut Vec<(SourceId, std::path::PathBuf)>,
+    ) -> Result<Option<package::Packages>, Diagnostics> {
+        let Some(modules) = self.modules else {
+            return Ok(None);
+        };
+        let Some(manifest) = package::find_manifest(file, self.name) else {
+            return Ok(None);
+        };
+        package::load(
+            &manifest,
+            self.name,
+            modules.extension,
+            package::LoadOptions::default(),
+            sources,
+            read,
+        )
+        .map(Some)
     }
 
     /// Serves the Language Server Protocol until the client exits or the input ends; returns the
@@ -479,6 +634,21 @@ impl Language {
                 args: Vec::new(),
                 debug: false,
                 target: None,
+                locked: false,
+            });
+        }
+        if let [only] = args
+            && only == "update"
+            && self.modules.is_some()
+        {
+            return Some(Invocation {
+                command: Command::Update,
+                file: String::new(),
+                output: None,
+                args: Vec::new(),
+                debug: false,
+                target: None,
+                locked: false,
             });
         }
         if let [explain, code] = args
@@ -491,6 +661,7 @@ impl Language {
                 args: Vec::new(),
                 debug: false,
                 target: None,
+                locked: false,
             });
         }
         let (command, rest) = match args.first().map(String::as_str) {
@@ -501,20 +672,54 @@ impl Language {
             Some(_) if self.run_by_default => (Command::Run, args),
             _ => return None,
         };
-        let (file, rest) = rest.split_first()?;
+        // Without a file (nothing, a flag, or `--` before the program's arguments), a language with
+        // modules builds the package the current directory is in.
+        let (file, rest) = match rest.split_first() {
+            Some((f, more)) if !f.starts_with('-') || f == "-" => (f.clone(), more),
+            _ if self.modules.is_some() => match rest.split_first() {
+                Some((dashes, more)) if dashes == "--" && command == Command::Run => {
+                    (String::new(), more)
+                }
+                _ => (String::new(), rest),
+            },
+            _ => return None,
+        };
         let mut inv = Invocation {
             command,
-            file: file.clone(),
+            file,
             output: None,
             args: Vec::new(),
             debug: false,
             target: None,
+            locked: false,
         };
         match (command, rest) {
-            (Command::Run, rest) => inv.args = rest.to_vec(),
+            (Command::Run, rest) if !inv.file.is_empty() => inv.args = rest.to_vec(),
+            (Command::Run, rest) => {
+                // `run --locked -- args`
+                let mut rest = rest;
+                while let Some((flag, more)) = rest.split_first() {
+                    match flag.as_str() {
+                        "--locked" if !inv.locked => inv.locked = true,
+                        "--" => {
+                            inv.args = more.to_vec();
+                            break;
+                        }
+                        _ => {
+                            inv.args = rest.to_vec();
+                            break;
+                        }
+                    }
+                    rest = more;
+                }
+            }
             (Command::Build, mut rest) => {
                 while let Some((flag, more)) = rest.split_first() {
                     match (flag.as_str(), more) {
+                        ("--locked", more) if !inv.locked => {
+                            inv.locked = true;
+                            rest = more;
+                        }
                         ("-o", [out, more @ ..]) if inv.output.is_none() => {
                             inv.output = Some(out.clone());
                             rest = more;
@@ -544,18 +749,28 @@ impl Language {
         } else {
             String::new()
         };
+        let packages = if self.modules.is_some() {
+            format!(
+                "\n\
+                 Without a file, run, build, ir and hir take the package the current directory is\n\
+                 in ({n}.toml; `{n} run -- args...`, `build --locked`):\n\
+                 \x20 update                 take the newest commits of its git dependencies\n"
+            )
+        } else {
+            String::new()
+        };
         format!(
             "usage: {n} <command> <file>\n\n\
              commands:\n\
-             \x20 run <file> [args...]   interpret the program{run}\n\
+             \x20 run <file> [args...]   run the program{run}\n\
              \x20 build <file> [-o out] [-g] [--target <target>]\n\
-             \x20                        compile it to a native executable (-g: for gdb or lldb;\n\
+             \x20                        compile it to a native executable (-g: for debuggers;\n\
              \x20                        another target needs its pack: targets/build.py)\n\
              \x20 ir <file>              print the core IR\n\
              \x20 hir <file>             print the high-level IR\n\
              \x20 lsp                    serve the Language Server Protocol on stdin/stdout\n\
              \x20 dap                    serve the Debug Adapter Protocol (debugging) on stdin/stdout\n\
-             \x20 explain <code>         explain an error code\n"
+             \x20 explain <code>         explain an error code\n{packages}"
         )
     }
 }
