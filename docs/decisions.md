@@ -996,3 +996,54 @@ keep in the repository with its license. It is an example's dependency, not the 
 `runtime/abi.c` beside it has functions of structs by value in every shape the C ABIs treat
 differently, so that native code is checked against the platform's C compiler on every CI
 platform, not only against Rust's `extern "C"` (D73).
+
+## D75. Concurrency: operating-system threads sharing the heap, and channels
+
+v0.7 asks for concurrency with a recorded model. The candidates:
+
+- **Green threads or async**: many lightweight tasks on few threads. They need stacks that can be
+  switched (Cranelift has no coroutines, so every language's code would be transformed into state
+  machines) or a scheduler in the runtime that every blocking call goes through, and they still need
+  real threads for real speedup.
+- **Actors with separate heaps**: no shared memory, so each heap is collected alone and nothing
+  races. But every message is copied, every runtime structure becomes per-actor, and the existing
+  languages' programs could not share a data structure at all.
+- **Operating-system threads sharing one heap**, with channels to pass values: what C, Go (with its
+  own scheduler), Java and Rust give. Real parallelism at once, no transformation of code, and the
+  interpreter, the JIT and native code all run them the same way.
+
+A0 takes the last. A thread runs a closure; `join` returns its result; a channel passes values in
+order through a buffer of fixed capacity, blocking when full or empty, and can be closed. That is
+the runtime's whole surface (`a0_thread_*`, `a0_chan_*`), and `std.thread` is HIR over it, generic
+over the value's type (values travel as `any`; a cast from `any` to a type parameter, checked where
+it can be, was added to the HIR for it). Locks and atomics for programs are left out: channels and
+joins cover the example languages' needs, and races on shared arrays, maps and objects are the
+program's to avoid, as in Go. A panic on any thread ends the process, with the thread's trace and
+where it was spawned. In the interpreter every thread gets its own interpreter state over a shared
+compiled program; WebAssembly, which has no threads in the playground, reports spawning as
+unsupported.
+
+## D76. The collector with threads: stop the world at safe points
+
+The collector stays a non-moving mark-sweep over shadow stacks (D16), and gains threads:
+
+- Each thread has its own shadow stack, attached when it first runs A0 code; the collector scans
+  all of them, and each thread's exception in flight (which threaded programs keep beside it rather
+  than in globals).
+- Allocation takes a heap lock once a second thread exists; until then nothing locks, so
+  single-threaded programs pay nothing but a thread-local lookup for their frames.
+- A collection stops the world: it raises a flag and waits until every other thread has stopped.
+  A thread stops where all its references are rooted: waiting for the heap at an allocation, at a
+  poll that generated code makes at loop heads and function entries (a load and a branch, only in
+  programs that use `std.thread` and have the collector), or while it waits in the runtime (for a
+  channel, a thread, time, input). Leaving such a wait waits for a collection in progress.
+- The runtime's tables (interned names, shapes, buffers' free lists, the random generator) take a
+  second lock, never held where a collection could start; per-site field caches are not used by
+  threaded programs, since two threads could tear them.
+
+Alternatives were a lock around every runtime call (a global interpreter lock, which throws away
+the parallelism the release is about), thread-local heaps (objects that move between threads would
+need to be found and promoted), and concurrent marking (a write barrier in every store, the same
+change a generational collector needs, left for v0.9 with it). Allocation-heavy threads contend on
+the heap lock; per-thread allocation buffers would remove most of that and are recorded as an open
+question rather than done now.

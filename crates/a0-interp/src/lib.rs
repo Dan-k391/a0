@@ -12,7 +12,7 @@
 //! how to report them (the `a0` driver prints them through the runtime, exactly like native code).
 
 use std::collections::HashMap;
-use std::rc::Rc;
+use std::sync::{Arc, Mutex};
 
 use a0_diag::{Diagnostic, Diagnostics};
 use a0_ir::{
@@ -227,7 +227,7 @@ enum Op {
         loc: u32,
     },
     CallIndirect {
-        sig: Rc<Shape>,
+        sig: Arc<Shape>,
         callee: Slot,
         args: Box<[Slot]>,
         dst: Option<Slot>,
@@ -298,7 +298,7 @@ struct Code {
 }
 
 enum FuncKind {
-    Defined(Rc<Code>),
+    Defined(Arc<Code>),
     /// A resolved C function.
     Native {
         address: usize,
@@ -318,7 +318,7 @@ enum FuncKind {
 
 struct FuncInfo {
     name: String,
-    shape: Rc<Shape>,
+    shape: Arc<Shape>,
     kind: FuncKind,
 }
 
@@ -337,28 +337,81 @@ pub const DEFAULT_MAX_DEPTH: u32 = if cfg!(target_family = "wasm") {
     10_000
 };
 
-/// A prepared program, ready to call into.
-pub struct Interpreter {
+/// A prepared program: what the threads that run it share.
+struct Shared {
     module: Module,
     funcs: Vec<FuncInfo>,
     /// Host memory backing `data` and `global` items. Never moved after preparation.
     _global_memory: Vec<Box<[u64]>>,
     /// Function tokens are addresses inside this allocation, so they never collide with real code.
     tokens: Box<[u8]>,
+    /// The location table, in the runtime's format.
+    debug: Vec<u8>,
+    locations: a0_ir::Locations,
+}
+
+// SAFETY: after preparation nothing in a program changes; the raw addresses its code holds are of
+// memory it owns or of C functions, which any thread may use.
+unsafe impl Send for Shared {}
+unsafe impl Sync for Shared {}
+
+/// A prepared program, ready to call into, and the state of the thread running it.
+pub struct Interpreter {
+    shared: Arc<Shared>,
     /// The stack slots of the active calls that have any, innermost last.
     slot_memory: Vec<Box<[u128]>>,
     stack: Vec<u64>,
     depth: u32,
     max_depth: u32,
-    /// The location table, in the runtime's format.
-    debug: Vec<u8>,
-    locations: a0_ir::Locations,
     /// The debugger, when one is attached (`Interpreter::new_debug`).
     hook: Option<DebugHook>,
     /// Per active call, innermost last, when debugging.
     frames: Vec<DebugFrame>,
     /// Whether the debugger was told of the failure being unwound.
     failure_told: bool,
+}
+
+/// The program whose threads the runtime starts (`a0_thread_spawn`), and how they run.
+#[derive(Clone)]
+struct ThreadProgram {
+    shared: Arc<Shared>,
+    hook: Option<DebugHook>,
+    max_depth: u32,
+}
+
+static THREADS: Mutex<Option<ThreadProgram>> = Mutex::new(None);
+
+/// The native stack of a thread the interpreter runs, which `DEFAULT_MAX_DEPTH` calls fit in (the
+/// main one gets as much, `run_main`).
+const THREAD_STACK: usize = 1 << 30;
+
+/// Runs a closure on a thread the runtime started: new state over the same program, calling the
+/// closure's function with the closure, as generated code calls closures. A failure ends the
+/// program, as in native code.
+extern "C" fn start_thread(closure: *mut std::ffi::c_void) -> u64 {
+    let Some(program) = THREADS.lock().unwrap().clone() else {
+        a0_runtime::panic("a thread started with no program to run");
+    };
+    // SAFETY: the runtime passes a closure object, whose first word is its function.
+    let token = unsafe { *(closure as *const u64) };
+    let base = program.shared.tokens.as_ptr() as u64;
+    if token < base || token >= base + program.shared.tokens.len() as u64 {
+        a0_runtime::panic("a thread's closure is not a function of the program");
+    }
+    let mut machine = Interpreter {
+        shared: program.shared,
+        slot_memory: Vec::new(),
+        stack: Vec::with_capacity(1 << 16),
+        depth: 0,
+        max_depth: program.max_depth,
+        hook: program.hook,
+        frames: Vec::new(),
+        failure_told: false,
+    };
+    match machine.call(FuncId((token - base) as u32), &[closure as u64]) {
+        Ok(result) => result.unwrap_or(0),
+        Err(trap) => trap.report_and_exit(),
+    }
 }
 
 /// A call as the debugger sees it.
@@ -434,7 +487,7 @@ impl Interpreter {
         let mut funcs = Vec::new();
         for f in 0..module.func_count() {
             let f = FuncId(f);
-            let shape = Rc::new(Shape {
+            let shape = Arc::new(Shape {
                 params: module.func_params(f).to_vec(),
                 ret: module.func_ret(f),
             });
@@ -523,21 +576,23 @@ impl Interpreter {
         let debug = a0_runtime::debug::encode(&entries);
         for (info, code) in funcs.iter_mut().zip(codes) {
             if let Some(code) = code {
-                info.kind = FuncKind::Defined(Rc::new(code));
+                info.kind = FuncKind::Defined(Arc::new(code));
             }
         }
 
         Ok(Interpreter {
-            module,
-            funcs,
-            _global_memory: global_memory,
-            tokens,
+            shared: Arc::new(Shared {
+                module,
+                funcs,
+                _global_memory: global_memory,
+                tokens,
+                debug,
+                locations,
+            }),
             stack: Vec::with_capacity(1 << 16),
             depth: 0,
             max_depth: DEFAULT_MAX_DEPTH,
             slot_memory: Vec::new(),
-            debug,
-            locations,
             hook,
             frames: Vec::new(),
             failure_told: false,
@@ -563,13 +618,13 @@ impl Interpreter {
 
     /// A location by id: the function as traces name it, the file, line and column.
     pub fn debug_location(&self, id: u32) -> Option<&a0_ir::Location> {
-        self.locations.get(id)
+        self.shared.locations.get(id)
     }
 
     /// The variables of active call `i`'s function and their current values (raw bits).
     pub fn debug_frame_vars(&self, i: usize) -> Vec<(a0_ir::Var, u64)> {
         let frame = &self.frames[self.frames.len() - 1 - i];
-        match &self.funcs[frame.func as usize].kind {
+        match &self.shared.funcs[frame.func as usize].kind {
             FuncKind::Defined(code) => code
                 .vars
                 .iter()
@@ -596,7 +651,7 @@ impl Interpreter {
     }
 
     pub fn module(&self) -> &Module {
-        &self.module
+        &self.shared.module
     }
 
     /// Limits how deeply calls may nest before a stack overflow trap.
@@ -606,15 +661,22 @@ impl Interpreter {
 
     /// Initializes the runtime with `args`, calls `@main` and returns its exit status.
     pub fn run_main(&mut self, args: &[String]) -> Result<i32, Trap> {
-        let diags = a0_ir::check_entry(&self.module);
+        // Threads the program starts run on this program, with the same debugger.
+        *THREADS.lock().unwrap() = Some(ThreadProgram {
+            shared: self.shared.clone(),
+            hook: self.hook,
+            max_depth: self.max_depth,
+        });
+        a0_runtime::set_thread_starter(start_thread, THREAD_STACK);
+        let diags = a0_ir::check_entry(&self.shared.module);
         if diags.has_errors() {
             return Err(Trap::panic(diags.get(0).message.clone()));
         }
-        let main = self.module.lookup_func("main").unwrap();
+        let main = self.shared.module.lookup_func("main").unwrap();
         a0_runtime::init(args);
         // The runtime prints traces from the table until the process ends, after this
         // interpreter is gone.
-        let table: &'static [u8] = Box::leak(self.debug.clone().into_boxed_slice());
+        let table: &'static [u8] = Box::leak(self.shared.debug.clone().into_boxed_slice());
         // SAFETY: the table lives until the process ends.
         unsafe { a0_runtime::set_debug(table, frames) };
         let result = self.call(main, &[])?;
@@ -624,11 +686,11 @@ impl Interpreter {
     /// Calls a function with raw argument bits (integers in canonical form, floats as bits).
     /// Returns the raw result bits, or `None` for void functions.
     pub fn call(&mut self, f: FuncId, args: &[u64]) -> Result<Option<u64>, Trap> {
-        let shape = self.funcs[f.index()].shape.clone();
+        let shape = self.shared.funcs[f.index()].shape.clone();
         if args.len() != shape.params.len() {
             return Err(Trap::panic(format!(
                 "@{} takes {} arguments, {} given",
-                self.funcs[f.index()].name,
+                self.shared.funcs[f.index()].name,
                 shape.params.len(),
                 args.len()
             )));
@@ -650,7 +712,7 @@ impl Interpreter {
         args: &[Slot],
         loc: u32,
     ) -> Result<u64, Trap> {
-        match &self.funcs[f as usize].kind {
+        match &self.shared.funcs[f as usize].kind {
             FuncKind::Defined(code) => {
                 let code = code.clone();
                 if self.depth >= self.max_depth {
@@ -700,12 +762,12 @@ impl Interpreter {
                 ret_kind,
                 reports,
             } => {
-                let ret = self.funcs[f as usize].shape.ret;
+                let ret = self.shared.funcs[f as usize].shape.ret;
                 let extra = if reports { Some(loc) } else { None };
                 self.native_call(address, mask, ret_kind, ret, caller_base, args, extra)
             }
             &FuncKind::Thunk { address, .. } => {
-                let ret = self.funcs[f as usize].shape.ret;
+                let ret = self.shared.funcs[f as usize].shape.ret;
                 let words: Vec<u64> = args
                     .iter()
                     .map(|&a| self.stack[caller_base + a as usize])
@@ -735,7 +797,7 @@ impl Interpreter {
             }
             FuncKind::Unresolved => Err(Trap::panic(format!(
                 "call to unresolved external function @{}",
-                self.funcs[f as usize].name
+                self.shared.funcs[f as usize].name
             ))),
         }
     }
@@ -788,14 +850,14 @@ impl Interpreter {
         args: &[Slot],
         loc: u32,
     ) -> Result<u64, Trap> {
-        let token_base = self.tokens.as_ptr() as u64;
-        if callee >= token_base && callee < token_base + self.tokens.len() as u64 {
+        let token_base = self.shared.tokens.as_ptr() as u64;
+        if callee >= token_base && callee < token_base + self.shared.tokens.len() as u64 {
             let f = (callee - token_base) as u32;
-            let actual = &self.funcs[f as usize].shape;
+            let actual = &self.shared.funcs[f as usize].shape;
             if actual.params != sig.params || actual.ret != sig.ret {
                 return Err(Trap::panic(format!(
                     "call_indirect signature does not match @{}",
-                    self.funcs[f as usize].name
+                    self.shared.funcs[f as usize].name
                 )));
             }
             return self.call_func(f, base, args, loc);
@@ -1163,7 +1225,7 @@ impl FuncCompiler<'_> {
             Opcode::CallIndirect => {
                 let sig = m.inst_sig(i);
                 Op::CallIndirect {
-                    sig: Rc::new(Shape {
+                    sig: Arc::new(Shape {
                         params: m.sig_params(sig).to_vec(),
                         ret: m.sig_ret(sig),
                     }),

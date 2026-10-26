@@ -57,7 +57,7 @@ static int call_site(uintptr_t ra, uint32_t *site) {
 
 /* The locations of the active frames, innermost first: the failing operation's, then the call in
  * each caller. */
-static size_t frames(uint64_t loc, void *frame, uint32_t *out, size_t max) {
+size_t a0_rt_frames(uint64_t loc, void *frame, uint32_t *out, size_t max) {
     size_t n = 0;
     out[n++] = (uint32_t)loc;
     if (frame != NULL) {
@@ -141,6 +141,7 @@ size_t a0_rt_trace_text(const uint32_t *ids, size_t count, char *buf, size_t cap
     return t.len;
 }
 
+/* Only the first thread to fail uses these (a0_fail_lock). */
 static uint32_t g_ids[4096];
 static char g_text[65536];
 
@@ -153,11 +154,23 @@ static A0_NORETURN void fail(const uint8_t *message, size_t len, const uint32_t 
         size_t n = a0_rt_trace_text(ids, count, g_text, sizeof g_text);
         a0_rt_write(2, (const uint8_t *)g_text, n < sizeof g_text ? n : sizeof g_text - 1);
     }
+    /* A spawned thread's stack ends where it started; the stack that spawned it follows. */
+    const uint32_t *spawned;
+    int64_t id;
+    size_t spawned_count = a0_thread_spawn_frames(&spawned, &id);
+    if (spawned_count > 0) {
+        char line[64];
+        int n = snprintf(line, sizeof line, "    in thread %lld, spawned\n", (long long)id);
+        a0_rt_write(2, (const uint8_t *)line, (size_t)(n > 0 ? n : 0));
+        size_t t = a0_rt_trace_text(spawned, spawned_count, g_text, sizeof g_text);
+        a0_rt_write(2, (const uint8_t *)g_text, t < sizeof g_text ? t : sizeof g_text - 1);
+    }
     a0_rt_exit(A0_PANIC_EXIT_CODE);
 }
 
 void a0_rt_fail_bytes(const uint8_t *message, int64_t len, uint64_t loc, void *frame) {
-    size_t count = frames(loc, frame, g_ids, sizeof g_ids / sizeof g_ids[0]);
+    a0_fail_lock();
+    size_t count = a0_rt_frames(loc, frame, g_ids, sizeof g_ids / sizeof g_ids[0]);
     fail(message, (size_t)len, g_ids, count);
 }
 
@@ -166,19 +179,21 @@ void a0_rt_fail(const char *message, uint64_t loc, void *frame) {
 }
 
 void a0_rt_fail_frames(const char *message, const uint32_t *ids, size_t count) {
+    a0_fail_lock();
     fail((const uint8_t *)message, strlen(message), ids, count);
 }
 
 /* Where the exception in flight was thrown: kept by a0_rt_throw for a0_rt_uncaught, since the
  * frames are gone by the time the exception reaches `main`. */
-static uint32_t g_thrown[1024];
-static size_t g_thrown_count;
+static A0_THREAD_LOCAL uint32_t g_thrown[1024];
+static A0_THREAD_LOCAL size_t g_thrown_count;
 
 void a0_rt_throw(uint64_t loc, void *frame) {
-    g_thrown_count = frames(loc, frame, g_thrown, sizeof g_thrown / sizeof g_thrown[0]);
+    g_thrown_count = a0_rt_frames(loc, frame, g_thrown, sizeof g_thrown / sizeof g_thrown[0]);
 }
 
 void a0_rt_uncaught(uint64_t value) {
+    a0_fail_lock();
     char what[1024];
     a0_any_describe(value, what, sizeof what);
     char message[1100];

@@ -32,6 +32,7 @@ fn main() {
         .file(manifest.join("c/any.c"))
         .file(manifest.join("c/trace.c"))
         .file(manifest.join("c/std.c"))
+        .file(manifest.join("c/thread.c"))
         .file(manifest.join("c/symbols.c"))
         .file(&ffi)
         .warnings(true)

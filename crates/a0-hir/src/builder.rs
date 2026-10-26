@@ -3069,6 +3069,8 @@ fn cast_allowed(m: &HirModule, from: TypeId, to: TypeId) -> bool {
         )
         || matches!(tk, TypeKind::Any)
         || (matches!(fk, TypeKind::Any) && testable(m, to))
+        // To a type parameter: what can be tested is, once the type is known (`lower.rs`).
+        || matches!((fk, tk), (TypeKind::Any, TypeKind::Param(..)))
         || matches!(tk, TypeKind::Nullable(inner) if m.same(from, *inner))
         || matches!(
             (fk, tk),

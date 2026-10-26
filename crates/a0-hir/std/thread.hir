@@ -1,0 +1,59 @@
+// Threads: functions that run at the same time, on as many processors as the machine has, sharing
+// the program's memory; and channels, which pass values from one thread to another (D75).
+module "std.thread";
+
+extern "a0" fn a0_thread_spawn(fn() -> any) -> any;
+extern "a0" fn a0_thread_join(any) -> any;
+extern "a0" fn a0_thread_parallelism() -> int;
+extern "a0" fn a0_chan_new(int) -> any;
+extern "a0" fn a0_chan_send(any, any);
+extern "a0" fn a0_chan_recv(any) -> any;
+extern "a0" fn a0_chan_closed() -> int;
+extern "a0" fn a0_chan_close(any);
+
+// A thread, running a function that returns a `T`.
+// (`kind` only says what `T` is: an empty array.)
+struct Thread<T> { handle: any, kind: array<T> }
+
+// A channel of `T`s: what threads send, threads receive, in the order it was sent.
+struct Channel<T> { handle: any, kind: array<T> }
+
+// Runs `f` on a thread of its own, at the same time as the rest of the program.
+fn spawn<T>(f: fn() -> T) -> Thread<T> {
+  new Thread { handle: a0_thread_spawn(fn() -> any { f() as any }), kind: new array<T> }
+}
+
+// Waits for the thread to end and returns what its function returned (once per thread).
+fn join<T>(t: Thread<T>) -> T {
+  a0_thread_join(t.handle) as T
+}
+
+// How many threads can run at once: the machine's processors.
+fn parallelism() -> int {
+  a0_thread_parallelism()
+}
+
+// A channel that holds up to `capacity` values (at least 1) that were sent and not yet received.
+fn channel<T>(capacity: int) -> Channel<T> {
+  new Channel { handle: a0_chan_new(capacity), kind: new array<T> }
+}
+
+// Sends `value`, waiting while the channel is full. Sending on a closed channel is an error.
+fn send<T>(c: Channel<T>, value: T) {
+  a0_chan_send(c.handle, value as any)
+}
+
+// The next value, waiting until there is one; an error once the channel is closed and empty.
+fn receive<T>(c: Channel<T>) -> `std.Result`<T, string> {
+  let value = a0_chan_recv(c.handle);
+  if a0_chan_closed() == 1 {
+    `std.Result`::Err("the channel is closed")
+  } else {
+    `std.Result`::Ok(value as T)
+  }
+}
+
+// No more values will be sent: receivers get the ones left, then an error.
+fn close<T>(c: Channel<T>) {
+  a0_chan_close(c.handle)
+}

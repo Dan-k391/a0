@@ -125,7 +125,8 @@ pub fn link_executable(
                 .arg(output)
                 .arg(&object_path)
                 .args(&libs)
-                .arg("-lm");
+                .arg("-lm")
+                .arg("-lpthread");
             cmd
         }
         LinkerFlavor::Darwin => {

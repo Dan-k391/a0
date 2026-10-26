@@ -97,6 +97,25 @@ programs get the same numbers every run).
 | `from_byte(b)`, `from_code_point(c)`, `bytes(s)`, `from_bytes(bs)` | bytes and UTF-8 |
 | `is_digit`, `is_alpha`, `is_alnum`, `is_space` | classes of ASCII bytes, for scanners |
 
+**`std.thread`**: threads and channels (D75). Threads are the operating system's, run at the same
+time on as many processors as there are, and share the program's memory.
+
+| Function | |
+|---|---|
+| `spawn(f: fn() -> T) -> Thread<T>` | runs `f` on a thread of its own |
+| `join(t) -> T` | waits for the thread to end and returns what `f` returned (once per thread) |
+| `parallelism() -> int` | how many threads can run at once (the processors) |
+| `channel(capacity) -> Channel<T>` | holds up to `capacity` values (at least 1) sent and not yet received |
+| `send(c, value)` | waits while the channel is full; an error on a closed channel |
+| `receive(c) -> Result<T, string>` | the next value, in the order sent, waiting for one; `Err` once the channel is closed and empty |
+| `close(c)` | no more values: receivers get the rest, then `Err` |
+
+A panic on any thread ends the program, and its stack trace ends with where the thread was
+spawned. A program with a single thread that waits on a channel nothing else can fill or empty
+fails ("deadlock") instead of hanging. Values sent travel as `any`, so inline structs cannot be.
+Arrays, maps and objects that threads change at the same time must be guarded by the program (pass
+them through channels): the runtime keeps its own state consistent, not theirs.
+
 The HIR builtins stay what every language has without importing anything: `len`, `substr`,
 `byte_at`, `str`, `print`, `eprint`, `exit`, `panic`, `clock` and the collection operations.
 
@@ -106,7 +125,7 @@ Each module is HIR text, parsed into the program's builder by `HirBuilder::load_
 time it is imported, after the modules it uses. Its C functions are declared `extern "a0"`: they
 take and return A0's own values (an `A0String *`, an `A0Array *`), may allocate, and report
 failures by returning NULL or 0 and leaving a message that `a0_std_error()` returns (the runtime
-runs one thread, and C has no other way to return a value and a reason). Functions the C library
+keeps that message per thread, and C has no other way to return a value and a reason). Functions the C library
 already has (`getenv`, `sqrt`) are declared as plain C functions, which take strings and arrays
 directly (`docs/hir.md`, "Module").
 

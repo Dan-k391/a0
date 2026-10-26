@@ -19,6 +19,7 @@ static char **g_argv;
 void a0_rt_init(int32_t argc, char **argv) {
     g_argc = argc;
     g_argv = argv;
+    a0_gc_restart();
 #ifdef _WIN32
     /* Write "\n", not "\r\n": output must be byte-identical on every platform. */
     _setmode(_fileno(stdout), _O_BINARY);

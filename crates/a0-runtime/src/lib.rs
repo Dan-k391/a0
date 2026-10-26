@@ -18,6 +18,10 @@ unsafe extern "C" {
     fn a0_rt_find_symbol(name: *const c_char) -> *mut c_void;
 
     pub fn a0_rt_init(argc: i32, argv: *mut *mut c_char);
+    fn a0_rt_set_thread_starter(starter: Option<extern "C" fn(*mut c_void) -> u64>);
+    fn a0_rt_set_thread_stack(bytes: u64);
+    fn a0_thread_started() -> i64;
+    fn a0_panic(message: *const c_char) -> !;
     pub fn a0_rt_exit(code: i32) -> !;
     pub fn a0_rt_flush();
     pub fn a0_rt_trap(code: i32, loc: u64, frame: *mut c_void) -> !;
@@ -72,6 +76,11 @@ pub const REPORTS_LOCATION: &[&str] = &[
     "a0_gc_free",
     "a0_string_from_c",
     "a0_rt_throw",
+    "a0_thread_spawn",
+    "a0_thread_join",
+    "a0_chan_send",
+    "a0_chan_recv",
+    "a0_chan_close",
 ];
 
 /// Whether calls to the runtime function `name` pass a location and a frame pointer.
@@ -260,6 +269,26 @@ impl Default for HostSymbols {
     fn default() -> Self {
         HostSymbols::new()
     }
+}
+
+/// How threads the program starts call their closures (the interpreter's way, which has no code
+/// pointers), and the native stack they get.
+pub fn set_thread_starter(starter: extern "C" fn(*mut c_void) -> u64, stack: usize) {
+    unsafe {
+        a0_rt_set_thread_starter(Some(starter));
+        a0_rt_set_thread_stack(stack as u64);
+    }
+}
+
+/// Whether the program started a second thread (which may still be running).
+pub fn thread_started() -> bool {
+    unsafe { a0_thread_started() != 0 }
+}
+
+/// Fails as the runtime does, with `message` and no location.
+pub fn panic(message: &str) -> ! {
+    let text = std::ffi::CString::new(message).unwrap_or_default();
+    unsafe { a0_panic(text.as_ptr()) }
 }
 
 /// Initializes the runtime for an in-process run (the interpreter calls this before `main`).

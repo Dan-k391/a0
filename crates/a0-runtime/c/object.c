@@ -29,9 +29,7 @@ static void names_insert(A0String *s) {
     names[at] = s;
 }
 
-A0String *a0_intern(A0String *s) {
-    if (s == NULL) a0_panic_null();
-    if (HEADER(s)->flags & A0_FLAG_INTERNED) return s;
+static A0String *intern(A0String *s) {
     if (name_cap > 0) {
         uint64_t mask = (uint64_t)name_cap - 1;
         for (uint64_t at = a0_string_hash(s) & mask; names[at] != NULL; at = (at + 1) & mask) {
@@ -55,6 +53,17 @@ A0String *a0_intern(A0String *s) {
     return s;
 }
 
+A0String *a0_intern(A0String *s) {
+    if (s == NULL) a0_panic_null();
+    if (HEADER(s)->flags & A0_FLAG_INTERNED) return s;
+    /* The hash is computed (and stored) before the lock, so that the table's work is short. */
+    a0_string_hash(s);
+    a0_table_lock();
+    A0String *r = intern(s);
+    a0_table_unlock();
+    return r;
+}
+
 void a0_intern_mark(void) {
     for (int64_t i = 0; i < name_cap; i++) {
         if (names[i] != NULL) a0_gc_mark_object(names[i]);
@@ -66,7 +75,7 @@ void a0_intern_mark(void) {
 static A0Shape empty_shape;
 
 /* The shape with `name` added to `shape`, made the first time it is asked for. */
-static const A0Shape *shape_add(const A0Shape *shape, A0String *name) {
+static const A0Shape *shape_add_locked(const A0Shape *shape, A0String *name) {
     A0Shape *s = (A0Shape *)shape;
     for (int64_t i = 0; i < s->child_count; i++) {
         if (s->children[i]->name == name) return s->children[i];
@@ -83,6 +92,13 @@ static const A0Shape *shape_add(const A0Shape *shape, A0String *name) {
     }
     s->children[s->child_count++] = child;
     return child;
+}
+
+static const A0Shape *shape_add(const A0Shape *shape, A0String *name) {
+    a0_table_lock();
+    const A0Shape *r = shape_add_locked(shape, name);
+    a0_table_unlock();
+    return r;
 }
 
 /* The slot of the interned `name` in objects of `shape`, or -1. */
@@ -102,11 +118,17 @@ static int64_t table_slots[TABLE_SIZE];
 static int64_t find(const A0Shape *shape, const A0String *name) {
     uintptr_t h = (uintptr_t)shape * 31u + (uintptr_t)name;
     size_t at = (size_t)((h ^ (h >> 11)) >> 4) & (TABLE_SIZE - 1);
-    if (table_shapes[at] == shape && table_names[at] == name) return table_slots[at];
-    int64_t index = shape_find(shape, name);
-    table_shapes[at] = shape;
-    table_names[at] = name;
-    table_slots[at] = index;
+    a0_table_lock();
+    int64_t index;
+    if (table_shapes[at] == shape && table_names[at] == name) {
+        index = table_slots[at];
+    } else {
+        index = shape_find(shape, name);
+        table_shapes[at] = shape;
+        table_names[at] = name;
+        table_slots[at] = index;
+    }
+    a0_table_unlock();
     return index;
 }
 

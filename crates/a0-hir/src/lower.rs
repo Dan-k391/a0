@@ -110,6 +110,9 @@ struct Runtime {
     frame_push: IrFunc,
     frame_pop: IrFunc,
     add_root: IrFunc,
+    exception_slots: IrFunc,
+    safepoint: IrFunc,
+    poll_address: IrFunc,
     panic_bytes: IrFunc,
     any_from_int: IrFunc,
     any_is_int: IrFunc,
@@ -176,6 +179,9 @@ impl Runtime {
             frame_push: f("a0_gc_frame_push", &[I64], Some(Ptr)),
             frame_pop: f("a0_gc_frame_pop", &[I64], None),
             add_root: f("a0_gc_add_root", &[Ptr, I64], None),
+            exception_slots: f("a0_rt_exception_slots", &[], Some(Ptr)),
+            safepoint: f("a0_gc_safepoint", &[], None),
+            poll_address: f("a0_gc_poll_address", &[], Some(Ptr)),
             panic_bytes: f("a0_panic_bytes", &[Ptr, I64], None),
             any_from_int: f("a0_any_from_int", &[I64], Some(I64)),
             any_is_int: f("a0_any_is_int", &[I64], Some(I64)),
@@ -334,6 +340,12 @@ struct Lowerer<'a> {
     closures_raise: bool,
     /// The pending exception, if the program throws: a flag, and its value (an `any`).
     exception: Option<(IrGlobal, IrGlobal)>,
+    /// The program starts threads (it uses `std.thread`, D76): the exception in flight is each
+    /// thread's own, field caches are not used, and with the collector code polls for it.
+    threaded: bool,
+    /// Where generated code reads whether a collection waits for this thread (`a0_gc_poll_address`),
+    /// when it polls: at loop heads and function entries.
+    poll: Option<IrGlobal>,
     /// `operands` leaves its first operand where it is: it is the place an assignment writes to.
     place_first: bool,
     /// The caches of the places that name an object's field (`A0FieldCache`, three words each),
@@ -397,6 +409,8 @@ impl<'a> Lowerer<'a> {
             strings: HashMap::new(),
             string_list: Vec::new(),
             place_first: false,
+            threaded: false,
+            poll: None,
             field_caches: 0,
             field_cache_base,
             layouts: Vec::new(),
@@ -877,6 +891,11 @@ impl<'a> Lowerer<'a> {
     // ---------------------------------------------------------------- setup
 
     fn run(&mut self) {
+        let m = self.m;
+        self.threaded = m.externs.iter().any(|x| x.name == "a0_thread_spawn");
+        if self.threaded && m.memory() == Memory::Gc {
+            self.poll = Some(self.b.add_global_int("hir.gc_poll", Type::Ptr, 0));
+        }
         self.analyze_captures();
         self.analyze_locals();
         self.analyze_raises();
@@ -1240,6 +1259,11 @@ impl<'a> Lowerer<'a> {
             })
             .collect();
         self.b.begin_function(main);
+        if let Some(g) = self.poll {
+            let p = self.b.call(self.rt.poll_address, &[]).unwrap();
+            let a = self.b.global_addr(g);
+            self.b.store(p, a);
+        }
         // A program that manages its memory itself runs no collector, from the first allocation.
         if manual {
             self.b.call(self.rt.gc_set_manual, &[]);
@@ -1273,10 +1297,8 @@ impl<'a> Lowerer<'a> {
                 self.b.call(self.rt.add_root, &[a, k]);
             }
         }
-        if let Some((_, value)) = self.exception
-            && !manual
-        {
-            let a = self.b.global_addr(value);
+        if self.exception.is_some() && !manual && !self.threaded {
+            let a = self.exception_addr(true);
             let k = self.b.iconst(Type::I64, WORD_ANY as i64);
             self.b.call(self.rt.add_root, &[a, k]);
         }
@@ -1308,15 +1330,13 @@ impl<'a> Lowerer<'a> {
             _ => unreachable!("check_entry guarantees main"),
         };
         let r = self.b.call(self.funcs[hir_main.index()], &[]);
-        if let Some((pending, value)) = self.exception
-            && self.raises[self.m.func_body(hir_main).index()]
-        {
-            let a = self.b.global_addr(pending);
+        if self.exception.is_some() && self.raises[self.m.func_body(hir_main).index()] {
+            let a = self.exception_addr(false);
             let p = self.b.load(Type::I64, a);
             let zero = self.b.iconst(Type::I64, 0);
             let raised = self.b.icmp(IntCC::Ne, p, zero);
             self.b.if_(raised);
-            let va = self.b.global_addr(value);
+            let va = self.exception_addr(true);
             let w = self.b.load(Type::I64, va);
             self.b.call(self.rt.uncaught, &[w]);
             self.b.unreachable();
@@ -1906,6 +1926,8 @@ impl<'a> Lowerer<'a> {
             }
         }
 
+        // Everything the function holds is rooted by now.
+        self.poll();
         let ret = m.body_ret(body);
         let result = match m.body_root(body) {
             Some(root) => self.expr(root),
@@ -2114,6 +2136,8 @@ impl<'a> Lowerer<'a> {
             }
             // Boxing the value may allocate.
             ExprKind::Throw(_) => true,
+            // A loop polls for a collection in a program with threads.
+            ExprKind::While(..) | ExprKind::Loop(_) => self.poll.is_some(),
             ExprKind::Func(..)
             | ExprKind::Lambda(_)
             | ExprKind::Call(..)
@@ -2583,6 +2607,7 @@ impl<'a> Lowerer<'a> {
             ExprKind::IfLet(l, v, t, els) => self.if_let(l, v, t, els, ty),
             ExprKind::While(c, body) => {
                 self.b.loop_();
+                self.poll();
                 let mark = self.mark();
                 self.st().exits.push(Exit::Loop(mark));
                 let cv = self.expr(c);
@@ -2599,6 +2624,7 @@ impl<'a> Lowerer<'a> {
             }
             ExprKind::Loop(body) => {
                 self.b.loop_();
+                self.poll();
                 let mark = self.mark();
                 self.st().exits.push(Exit::Loop(mark));
                 self.expr(body);
@@ -2627,11 +2653,10 @@ impl<'a> Lowerer<'a> {
                     return V::Never;
                 }
                 let w = self.box_any(r, vt);
-                let (pending, value) = self.exception.expect("a throw makes the program raise");
-                let a = self.b.global_addr(value);
+                let a = self.exception_addr(true);
                 self.b.store(w, a);
                 let one = self.b.iconst(Type::I64, 1);
-                let a = self.b.global_addr(pending);
+                let a = self.exception_addr(false);
                 self.b.store(one, a);
                 // Remembers where it was thrown, for an exception nothing catches.
                 self.b.call(self.rt.throw, &[]);
@@ -2808,12 +2833,40 @@ impl<'a> Lowerer<'a> {
         self.reached = reached;
     }
 
+    /// The address of the pending exception's flag, or of its value: globals, or the slots of the
+    /// current thread in a program that starts threads.
+    fn exception_addr(&mut self, value: bool) -> Value {
+        let (pending, v) = self.exception.expect("the program raises");
+        if !self.threaded {
+            return self.b.global_addr(if value { v } else { pending });
+        }
+        let slots = self.b.call(self.rt.exception_slots, &[]).unwrap();
+        if !value {
+            return slots;
+        }
+        let eight = self.b.iconst(Type::I64, 8);
+        self.b.ptradd(slots, eight)
+    }
+
+    /// Lets a collection another thread started proceed, if one waits (D76).
+    fn poll(&mut self) {
+        let Some(g) = self.poll else { return };
+        let a = self.b.global_addr(g);
+        let p = self.b.load(Type::Ptr, a);
+        let flag = self.b.load(Type::I64, p);
+        let zero = self.b.iconst(Type::I64, 0);
+        let stop = self.b.icmp(IntCC::Ne, flag, zero);
+        self.b.if_(stop);
+        self.b.call(self.rt.safepoint, &[]);
+        self.b.end_if();
+    }
+
     /// After a call that may raise: if an exception is pending, leaves.
     fn check_raised(&mut self) {
-        let Some((pending, _)) = self.exception else {
+        if self.exception.is_none() {
             return;
-        };
-        let a = self.b.global_addr(pending);
+        }
+        let a = self.exception_addr(false);
         let p = self.b.load(Type::I64, a);
         let zero = self.b.iconst(Type::I64, 0);
         let raised = self.b.icmp(IntCC::Ne, p, zero);
@@ -2854,10 +2907,10 @@ impl<'a> Lowerer<'a> {
     /// `try { body } catch l { handler }`: the body runs in a loop that a raised exception leaves;
     /// after it, a pending exception is taken and handled.
     fn try_(&mut self, body: ExprId, l: LocalId, handler: ExprId, ty: TypeId) -> V {
-        let Some((pending, value)) = self.exception else {
+        if self.exception.is_none() {
             // Nothing in the program throws, so the handler never runs.
             return self.expr(body);
-        };
+        }
         let result = match self.ir_type(ty) {
             Some(t) if ty != TypeId::NEVER => Some(self.b.declare_var("try", t)),
             _ => None,
@@ -2878,13 +2931,13 @@ impl<'a> Lowerer<'a> {
             // The body always returns.
             return V::Never;
         }
-        let a = self.b.global_addr(pending);
+        let a = self.exception_addr(false);
         let p = self.b.load(Type::I64, a);
         let zero = self.b.iconst(Type::I64, 0);
         let raised = self.b.icmp(IntCC::Ne, p, zero);
         self.b.if_(raised);
         self.b.store(zero, a);
-        let va = self.b.global_addr(value);
+        let va = self.exception_addr(true);
         let w = self.b.load(Type::I64, va);
         let mark = self.mark();
         self.declare_local(l);
@@ -3179,7 +3232,8 @@ impl<'a> Lowerer<'a> {
             Builtin::Keys => V::Val(self.b.call(self.rt.map_keys, &[vs[0].val()]).unwrap()),
             Builtin::HasField | Builtin::Field => {
                 let (o, name) = (vs[0].val(), vs[1].val());
-                if !matches!(m.expr(args[1]).kind, ExprKind::Str(_)) {
+                // Caches are shared by threads, so a program with threads goes without.
+                if self.threaded || !matches!(m.expr(args[1]).kind, ExprKind::Str(_)) {
                     return if op == Builtin::HasField {
                         let r = self.b.call(self.rt.object_has, &[o, name]).unwrap();
                         let zero = self.b.iconst(Type::I64, 0);
@@ -3210,7 +3264,7 @@ impl<'a> Lowerer<'a> {
             Builtin::SetField => {
                 let (o, name) = (vs[0].val(), vs[1].val());
                 let w = self.box_any(vs[2], arg_ty(2));
-                if !matches!(m.expr(args[1]).kind, ExprKind::Str(_)) {
+                if self.threaded || !matches!(m.expr(args[1]).kind, ExprKind::Str(_)) {
                     self.b.call(self.rt.object_set, &[o, name, w]);
                     return V::Unit;
                 }
@@ -3349,7 +3403,38 @@ impl<'a> Lowerer<'a> {
             (_, TypeKind::Ptr(_)) => return V::Val(self.b.cast(Opcode::Inttoptr, v, Type::Ptr)),
             _ => {}
         }
+        if from == TypeId::ANY && !crate::builder::testable(m, to) {
+            return self.unpack_untestable(v, to);
+        }
         self.unpack_any(v, to)
+    }
+
+    /// Unpacks an `any` word into a type that `as` from `any` only reaches through a type parameter
+    /// (`any as T`, D75): sized numbers are checked to be numbers, and the rest (arrays, maps,
+    /// functions, pointers) is taken on trust, since what a generic library put in an `any` it
+    /// takes out as the same type.
+    fn unpack_untestable(&mut self, v: Value, to: TypeId) -> V {
+        match *self.m.kind(to) {
+            TypeKind::SizedInt(..) => {
+                let V::Val(i) = self.unpack_any(v, TypeId::INT) else {
+                    unreachable!()
+                };
+                V::Val(self.numeric_cast(i, TypeId::INT, to).unwrap())
+            }
+            TypeKind::F32 => {
+                let V::Val(f) = self.unpack_any(v, TypeId::FLOAT) else {
+                    unreachable!()
+                };
+                V::Val(self.b.cast(Opcode::Ftrunc, f, Type::F32))
+            }
+            TypeKind::Ptr(_) => {
+                let V::Val(i) = self.unpack_any(v, TypeId::INT) else {
+                    unreachable!()
+                };
+                V::Val(self.b.cast(Opcode::Inttoptr, i, Type::Ptr))
+            }
+            _ => V::Val(self.decode(v, to)),
+        }
     }
 
     /// Converts between numbers: integers wrap or extend by the source's sign, integers to floats

@@ -113,8 +113,11 @@ pub fn run_main(
     let code = handle
         .join()
         .map_err(|_| jit_error("the program's thread panicked"))?;
-    // The program is over; nothing refers to its code any more.
-    unsafe { jit.free_memory() };
+    // The program is over; nothing refers to its code any more, unless threads it started are still
+    // running it (the process ends soon, with the code in place).
+    if !a0_runtime::thread_started() {
+        unsafe { jit.free_memory() };
+    }
     Ok(code)
 }
 

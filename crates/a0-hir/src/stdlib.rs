@@ -23,6 +23,12 @@ const MODULES: &[(&str, &str, &str, &[&str])] = &[
         include_str!("../std/str.hir"),
         &["std"],
     ),
+    (
+        "std.thread",
+        "thread.hir",
+        include_str!("../std/thread.hir"),
+        &["std"],
+    ),
 ];
 
 /// The source of a module of the standard library, a built-in source every `SourceMap` knows

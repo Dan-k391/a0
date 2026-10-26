@@ -263,6 +263,40 @@ int64_t a0_gc_collections(void);
 /* Number of live objects after the last collection. */
 int64_t a0_gc_live_objects(void);
 
+/* ---- Threads (D75, D76) ------------------------------------------------------------------------ *
+ * Operating-system threads that share the heap. A thread runs a closure `fn() -> any` (its object,
+ * called as generated code calls closures); a channel passes `any` values between threads in order,
+ * through a buffer of fixed capacity. Handles are objects, passed as `any`. A collection stops every
+ * thread: at an allocation, at a poll (generated code of threaded programs reads the word at
+ * a0_gc_poll_address at loop heads and function entries and calls a0_gc_safepoint when it is set),
+ * or while it waits in the runtime. */
+uint64_t a0_thread_spawn(void *closure, uint64_t loc, void *frame);
+/* The closure's result, once the thread ends; fails if the thread was joined before. */
+uint64_t a0_thread_join(uint64_t thread, uint64_t loc, void *frame);
+/* How many threads can run at once (the processors). */
+int64_t a0_thread_parallelism(void);
+/* Whether the program ever started a second thread. */
+int64_t a0_thread_started(void);
+/* A channel of `capacity` values (at least 1). */
+uint64_t a0_chan_new(int64_t capacity);
+/* Waits for room; fails on a closed channel. */
+void a0_chan_send(uint64_t chan, uint64_t value, uint64_t loc, void *frame);
+/* Waits for a value. On a closed channel with nothing left it returns unit and a0_chan_closed then
+ * returns 1 on this thread. */
+uint64_t a0_chan_recv(uint64_t chan, uint64_t loc, void *frame);
+int64_t a0_chan_closed(void);
+void a0_chan_close(uint64_t chan, uint64_t loc, void *frame);
+void a0_gc_safepoint(void);
+int64_t *a0_gc_poll_address(void);
+/* The current thread's exception in flight, for generated code of threaded programs: a pending
+ * flag and the value, which the collector treats as roots. */
+uint64_t *a0_rt_exception_slots(void);
+/* How a new thread calls its closure: by its code pointer, unless the interpreter says otherwise. */
+typedef uint64_t (*A0ThreadStarter)(void *closure);
+void a0_rt_set_thread_starter(A0ThreadStarter starter);
+/* The native stack of threads the program starts, in bytes. */
+void a0_rt_set_thread_stack(uint64_t bytes);
+
 /* ---- Dynamic values (`any`) ----------------------------------------------------------------- *
  * NaN-boxed 64-bit words: doubles as themselves (NaNs canonicalized), unit and booleans as special
  * NaN patterns, references as A0_ANY_REF_TAG | pointer (a null pointer boxes to unit), integers that

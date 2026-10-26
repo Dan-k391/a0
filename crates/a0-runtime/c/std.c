@@ -23,7 +23,7 @@
 /* Why the last call that failed did (a file that could not be opened, a number that did not parse),
  * for the HIR side to put in an error value. The runtime runs one thread, and C functions have no
  * other way to return both a value and a reason. */
-static char last_error[512];
+static A0_THREAD_LOCAL char last_error[512];
 static int64_t last_failed;
 
 static void fail(const char *message) {
@@ -97,12 +97,15 @@ A0String *a0_std_read_line(void) {
     Buffer b = {0};
     char chunk[4096];
     int any = 0;
+    /* Waiting for input, other threads may collect. */
+    a0_safe_begin();
     while (fgets(chunk, sizeof chunk, stdin) != NULL) {
         any = 1;
         size_t n = strlen(chunk);
         buffer_add(&b, chunk, n);
         if (n > 0 && chunk[n - 1] == '\n') break;
     }
+    a0_safe_end();
     if (!any) {
         free(b.bytes);
         return NULL;
@@ -118,7 +121,9 @@ A0String *a0_std_read_all(void) {
     if (a0_rt_has_debugger()) return buffer_string(&b);
     char chunk[4096];
     size_t n;
+    a0_safe_begin();
     while ((n = fread(chunk, 1, sizeof chunk, stdin)) > 0) buffer_add(&b, chunk, n);
+    a0_safe_end();
     return buffer_string(&b);
 }
 
@@ -322,6 +327,7 @@ double a0_std_monotonic(void) {
 void a0_std_sleep(double seconds) {
     if (!(seconds > 0)) return;
     a0_rt_flush();
+    a0_safe_begin();
 #ifdef _WIN32
     Sleep((DWORD)(seconds * 1000.0));
 #else
@@ -331,6 +337,7 @@ void a0_std_sleep(double seconds) {
     while (nanosleep(&ts, &ts) != 0 && errno == EINTR) {
     }
 #endif
+    a0_safe_end();
 }
 
 /* "2026-10-25T09:30:00Z" for seconds since 1970 (UTC). */
@@ -359,17 +366,24 @@ static uint64_t splitmix(uint64_t *x) {
     return z ^ (z >> 31);
 }
 
-void a0_std_seed(int64_t seed) {
-    uint64_t x = (uint64_t)seed;
+static void seed(int64_t value) {
+    uint64_t x = (uint64_t)value;
     for (int i = 0; i < 4; i++) rng[i] = splitmix(&x);
     rng_seeded = 1;
+}
+
+void a0_std_seed(int64_t value) {
+    a0_table_lock();
+    seed(value);
+    a0_table_unlock();
 }
 
 static uint64_t rotl(uint64_t x, int k) { return (x << k) | (x >> (64 - k)); }
 
 static uint64_t next_random(void) {
     /* Unseeded programs get the same numbers every run, so that they are reproducible. */
-    if (!rng_seeded) a0_std_seed(0);
+    a0_table_lock();
+    if (!rng_seeded) seed(0);
     uint64_t result = rotl(rng[1] * 5, 7) * 9;
     uint64_t t = rng[1] << 17;
     rng[2] ^= rng[0];
@@ -378,6 +392,7 @@ static uint64_t next_random(void) {
     rng[0] ^= rng[3];
     rng[2] ^= t;
     rng[3] = rotl(rng[3], 45);
+    a0_table_unlock();
     return result;
 }
 
