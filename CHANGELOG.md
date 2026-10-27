@@ -6,14 +6,6 @@ APIs. `docs/milestones.md` has the details of each step, with measurements.
 
 ## [Unreleased]
 
-### Fixed
-
-- Builds on macOS are reproducible: two builds of a package differed, because Apple's linker
-  recorded the temporary paths and times of the objects it read. It now gets `ZERO_AR_DATE=1`, and
-  `-S` without `-g`.
-- The tests that threads speed programs up no longer count the time every run takes whatever its
-  work (in `run`, compiling), which made them fail on fast machines.
-
 ## [1.0.0] - 2026-10-26
 
 Stable: a compatibility promise with versioned text formats and a deprecation process, B0 (the
@@ -71,6 +63,16 @@ to release. Milestone M28 in `docs/milestones.md`.
 - Kaleidoscope and Tin depend only on covered crates (and `a0-runtime` for its header).
 - `bench/large/gen.py` makes a program whose run time is linear in its modules.
 - `a0 run`'s usage says it compiles into memory (it has since 0.5).
+
+### Fixed
+
+- Builds on macOS are reproducible: two builds of a package differed, because Apple's linker
+  recorded the temporary paths and times of the objects it read. It now gets `ZERO_AR_DATE=1`, and
+  `-S` without `-g`.
+- The tests that threads speed programs up no longer count the time every run takes whatever its
+  work (in `run`, compiling), which made them fail on fast machines.
+- Parsing no longer takes exponential time on input that alternatives backtrack over, such as
+  many unclosed blocks: a rule that failed at a token is not tried there again.
 
 ## [0.9.0] - 2026-10-26
 

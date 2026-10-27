@@ -107,7 +107,9 @@ impl Grammar {
             diags,
             depth: 0,
             too_deep: None,
+            failed: Vec::new(),
         };
+        p.failed = vec![0; (p.toks.len() * self.rules.len() * 2).div_ceil(64)];
         let ok = p.rule(self.start);
         let too_deep = match p.too_deep {
             Some(at) => Some(at),
@@ -196,6 +198,11 @@ struct Parser<'g> {
     depth: usize,
     /// Where the input nested too deeply, if it did: parsing then gives up.
     too_deep: Option<(u32, u32)>,
+    /// The rules that failed at a token, and whether inside a lookahead: a rule fails at the same
+    /// place every time, so after backtracking it is not tried again. Without this, input such as
+    /// many unclosed blocks makes parsing exponential.
+    /// A bit per token, rule and lookahead or not.
+    failed: Vec<u64>,
 }
 
 impl<'g> Parser<'g> {
@@ -373,9 +380,16 @@ impl<'g> Parser<'g> {
             self.too_deep = Some((tok.start, tok.end));
             return false;
         }
+        let bit = (self.pos * self.g.rules.len() + r) * 2 + usize::from(self.suppress > 0);
+        if self.failed[bit / 64] & (1 << (bit % 64)) != 0 {
+            return false;
+        }
         self.depth += 1;
         let ok = self.rule_body(r);
         self.depth -= 1;
+        if !ok && self.too_deep.is_none() {
+            self.failed[bit / 64] |= 1 << (bit % 64);
+        }
         ok
     }
 

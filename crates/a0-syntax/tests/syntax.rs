@@ -391,3 +391,26 @@ fn grammars_name_their_format_version() {
     let e = grammar_errors("grammar g version x;\nstart = \"x\";\n");
     assert!(e.contains("expected the format version"), "{e}");
 }
+
+/// A rule that failed at a token is not tried there again after backtracking: unclosed nesting
+/// that alternatives backtrack over parses in linear time, not exponential (found by fuzzing).
+#[test]
+fn backtracking_over_unclosed_nesting_is_linear() {
+    std::thread::Builder::new()
+        .stack_size(256 << 20)
+        .spawn(|| {
+            // A lambda or a block, both starting with `{`: each unclosed level was tried twice.
+            let g = grammar(
+                "expr = lambda | block | NUM; lambda = \"fn\" \"{\" expr* \"}\"; \
+                 block = \"fn\" \"{\" expr* \";\" \"}\"; token NUM /[0-9]+/; skip / +/;",
+            );
+            let text = format!("{}1", "fn { ".repeat(60));
+            let started = std::time::Instant::now();
+            let (_, diags) = g.parse(&text, SourceId(0));
+            assert!(diags.has_errors());
+            assert!(started.elapsed().as_secs() < 10, "{:?}", started.elapsed());
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}

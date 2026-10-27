@@ -26,7 +26,7 @@ def main():
         raise SystemExit(f"no section for {version} in CHANGELOG.md")
     print("\n".join(out).strip())
     print("\nThe archives hold A0's tools, its target packs, the C API and the Python package for "
-          "one platform each (docs/releases.md); SHA256SUMS files beside them.")
+          "one platform each (docs/releases.md), each with a `.sha256` file beside it.")
 
 
 if __name__ == "__main__":
