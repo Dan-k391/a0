@@ -6,16 +6,24 @@ name: Release
 on:
   push:
     tags: ["v*"]
+  # By hand, for a tag that already exists: its code is built with this workflow, as fixed since.
   workflow_dispatch:
+    inputs:
+      tag:
+        description: "The tag to build and attach to its release (v1.0.0); empty for a trial run"
+        required: false
 
 env:
   CARGO_TERM_COLOR: always
+  TAG: ${{ inputs.tag || github.ref_name }}
 
 jobs:
   packs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
       - name: Install Rust
         run: rustup toolchain install stable --profile minimal && rustup default stable
       - name: Install clang, LLVM's tools and mingw-w64
@@ -36,6 +44,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
       - name: Install rustup
         shell: bash
         run: |
@@ -52,6 +62,9 @@ jobs:
           path: target/packs
       - name: Install the Python build module
         shell: bash
+        # Homebrew's Python on macOS refuses pip outside a virtual environment (PEP 668).
+        env:
+          PIP_BREAK_SYSTEM_PACKAGES: "1"
         run: $(command -v python3 || command -v python) -m pip install --quiet build
       - name: Package
         shell: bash
@@ -72,12 +85,14 @@ jobs:
 
   draft:
     needs: archive
-    if: startsWith(github.ref, 'refs/tags/')
+    if: startsWith(github.ref, 'refs/tags/') || inputs.tag != ''
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
       - uses: actions/download-artifact@v4
         with:
           path: dist
@@ -88,10 +103,10 @@ jobs:
         run: |
           # The crates are the same on every platform: one copy of each.
           ls dist
-          python3 release/notes.py "${GITHUB_REF_NAME#v}" > notes.md
+          python3 release/notes.py "${TAG#v}" > notes.md
           # A tag made on GitHub's release page comes with its release: add the files to it.
-          if gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1; then
-            gh release upload "$GITHUB_REF_NAME" --clobber dist/*
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            gh release upload "$TAG" --clobber dist/*
           else
-            gh release create "$GITHUB_REF_NAME" --draft --title "A0 ${GITHUB_REF_NAME#v}" --notes-file notes.md dist/*
+            gh release create "$TAG" --draft --title "A0 ${TAG#v}" --notes-file notes.md dist/*
           fi

@@ -56,6 +56,9 @@ Made by the same script, published by a maintainer:
 3. Commit, tag `v<version>` and push the tag; the workflow drafts the release. A tag can also be
    made on GitHub's page for a new release (a draft makes no tag: publish it, as a pre-release
    until it is checked); the workflow then adds the archives and packages to that release.
+   A tag's run uses the workflow as it was at the tag; when that fails for a reason of the workflow
+   alone, fix it on `main` and run it by hand (Actions, Release, Run workflow) with the tag as
+   `tag`: it builds the tag's code with the fixed workflow and adds the files to the tag's release.
 4. Check the draft's archives, then publish it, and publish the packages.
 
 ## Performance from release to release
