@@ -71,6 +71,16 @@ def rust_lld():
     return lld if lld.exists() else None
 
 
+def lld_libraries(lld):
+    """The LLVM library rust-lld loads on Linux and macOS: it looks in `../lib` beside itself (its
+    rpath), which in the archive is `lib/`. On Windows it needs nothing beside itself."""
+    if sys.platform == "win32":
+        return []
+    toolchain_lib = lld.parents[3]  # <sysroot>/lib/rustlib/<host>/bin/rust-lld
+    pattern = "libLLVM.dylib" if sys.platform == "darwin" else "libLLVM.so.*"
+    return sorted(toolchain_lib.glob(pattern))
+
+
 def library_names():
     if sys.platform == "win32":
         return "a0_capi.lib", "a0_capi.dll"
@@ -116,6 +126,9 @@ def main():
     lld = rust_lld()
     if lld:
         shutil.copy2(lld, stage / "bin" / lld.name)
+        (stage / "lib").mkdir()
+        for lib in lld_libraries(lld):
+            shutil.copy2(lib, stage / "lib" / lib.name)
     else:
         print("warning: no rust-lld in the Rust toolchain; cross-compiling will need one", file=sys.stderr)
 
@@ -126,7 +139,7 @@ def main():
         print(f"warning: no target packs in {packs}; the archive cannot cross-compile", file=sys.stderr)
 
     static, shared = library_names()
-    (stage / "lib").mkdir()
+    (stage / "lib").mkdir(exist_ok=True)
     for lib in (static, shared):
         candidates = [release / lib, release / "deps" / lib]
         found = next((c for c in candidates if c.exists()), None)

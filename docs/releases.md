@@ -16,7 +16,7 @@ executables of the host (`cc`, or MSVC on Windows):
 |---|---|
 | `bin/` | `a0`, `b0`, `minnow`, `lox`, `kaleidoscope`, `tin`, and `rust-lld` |
 | `targets/` | the target packs (`docs/cross.md`): with `rust-lld`, `build --target` makes Linux and Windows executables from any host with nothing else installed |
-| `lib/`, `include/` | the C API (`a0.h`, static and shared libraries) and `a0rt.h` for languages' C runtimes |
+| `lib/`, `include/` | the C API (`a0.h`, static and shared libraries) and `a0rt.h` for languages' C runtimes; on Linux and macOS, also the LLVM library `rust-lld` loads |
 | `python/` | the Python package `a0`, with the shared library inside it (`pip install ./python`) |
 | `editors/vscode/` | the VS Code extension's source |
 | `docs/` | the book and the reference, as Markdown |

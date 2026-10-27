@@ -6,6 +6,7 @@ cross-compile one with nothing else installed than what the archive holds.
 """
 
 import os
+import platform
 import shutil
 import subprocess
 import sys
@@ -47,9 +48,14 @@ def main():
         if out.stdout.strip() != "30":
             raise SystemExit(f"b0 run printed {out.stdout!r} {out.stderr}")
         targets = [p.name for p in (top / "targets").iterdir()] if (top / "targets").is_dir() else []
-        if "x86_64-unknown-linux-musl" in targets:
+        # A target other than the host's, so that the archive's rust-lld links it, not the host's
+        # C compiler.
+        x86_64_linux = sys.platform == "linux" and platform.machine().lower() in ("x86_64", "amd64")
+        target = "aarch64-linux" if x86_64_linux else "x86_64-linux"
+        pack = "aarch64-unknown-linux-musl" if x86_64_linux else "x86_64-unknown-linux-musl"
+        if pack in targets:
             exe_out = tmp / "squares-linux"
-            built = subprocess.run([str(b0), "build", str(prog), "--target", "x86_64-linux", "-o",
+            built = subprocess.run([str(b0), "build", str(prog), "--target", target, "-o",
                                     str(exe_out)], capture_output=True, text=True, env=env)
             if built.returncode != 0 or not exe_out.exists():
                 raise SystemExit(f"cross-compiling failed: {built.stderr}")
