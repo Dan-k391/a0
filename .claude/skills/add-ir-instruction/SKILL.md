@@ -34,7 +34,7 @@ An opcode is not done until both backends implement it identically and the text 
 ## Checks that must pass
 
 ```
-cargo test -p a0-ir -p a0-interp -p a0-native -p a0
+cargo test -p a0-ir -p a0-interp -p a0-native -p a0-cli
 cargo clippy --workspace --all-targets
 cargo fmt --all
 ```

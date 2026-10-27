@@ -32,10 +32,12 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 TOOLS = ["a0", "b0", "minnow", "lox", "kaleidoscope", "tin"]
+# The package each tool is built from, where it is not the tool's name (D88).
+PACKAGE = {"a0": "a0-cli"}
 # The crates of the workspace that are published, dependencies first (docs/releases.md).
 CRATES = [
     "a0-diag", "a0-target", "a0-runtime", "a0-ir", "a0-syntax", "a0-sema", "a0-hir",
-    "a0-interp", "a0-native", "a0-wasm", "a0-build", "a0-driver", "a0-capi", "a0", "b0",
+    "a0-interp", "a0-native", "a0-wasm", "a0-build", "a0-driver", "a0-capi", "a0-cli", "b0",
 ]
 
 
@@ -103,7 +105,7 @@ def main():
         shutil.rmtree(stage)
 
     if not args.skip_build:
-        packages = sum((["-p", t] for t in TOOLS + ["a0-capi"]), [])
+        packages = sum((["-p", PACKAGE.get(t, t)] for t in TOOLS + ["a0-capi"]), [])
         run(["cargo", "build", "--release", "--locked", *packages], cwd=ROOT)
     release = ROOT / "target" / "release"
     exe = ".exe" if sys.platform == "win32" else ""

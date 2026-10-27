@@ -52,7 +52,7 @@ identically interpreted, natively and under `A0_GC_STRESS=1`.
 ## Checks that must pass
 
 ```
-cargo test -p a0-hir -p a0
+cargo test -p a0-hir -p a0-cli
 cargo test -p lox -p minnow        # both languages are built on the HIR
 cargo clippy --workspace --all-targets
 cargo fmt --all

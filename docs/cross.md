@@ -58,7 +58,7 @@ A language with a C runtime of its own adds it to `LANGUAGE_RUNTIMES` in `target
 
 ## Testing
 
-`cargo test -p a0 --test programs pack` runs the IR and HIR corpus through every installed pack:
+`cargo test -p a0-cli --test programs pack` runs the IR and HIR corpus through every installed pack:
 the host's pack runs every program (`A0_LINK=pack`), and every other pack links every program, and
 runs it when `A0_CROSS_RUNNERS` names a runner for its target
 (`A0_CROSS_RUNNERS=aarch64-linux=qemu-aarch64-static`). Tin's tests (`cargo test -p tin --test tin pack`) run its programs, which call cJSON and the C

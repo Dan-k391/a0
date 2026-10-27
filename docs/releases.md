@@ -34,6 +34,8 @@ Made by the same script, published by a maintainer:
   `a0-interp`, `a0-native`, `a0-wasm`, `a0-build`, `a0-driver`, `a0-capi`, `a0`, `b0`
   (`cargo publish -p <crate>`). The A0 crates depend on each other at exactly the same version.
   The example languages and the playground's engine are not published (`publish = false`).
+  The command-line driver is the crate `a0-cli`, since `a0` on crates.io is another project's
+  (D88); `cargo install a0-cli` installs the command `a0`.
   One limit: the copy of `cranelift-object` in `vendor/` (D77), which aarch64-windows objects need,
   cannot go to crates.io with them, so `a0-native` from crates.io cannot write aarch64-windows
   objects until upstream Cranelift has the change; the archives, built from the repository, can.

@@ -108,7 +108,7 @@ fn transcript(body: &str, work: &Path) -> String {
     let a0 = kaleidoscope.with_file_name(format!("a0{}", std::env::consts::EXE_SUFFIX));
     assert!(
         a0.exists(),
-        "{} is missing: the tutorial's `a0` commands need it (cargo build -p a0)",
+        "{} is missing: the tutorial's `a0` commands need it (cargo build -p a0-cli)",
         a0.display()
     );
     let mut out = Vec::new();

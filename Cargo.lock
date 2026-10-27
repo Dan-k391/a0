@@ -3,23 +3,6 @@
 version = 4
 
 [[package]]
-name = "a0"
-version = "1.0.0"
-dependencies = [
- "a0-diag",
- "a0-driver",
- "a0-hir",
- "a0-interp",
- "a0-ir",
- "a0-native",
- "a0-runtime",
- "a0-syntax",
- "a0-wasm",
- "gimli",
- "object",
-]
-
-[[package]]
 name = "a0-build"
 version = "1.0.0"
 dependencies = [
@@ -39,6 +22,23 @@ dependencies = [
  "a0-runtime",
  "a0-syntax",
  "cc",
+]
+
+[[package]]
+name = "a0-cli"
+version = "1.0.0"
+dependencies = [
+ "a0-diag",
+ "a0-driver",
+ "a0-hir",
+ "a0-interp",
+ "a0-ir",
+ "a0-native",
+ "a0-runtime",
+ "a0-syntax",
+ "a0-wasm",
+ "gimli",
+ "object",
 ]
 
 [[package]]

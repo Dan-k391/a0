@@ -21,8 +21,8 @@ the two is an optimizer bug: compare `a0 lower prog.hir` with and without `A0_OP
 program until one rewrite in `crates/a0-hir/src/opt.rs` explains it.
 
 ```
-cargo test -p a0 --test programs
-A0_RANDOM_PROGRAMS=500 A0_RANDOM_SEED=1000 cargo test -p a0 --test random   # fuzz longer
+cargo test -p a0-cli --test programs
+A0_RANDOM_PROGRAMS=500 A0_RANDOM_SEED=1000 cargo test -p a0-cli --test random   # fuzz longer
 cargo test -p kaleidoscope
 cargo test -p minnow
 cargo test -p lox --test suite -- --nocapture          # prints the pass counts

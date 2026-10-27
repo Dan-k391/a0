@@ -1340,3 +1340,13 @@ the repository (`b0/`), not under `examples/`, because it is meant to be started
 
 What B0 does not have is what the HIR does not have yet: generic interfaces, methods on arrays,
 type tests of arrays inside `any`, and `finally`.
+
+## D88. The command-line driver's crate is `a0-cli`, its command still `a0`
+
+The name `a0` on crates.io belongs to an unrelated crate, so `cargo publish` of the CLI's crate
+under that name would fail. The choices were to leave the CLI unpublished (the archives carry it),
+or to publish it under another name. `cargo install` is how many Rust users get a tool, so the
+package is now `a0-cli`, the convention for a library family's command, with a `[[bin]]` still
+named `a0`: `cargo install a0-cli` installs `a0`, and the command line, which the compatibility
+promise covers, is unchanged. Only `cargo -p` names change (`cargo test -p a0-cli`); the directory
+stays `crates/a0`.

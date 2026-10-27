@@ -1,5 +1,5 @@
 [package]
-name = "a0"
+name = "a0-cli"
 description = "The A0 command-line driver"
 version.workspace = true
 edition.workspace = true

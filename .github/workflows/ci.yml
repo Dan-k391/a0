@@ -152,7 +152,7 @@ jobs:
       - name: Build the packs
         run: rm -rf target/packs && python3 targets/build.py
       - name: Test
-        run: cargo test -p a0 --test programs --locked pack && cargo test -p tin --test tin --locked pack
+        run: cargo test -p a0-cli --test programs --locked pack && cargo test -p tin --test tin --locked pack
         env:
           A0_CROSS_RUNNERS: aarch64-linux=qemu-aarch64-static
       - uses: actions/upload-artifact@v4
@@ -180,4 +180,4 @@ jobs:
           name: packs
           path: target/packs
       - name: Test
-        run: cargo test -p a0 --test programs --locked pack && cargo test -p tin --test tin --locked pack
+        run: cargo test -p a0-cli --test programs --locked pack && cargo test -p tin --test tin --locked pack

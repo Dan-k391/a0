@@ -57,7 +57,7 @@ The runtime is C, compiled once into a static library that the interpreter calls
 ## Checks that must pass
 
 ```
-cargo test -p a0-runtime -p a0-interp -p a0
+cargo test -p a0-runtime -p a0-interp -p a0-cli
 cargo test -p lox --test suite        # if the GC or anything Lox uses changed
 cargo clippy --workspace --all-targets
 cargo fmt --all

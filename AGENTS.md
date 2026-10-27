@@ -15,9 +15,9 @@ WASI_SDK=/path/to/wasi-sdk sh playground/build.sh && node playground/test.mjs ta
                                     # the playground, built for WebAssembly (Linux, macOS), and the
                                     # IR and HIR corpus compiled to WebAssembly and run there
 python3 targets/build.py            # the target packs cross-compilation links against (docs/cross.md;
-                                    # Linux, macOS); then `cargo test -p a0 --test programs pack`
+                                    # Linux, macOS); then `cargo test -p a0-cli --test programs pack`
 python3 bench/run.py                # the benchmark (docs/benchmarks.md; Linux, macOS; not in CI)
-A0_FUZZ_ITERATIONS=20000 cargo test --release -p a0 --test fuzz -- --test-threads 1 --nocapture
+A0_FUZZ_ITERATIONS=20000 cargo test --release -p a0-cli --test fuzz -- --test-threads 1 --nocapture
                                     # fuzz IR and HIR text and grammars longer (D85); likewise
                                     # `-p a0-capi --test fuzz` (the C API) and `-p a0-driver --lib
                                     # mutated_manifests`
@@ -175,7 +175,7 @@ layer, decision D17). A new crate goes into the table above and into `[workspace
   objects on every host, and gdb, lldb or cdb debugs a built executable where one is installed.
   After changing `dwarf.rs`, `codeview.rs` or what `-g` does in codegen, run them with a debugger
   present (on Windows, WinDbg's cdb: `winget install Microsoft.WinDbg`).
-- Cross-compilation: with packs built (`python3 targets/build.py`), `cargo test -p a0 --test
+- Cross-compilation: with packs built (`python3 targets/build.py`), `cargo test -p a0-cli --test
   programs pack` and `cargo test -p tin --test tin pack`; `A0_CROSS_RUNNERS` runs other targets'
   executables (QEMU).
 - Runtime or GC changes: run the Lox suite under GC stress, and prove the stress test still fails

@@ -159,7 +159,7 @@ def main():
             sys.exit(f"bench: {tool} is missing (see the top of this file)")
 
     print("building A0's languages (release)", file=sys.stderr)
-    sh(["cargo", "build", "--release", "--locked", "-p", "a0", "-p", "minnow", "-p", "lox", "-p",
+    sh(["cargo", "build", "--release", "--locked", "-p", "a0-cli", "-p", "minnow", "-p", "lox", "-p",
         "kaleidoscope", "-p", "tin"], cwd=ROOT)
     target = Path(os.environ.get("CARGO_TARGET_DIR", ROOT / "target")) / "release"
     a0, minnow, lox, kaleidoscope, tin = (str(target / n) for n in ("a0", "minnow", "lox", "kaleidoscope", "tin"))

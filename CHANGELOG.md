@@ -60,6 +60,8 @@ to release. Milestone M28 in `docs/milestones.md`.
 
 ### Changed
 
+- The command-line driver's crate is `a0-cli` (D88): `a0` on crates.io is an unrelated crate.
+  The command is still `a0`; `cargo install a0-cli` installs it, and `cargo -p` takes `a0-cli`.
 - `Language` is built with `Language::new(name, compile)` and methods (`grammar`, `modules`,
   `repl_main`, `codes`, `exit_codes`, `run_by_default`, `runtime`) instead of a struct literal;
   `Modules::new`, `ExitCodes::new`, `LowerOptions::optimized`, `Label::new` and `Edit::new` replace
