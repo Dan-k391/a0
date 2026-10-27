@@ -27,7 +27,7 @@ __all__ = ["Builder", "Diagnostic", "Error", "Grammar", "Hir", "HirBuilder", "Mo
 
 #: The version of this package, which the library it loads must match in its major version and be
 #: at least as new as in its minor one (`docs/compatibility.md`).
-__version__ = "1.0.1"
+__version__ = "1.0.0"
 
 #: The handle that stands for "none" (`A0_NONE`).
 NONE = 0xFFFFFFFF

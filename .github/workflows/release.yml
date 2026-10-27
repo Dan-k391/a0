@@ -6,7 +6,8 @@ name: Release
 on:
   push:
     tags: ["v*"]
-  # By hand, for a tag that already exists: its code is built with this workflow, as fixed since.
+  # By hand, for a tag that already exists: its code is built with this workflow and the release
+  # scripts (release/) of the commit it runs from, as fixed since the tag.
   workflow_dispatch:
     inputs:
       tag:
@@ -46,6 +47,10 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.tag || github.ref }}
+      - name: Use the release scripts of this workflow's commit
+        if: inputs.tag != ''
+        shell: bash
+        run: git fetch --depth 1 origin ${{ github.sha }} && git checkout FETCH_HEAD -- release
       - name: Install rustup
         shell: bash
         run: |
@@ -93,6 +98,10 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.tag || github.ref }}
+      - name: Use the release scripts of this workflow's commit
+        if: inputs.tag != ''
+        shell: bash
+        run: git fetch --depth 1 origin ${{ github.sha }} && git checkout FETCH_HEAD -- release
       - uses: actions/download-artifact@v4
         with:
           path: dist
