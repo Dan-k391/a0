@@ -81,6 +81,25 @@ def lld_libraries(lld):
     return sorted(toolchain_lib.glob(pattern))
 
 
+def wheel_env():
+    """The wheel is tagged with what its library needs, not with what the Python building it was
+    built for: Homebrew's Python is the runner's macOS version, and PyPI takes Linux wheels only
+    with a manylinux tag. setuptools still raises a macOS tag if the library needs more."""
+    env = dict(os.environ)
+    machine = platform.machine().lower()
+    if sys.platform == "darwin":
+        # What Rust builds for by default, on each architecture.
+        arm = machine == "arm64"
+        env["_PYTHON_HOST_PLATFORM"] = "macosx-11.0-arm64" if arm else "macosx-10.12-x86_64"
+    elif sys.platform == "linux":
+        libc, version = platform.libc_ver()
+        if libc == "glibc":
+            # Built against this glibc, the library needs no newer one.
+            major, minor = version.split(".")[:2]
+            env["_PYTHON_HOST_PLATFORM"] = f"manylinux_{major}_{minor}_{machine}"
+    return env
+
+
 def library_names():
     if sys.platform == "win32":
         return "a0_capi.lib", "a0_capi.dll"
@@ -184,7 +203,8 @@ def main():
         shutil.copy2(crate, out / crate.name)
     try:
         import build  # noqa: F401
-        run([sys.executable, "-m", "build", "--wheel", "--outdir", str(out), str(python)])
+        run([sys.executable, "-m", "build", "--wheel", "--outdir", str(out), str(python)],
+            env=wheel_env())
     except ImportError:
         print("note: no Python wheel (pip install build to make one)", file=sys.stderr)
     if shutil.which("vsce"):

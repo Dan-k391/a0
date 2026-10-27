@@ -105,6 +105,8 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           path: dist
+          # The archives and packages, not the target packs (which are inside the archives).
+          pattern: dist-*
           merge-multiple: true
       - name: Draft the release
         env:

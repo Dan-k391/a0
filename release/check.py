@@ -22,8 +22,23 @@ PROGRAM = """fn main() {
 """
 
 
+def check_wheels(dist):
+    """A wheel's platform tag must be one PyPI takes (manylinux, not linux) and, on macOS, no newer
+    than the library needs, or pip refuses it on older systems."""
+    for wheel in sorted(dist.glob("*.whl")):
+        tag = wheel.stem.split("-")[-1]
+        if tag.startswith("macosx_"):
+            major, minor = (int(n) for n in tag.split("_")[1:3])
+            if (major, minor) > (11, 0):
+                raise SystemExit(f"{wheel.name}: needs a newer macOS than its library does")
+        elif not tag.startswith(("manylinux_", "win_")):
+            raise SystemExit(f"{wheel.name}: PyPI does not take the platform tag {tag}")
+        print(f"{wheel.name}: ok")
+
+
 def main():
     dist = Path(sys.argv[1])
+    check_wheels(dist)
     archives = sorted(dist.glob("a0-*.tar.gz")) + sorted(dist.glob("a0-*.zip"))
     if not archives:
         raise SystemExit(f"no archive in {dist}")

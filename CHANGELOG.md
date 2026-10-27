@@ -13,6 +13,9 @@ APIs. `docs/milestones.md` has the details of each step, with measurements.
   than the host's, so that it always runs the archive's `rust-lld`.
 - The release workflow installs Python's `build` module on macOS, whose Homebrew Python refuses pip
   outside a virtual environment, and can be run by hand for an existing tag (`docs/releases.md`).
+- Python wheels are tagged with what their library needs: `manylinux_<glibc>` on Linux (PyPI does
+  not take `linux` wheels), and macOS 11.0 (arm64) or 10.12 (x86-64) instead of the macOS that
+  built them. `release/check.py` checks the tags.
 
 ## [1.0.0] - 2026-10-26
 
