@@ -6,6 +6,18 @@ APIs. `docs/milestones.md` has the details of each step, with measurements.
 
 ## [Unreleased]
 
+## [1.0.1] - 2026-10-27
+
+1.0.0's release archives could not be built; 1.0.1 has them. A0 itself is unchanged.
+
+### Fixed
+
+- The Linux and macOS archives carry the LLVM library that `rust-lld` loads: without it,
+  cross-compiling from the archive failed. `release/check.py` now cross-compiles to a target other
+  than the host's, so that it always runs the archive's `rust-lld`.
+- The release workflow installs Python's `build` module on macOS, whose Homebrew Python refuses pip
+  outside a virtual environment, and can be run by hand for an existing tag (`docs/releases.md`).
+
 ## [1.0.0] - 2026-10-26
 
 Stable: a compatibility promise with versioned text formats and a deprecation process, B0 (the
@@ -452,7 +464,8 @@ three example languages, editor support and a C API.
   IR, the HIR, editors and the C API; design decisions and milestone summaries.
 - **CI** on x86-64 and aarch64 Linux, aarch64 macOS and x86-64 Windows, with rustfmt and clippy.
 
-[Unreleased]: https://github.com/Dan-k391/a0/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/Dan-k391/a0/compare/v1.0.1...HEAD
+[1.0.1]: https://github.com/Dan-k391/a0/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/Dan-k391/a0/compare/v0.9.0...v1.0.0
 [0.9.0]: https://github.com/Dan-k391/a0/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/Dan-k391/a0/compare/v0.7.0...v0.8.0

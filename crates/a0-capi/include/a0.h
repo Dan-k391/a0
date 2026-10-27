@@ -25,7 +25,7 @@ extern "C" {
  * least this minor version provides everything declared here: compare with a0_version(). */
 #define A0_VERSION_MAJOR 1
 #define A0_VERSION_MINOR 0
-#define A0_VERSION_PATCH 0
+#define A0_VERSION_PATCH 1
 
 /* Marks a declaration deprecated: it keeps working until the next major version, and compilers
  * warn where it is used, with the message naming its replacement. */

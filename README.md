@@ -246,7 +246,7 @@ packs.
 
 ## Status
 
-Version 1.0.0 (`CHANGELOG.md`), stable: from 1.0 on, A0 follows Semantic Versioning and keeps
+Version 1.0.1 (`CHANGELOG.md`), stable: from 1.0 on, A0 follows Semantic Versioning and keeps
 its command line, text formats, C API, Python package and the Rust API for languages compatible
 until 2.0 ([docs/compatibility.md](docs/compatibility.md)). Builds for x86-64 and aarch64 Linux,
 macOS and Windows, and for WebAssembly in the playground; cross-compiles to Linux and Windows from

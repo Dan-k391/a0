@@ -4,14 +4,14 @@ version = 4
 
 [[package]]
 name = "a0-build"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "cc",
 ]
 
 [[package]]
 name = "a0-capi"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "a0-diag",
  "a0-driver",
@@ -26,7 +26,7 @@ dependencies = [
 
 [[package]]
 name = "a0-cli"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "a0-diag",
  "a0-driver",
@@ -43,11 +43,11 @@ dependencies = [
 
 [[package]]
 name = "a0-diag"
-version = "1.0.0"
+version = "1.0.1"
 
 [[package]]
 name = "a0-driver"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "a0-diag",
  "a0-hir",
@@ -60,7 +60,7 @@ dependencies = [
 
 [[package]]
 name = "a0-hir"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "a0-diag",
  "a0-interp",
@@ -72,7 +72,7 @@ dependencies = [
 
 [[package]]
 name = "a0-interp"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "a0-diag",
  "a0-ir",
@@ -81,14 +81,14 @@ dependencies = [
 
 [[package]]
 name = "a0-ir"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "a0-diag",
 ]
 
 [[package]]
 name = "a0-native"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "a0-diag",
  "a0-interp",
@@ -107,7 +107,7 @@ dependencies = [
 
 [[package]]
 name = "a0-playground"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "a0-diag",
  "a0-hir",
@@ -120,32 +120,32 @@ dependencies = [
 
 [[package]]
 name = "a0-runtime"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "cc",
 ]
 
 [[package]]
 name = "a0-sema"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "a0-diag",
 ]
 
 [[package]]
 name = "a0-syntax"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "a0-diag",
 ]
 
 [[package]]
 name = "a0-target"
-version = "1.0.0"
+version = "1.0.1"
 
 [[package]]
 name = "a0-wasm"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "a0-diag",
  "a0-hir",
@@ -181,7 +181,7 @@ checksum = "3bc62ac97cc33321f50863d514c3bc38a453947a8f9e781137e47c7401020aed"
 
 [[package]]
 name = "b0"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "a0-diag",
  "a0-driver",
@@ -504,7 +504,7 @@ dependencies = [
 
 [[package]]
 name = "kaleidoscope"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "a0-build",
  "a0-diag",
@@ -541,7 +541,7 @@ checksum = "f9f8bd3e56ce4dfc153cf470fffbfa98c7620958b312ca5c3a4b8d5181fd13c6"
 
 [[package]]
 name = "lox"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "a0-diag",
  "a0-driver",
@@ -594,7 +594,7 @@ dependencies = [
 
 [[package]]
 name = "minnow"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "a0-diag",
  "a0-driver",
@@ -753,7 +753,7 @@ checksum = "adb6935a6f5c20170eeceb1a3835a49e12e19d792f6dd344ccc76a985ca5a6ca"
 
 [[package]]
 name = "tin"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "a0-build",
  "a0-diag",
