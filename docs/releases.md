@@ -31,7 +31,7 @@ Made by the same script, published by a maintainer:
 
 - **Crates** (`.crate` files, `cargo package`). Publish them in this order, each after the ones it
   depends on: `a0-diag`, `a0-target`, `a0-runtime`, `a0-ir`, `a0-syntax`, `a0-sema`, `a0-hir`,
-  `a0-interp`, `a0-native`, `a0-wasm`, `a0-build`, `a0-driver`, `a0-capi`, `a0`, `b0`
+  `a0-interp`, `a0-native`, `a0-wasm`, `a0-build`, `a0-driver`, `a0-capi`, `a0-cli`, `b0`
   (`cargo publish -p <crate>`). The A0 crates depend on each other at exactly the same version.
   The example languages and the playground's engine are not published (`publish = false`).
   The command-line driver is the crate `a0-cli`, since `a0` on crates.io is another project's
