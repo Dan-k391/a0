@@ -1,0 +1,12 @@
+// Inline struct arrays use the same capacity check, including in manual memory mode.
+// No stdout.
+// expect-stderr: panic: array size is too large
+// expect-stderr:     at main (tests/hir/array_overflow_inline.hir:10:12)
+// expect-exit: 101
+module "array_overflow_inline";
+memory manual;
+inline struct Pair { x: int, y: int }
+fn main() -> int {
+  let xs = filled(1152921504606846976, new Pair { x: 0, y: 0 });
+  len(xs)
+}

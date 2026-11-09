@@ -8,6 +8,9 @@ APIs. `docs/milestones.md` has the details of each step, with measurements.
 
 ### Fixed
 
+- Array capacities are checked before converting them to byte counts, including inline structs
+  and buffer growth. An oversized `filled` array reports a runtime error instead of allocating a
+  wrapped, smaller buffer and allowing out-of-bounds memory access.
 - The Linux and macOS release archives carry the LLVM library that `rust-lld` loads: without it,
   cross-compiling from the archive failed. `release/check.py` now cross-compiles to a target other
   than the host's, so that it always runs the archive's `rust-lld`.

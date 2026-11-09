@@ -1,0 +1,10 @@
+// A length whose byte count would wrap must fail before allocating or indexing.
+// No stdout.
+// expect-stderr: panic: array size is too large
+// expect-stderr:     at main (tests/hir/array_overflow.hir:8:12)
+// expect-exit: 101
+module "array_overflow";
+fn main() -> int {
+  let xs = filled(2305843009213693952, 0);
+  xs[1099511627776]
+}

@@ -223,7 +223,7 @@ becomes an `int` (or a `float`); `any` does not convert back to a sized type dir
 | Builtin | Meaning |
 |---|---|
 | `len(x)` | length of a string (bytes), array or map |
-| `filled(n, v)` | a new array of `n` elements, each `v` (a negative `n` panics) |
+| `filled(n, v)` | a new array of `n` elements, each `v` (a negative `n` or a byte count too large to allocate panics) |
 | `push(a, v)`, `pop(a)` | append to / remove the last element of an array (`pop` on empty panics) |
 | `has(m, k)`, `remove(m, k)`, `keys(m)` | map membership, removal, keys as an array (deterministic order) |
 | `has_field(o, name)`, `field(o, name)`, `set_field(o, name, v)`, `field_names(o)` | a dynamic object's fields: whether it has one, its value (an `any`; a missing field panics), setting or adding one (any value, as an `any`), the names in the order they were added |

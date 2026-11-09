@@ -9,8 +9,8 @@ static A0Array *check(A0Array *a) {
     return a;
 }
 
-static size_t elem_size(int64_t elem_kind) {
-    if (elem_kind >= A0_ELEM_BYTES) return (size_t)(elem_kind - A0_ELEM_BYTES);
+static uint64_t elem_size(int64_t elem_kind) {
+    if (elem_kind >= A0_ELEM_BYTES) return (uint64_t)(elem_kind - A0_ELEM_BYTES);
     switch (elem_kind) {
     case A0_ELEM_BYTE: return 1;
     case A0_ELEM_16: return 2;
@@ -19,7 +19,25 @@ static size_t elem_size(int64_t elem_kind) {
     }
 }
 
-static size_t bytes_of(A0Array *a, int64_t count) { return elem_size(a->elem_kind) * (size_t)count; }
+static size_t array_bytes(int64_t elem_kind, int64_t count, uint64_t loc, void *frame) {
+    uint64_t width = elem_size(elem_kind);
+    /* Check before converting to size_t (which is 32 bits in the playground) or multiplying.
+     * PTRDIFF_MAX also leaves room for the allocator's headers and alignment rounding. */
+    if (count < 0 || (width != 0 && (uint64_t)count > (uint64_t)PTRDIFF_MAX / width)) {
+        a0_rt_fail("array size is too large", loc, frame);
+    }
+    return (size_t)(width * (uint64_t)count);
+}
+
+static size_t bytes_of(A0Array *a, int64_t count) {
+    return array_bytes(a->elem_kind, count, 0, NULL);
+}
+
+static int64_t next_capacity(A0Array *a) {
+    if (a->cap < 8) return 8;
+    if (a->cap > INT64_MAX / 2) a0_panic("array size is too large");
+    return a->cap * 2;
+}
 
 /* Small arrays keep their first elements inline, after the header, so creating one is a single
  * allocation; growing past them moves the elements to a buffer. */
@@ -27,9 +45,10 @@ static size_t bytes_of(A0Array *a, int64_t count) { return elem_size(a->elem_kin
 
 static int is_inline(A0Array *a) { return a->data == (uint64_t *)(a + 1); }
 
-A0Array *a0_array_new(int64_t elem_kind, int64_t capacity) {
+static A0Array *new_array(int64_t elem_kind, int64_t capacity, uint64_t loc, void *frame) {
+    size_t bytes = capacity > 0 ? array_bytes(elem_kind, capacity, loc, frame) : 0;
     if (capacity > 0 && capacity <= INLINE_LIMIT) {
-        size_t size = sizeof(A0Array) + elem_size(elem_kind) * (size_t)capacity;
+        size_t size = sizeof(A0Array) + bytes;
         A0Array *a = (A0Array *)a0_gc_alloc(&a0_builtin_array, size);
         a->elem_kind = elem_kind;
         a->data = (uint64_t *)(a + 1);
@@ -39,10 +58,14 @@ A0Array *a0_array_new(int64_t elem_kind, int64_t capacity) {
     A0Array *a = (A0Array *)a0_gc_alloc(&a0_builtin_array, sizeof(A0Array));
     a->elem_kind = elem_kind;
     if (capacity > 0) {
-        a->data = (uint64_t *)a0_gc_buffer_alloc(elem_size(elem_kind) * (size_t)capacity);
+        a->data = (uint64_t *)a0_gc_buffer_alloc(bytes);
         a->cap = capacity;
     }
     return a;
+}
+
+A0Array *a0_array_new(int64_t elem_kind, int64_t capacity) {
+    return new_array(elem_kind, capacity, 0, NULL);
 }
 
 static void store(A0Array *a, int64_t index, uint64_t value);
@@ -54,7 +77,7 @@ A0Array *a0_array_filled(int64_t elem_kind, int64_t count, uint64_t value, uint6
         a0_rt_fail(message, loc, frame);
     }
     /* A reference value stays reachable: the caller keeps it rooted while the array is allocated. */
-    A0Array *a = a0_array_new(elem_kind, count);
+    A0Array *a = new_array(elem_kind, count, loc, frame);
     a->len = count;
     if (elem_kind == A0_ELEM_BYTE) {
         memset(a->data, (int)(uint8_t)value, (size_t)count);
@@ -99,7 +122,7 @@ void a0_array_set(A0Array *a, int64_t index, uint64_t value, uint64_t loc, void 
 void a0_array_push(A0Array *a, uint64_t value) {
     check(a);
     if (a->len == a->cap) {
-        int64_t cap = a->cap < 8 ? 8 : a->cap * 2;
+        int64_t cap = next_capacity(a);
         if (is_inline(a)) {
             uint64_t *data = (uint64_t *)a0_gc_buffer_alloc(bytes_of(a, cap));
             memcpy(data, a->data, bytes_of(a, a->len));
@@ -123,7 +146,7 @@ uint64_t a0_array_pop(A0Array *a, uint64_t loc, void *frame) {
 static void *element(A0Array *a, int64_t index) { return (char *)a->data + bytes_of(a, index); }
 
 static void grow(A0Array *a) {
-    int64_t cap = a->cap < 8 ? 8 : a->cap * 2;
+    int64_t cap = next_capacity(a);
     if (is_inline(a)) {
         uint64_t *data = (uint64_t *)a0_gc_buffer_alloc(bytes_of(a, cap));
         memcpy(data, a->data, bytes_of(a, a->len));
@@ -155,7 +178,7 @@ A0Array *a0_array_filled_bytes(int64_t elem_kind, int64_t count, const void *val
         snprintf(message, sizeof message, "negative array length: %lld", (long long)count);
         a0_rt_fail(message, loc, frame);
     }
-    A0Array *a = a0_array_new(elem_kind, count);
+    A0Array *a = new_array(elem_kind, count, loc, frame);
     a->len = count;
     size_t size = elem_size(elem_kind);
     for (int64_t i = 0; i < count; i++) memcpy(element(a, i), value, size);
