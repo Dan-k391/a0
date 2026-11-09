@@ -204,6 +204,7 @@ a0 new mylang                             # start a language project
 a0 lang calc.a0g run prog.calc            # a grammar-only language (also build, hir, ir, lsp)
 a0 parse lang.a0g input.txt               # try a grammar: print the tree or the errors
 a0 explain E2001                          # what an error code means
+a0 --version                              # the installed A0 version
 
 a0 run prog.hir                           # HIR and core IR programs: run (JIT; A0_INTERP=1
 a0 build prog.a0ir                        #   interprets), build, check, fmt

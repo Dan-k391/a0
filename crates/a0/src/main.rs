@@ -20,8 +20,8 @@ commands:
   run <file> [-- args...]   run @main (compiled into memory; A0_INTERP=1 interprets) and
                             exit with its status
   build <file> [-o out] [--target T] [--no-opt] [-g]
-                            compile to a native executable (host target only); -g describes
-                            it for gdb and lldb (Linux, macOS)
+                            compile to a native executable; another target needs its pack;
+                            -g adds information for the target's debugger
   obj <file> [-o out] [--target T] [--no-opt] [-g]
                             compile to an object file for any supported target
   parse <grammar.a0g> <file>
@@ -83,6 +83,10 @@ fn main_here() -> ExitCode {
         },
         "help" | "--help" | "-h" => {
             print!("{USAGE}");
+            ExitCode::SUCCESS
+        }
+        "--version" | "-V" => {
+            println!("a0 {}", env!("CARGO_PKG_VERSION"));
             ExitCode::SUCCESS
         }
         other => {
