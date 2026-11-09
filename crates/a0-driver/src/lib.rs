@@ -5,9 +5,10 @@
 //!
 //! ```text
 //! lang run <file> [args...]      run the program, compiled into memory (`A0_INTERP=1`: interpret it)
-//! lang build <file> [-o output]  compile it to a native executable for the host (`.exe` added
-//!                                on Windows)
-//! lang run|build|ir|hir          the same for the package the current directory is in
+//! lang build <file> [-o output]  compile it to a native executable (`--target` needs its pack;
+//!                                `.exe` is added on Windows)
+//! lang check <file>              compile and check it without running or emitting it
+//! lang run|build|check|ir|hir    the same for the package the current directory is in
 //!                                (`package.rs`; `run -- args` passes arguments)
 //! lang update                    take the newest commits of the package's git dependencies
 //! lang ir <file>                 print the core IR
@@ -261,6 +262,8 @@ pub enum Command {
     Run,
     /// `build`: an executable.
     Build,
+    /// `check`: compiles and checks the program without running or emitting it.
+    Check,
     /// `ir`: prints the core IR.
     Ir,
     /// `hir`: prints the HIR.
@@ -293,6 +296,7 @@ fn command_word(command: Command) -> &'static str {
     match command {
         Command::Run => "run",
         Command::Build => "build",
+        Command::Check => "check",
         Command::Ir => "ir",
         Command::Hir => "hir",
         _ => "update",
@@ -417,6 +421,10 @@ impl Language {
     }
 
     fn run_status_here(&self, args: &[String]) -> u8 {
+        if matches!(args, [arg] if matches!(arg.as_str(), "help" | "--help" | "-h")) {
+            print!("{}", self.usage());
+            return 0;
+        }
         let Some(inv) = self.parse_args(args) else {
             eprint!("{}", self.usage());
             return self.exit_codes.usage;
@@ -592,6 +600,9 @@ impl Language {
             eprint!("{}", w.render_with(&sources, &RenderOptions::stderr()));
             eprintln!();
         }
+        if inv.command == Command::Check {
+            return 0;
+        }
         let module = match program {
             Program::Hir(m) if inv.command == Command::Hir => {
                 print!("{m}");
@@ -683,6 +694,7 @@ impl Language {
                 }
             }
             Command::Hir
+            | Command::Check
             | Command::Lsp
             | Command::Dap
             | Command::Repl
@@ -826,6 +838,7 @@ impl Language {
         let (command, rest) = match args.first().map(String::as_str) {
             Some("run") => (Command::Run, &args[1..]),
             Some("build") => (Command::Build, &args[1..]),
+            Some("check") => (Command::Check, &args[1..]),
             Some("ir") => (Command::Ir, &args[1..]),
             Some("hir") => (Command::Hir, &args[1..]),
             Some(_) if self.run_by_default => (Command::Run, args),
@@ -912,7 +925,7 @@ impl Language {
         let packages = if self.modules.is_some() {
             format!(
                 "\n\
-                 Without a file, run, build, ir and hir take the package the current directory is\n\
+                 Without a file, run, build, check, ir and hir take the package the current directory is\n\
                  in ({n}.toml; `{n} run -- args...`, `build --locked`):\n\
                  \x20 update                 take the newest commits of its git dependencies\n"
             )
@@ -926,6 +939,7 @@ impl Language {
              \x20 build <file> [-o out] [-g] [--target <target>]\n\
              \x20                        compile it to a native executable (-g: for debuggers;\n\
              \x20                        another target needs its pack: targets/build.py)\n\
+             \x20 check <file>           compile and check without running or emitting\n\
              \x20 ir <file>              print the core IR\n\
              \x20 hir <file>             print the high-level IR\n\
              \x20 lsp                    serve the Language Server Protocol on stdin/stdout\n\
@@ -975,6 +989,10 @@ mod tests {
             l.parse_args(&args("hir a.d")).unwrap().command,
             Command::Hir
         );
+        assert_eq!(
+            l.parse_args(&args("check a.d")).unwrap().command,
+            Command::Check
+        );
         assert_eq!(l.parse_args(&args("lsp")).unwrap().command, Command::Lsp);
         let inv = l.parse_args(&args("explain E2001")).unwrap();
         assert_eq!(
@@ -986,6 +1004,7 @@ mod tests {
             "run",
             "a.d",
             "ir a.d extra",
+            "check a.d extra",
             "build a.d -x out",
             "build a.d -o",
             "lsp a.d",

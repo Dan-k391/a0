@@ -9,6 +9,8 @@ APIs. `docs/milestones.md` has the details of each step, with measurements.
 ### Added
 
 - `a0 --version` and its conventional short form, `a0 -V`.
+- Language drivers implement their documented `check` command; `--help`, `-h` and `help` print
+  their usage and succeed.
 
 ### Fixed
 

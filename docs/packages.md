@@ -32,6 +32,7 @@ minnow run                  # runs src/main.mn
 minnow run -- a b           # with arguments
 minnow build                # build/app (build/app.exe on Windows)
 minnow build --locked       # fails rather than change minnow.lock (for CI)
+minnow check                # compile and report diagnostics without emitting anything
 minnow hir                  # prints the program's HIR
 minnow update               # takes the newest commits of the git dependencies
 ```
