@@ -11,6 +11,8 @@ APIs. `docs/milestones.md` has the details of each step, with measurements.
 - Array capacities are checked before converting them to byte counts, including inline structs
   and buffer growth. An oversized `filled` array reports a runtime error instead of allocating a
   wrapped, smaller buffer and allowing out-of-bounds memory access.
+- A C struct field whose offset overflows while the verifier checks its end is rejected with a
+  diagnostic instead of panicking (or wrapping in a release build).
 - The Linux and macOS release archives carry the LLVM library that `rust-lld` loads: without it,
   cross-compiling from the archive failed. `release/check.py` now cross-compiles to a target other
   than the host's, so that it always runs the archive's `rust-lld`.

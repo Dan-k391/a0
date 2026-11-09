@@ -252,6 +252,10 @@ fn verifier_checks_c_struct_parameters() {
             "extern func @f(ptr byval(8, 4: i32 0, i32 6))",
             "a field of type i32 at 6 does not fit a C struct of 8 bytes",
         ),
+        (
+            "extern func @f(ptr byval(8, 8: i64 4294967288))",
+            "a field of type i64 at 4294967288 does not fit a C struct of 8 bytes",
+        ),
     ] {
         let out = errors_of(&format!("module \"m\"\n{decl}\n"));
         assert!(out.contains(message), "{decl}: {out}");

@@ -52,7 +52,8 @@ pub fn verify(m: &Module) -> Diagnostics {
                     s.size, s.align
                 ))
             } else if let Some(&(ft, at)) = s.fields.iter().find(|&&(ft, at)| {
-                at + ft.bytes(8).unwrap_or(8) > s.size || at % ft.bytes(8).unwrap_or(1) != 0
+                let width = ft.bytes(8).unwrap_or(8);
+                at.checked_add(width).is_none_or(|end| end > s.size) || at % width != 0
             }) {
                 Some(format!(
                     "a field of type {ft} at {at} does not fit a C struct of {} bytes",
