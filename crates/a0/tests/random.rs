@@ -1097,7 +1097,7 @@ impl Gen {
 
     /// A runtime error at the end of `main`, in a function the optimizer inlines.
     fn failure(&mut self) -> (String, String) {
-        let (def, call) = match self.rng.below(7) {
+        let (def, call) = match self.rng.below(9) {
             0 => (
                 "fn fail(a: array<int>, i: int) -> int { a[i] }",
                 "fail([1, 2], 2)",
@@ -1113,10 +1113,15 @@ impl Gen {
                 "fn fail(a: array<int>) -> int { pop(a) }",
                 "fail(new array<int>)",
             ),
-            _ => (
+            6 => (
                 "fn fail(m: map<string, int>) -> int { m[\"none\"] }",
                 "fail(new map<string, int>)",
             ),
+            7 => (
+                "fn fail(n: u8) -> int { let unused: u8 = 1 / n; 0 }",
+                "fail(0)",
+            ),
+            _ => ("fn fail(n: i32) -> int { 1 % n; 0 }", "fail(0)"),
         };
         (def.to_string(), format!("print(str({call}) + \"\\n\");"))
     }

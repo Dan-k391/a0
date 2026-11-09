@@ -571,6 +571,26 @@ fn the_optimizer_inlines_small_functions_and_folds_any_tests() {
 }
 
 #[test]
+fn the_optimizer_keeps_sized_integer_traps() {
+    let m = parse_ok(
+        r#"module "m";
+fn main() -> int {
+  let one: u8 = 1;
+  let zero: u8 = 0;
+  one / zero;
+  let unused: i32 = 1 % 0;
+  0
+}
+"#,
+    );
+    let ir = lower_with(&m, LowerOptions::optimized(true))
+        .unwrap()
+        .to_string();
+    assert!(ir.contains("udiv"), "{ir}");
+    assert!(ir.contains("srem"), "{ir}");
+}
+
+#[test]
 fn functions_that_end_in_return_are_inlined() {
     // The body's type is `never` (it ends in `return`), but it returns: it is no error path.
     let m = parse_ok(

@@ -431,8 +431,9 @@ replaced generic items with one copy per combination of type arguments:
   a bounds check (out of bounds, the runtime function fails with the message and the trace);
   everything else about strings, arrays and maps, formatting and boxing of large integers are
   runtime calls.
-- Integer division by zero, and dividing the minimum `int` by -1, trap like the core IR's `sdiv`
-  (`panic: integer division by zero` and the stack trace, exit 101).
+- Integer division and remainder by zero for `int` and sized integers, and signed division of the
+  minimum value by -1, trap like the core IR (`panic: integer division by zero` or `panic: integer
+  overflow`, with the stack trace, exit 101).
 - Every IR instruction is attributed to the HIR expression it comes from (its span) and to the call
   it was inlined at, if the optimizer inlined it, and every function gets its HIR name for stack
   traces (closures `f::{closure}`; entry points and wrappers none), so runtime errors name source

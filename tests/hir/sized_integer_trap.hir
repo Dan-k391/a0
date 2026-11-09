@@ -1,0 +1,11 @@
+// A discarded sized-integer operation still traps when the optimizer is on.
+// expect-stderr: panic: integer division by zero
+// expect-stderr:     at main (tests/hir/sized_integer_trap.hir:9:3)
+// expect-exit: 101
+module "sized_integer_trap";
+fn main() -> int {
+  let one: u8 = 1;
+  let zero: u8 = 0;
+  one / zero;
+  0
+}

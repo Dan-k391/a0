@@ -1130,7 +1130,11 @@ impl Opt<'_> {
                 from != TypeId::ANY && self.pure(*x)
             }
             ExprKind::Binary(op, a, b) => {
-                let traps = matches!(op, BinOp::Div | BinOp::Rem) && self.ty(*a) == TypeId::INT;
+                let integer = matches!(
+                    self.m.kind(self.ty(*a)),
+                    TypeKind::Int | TypeKind::SizedInt(..)
+                );
+                let traps = matches!(op, BinOp::Div | BinOp::Rem) && integer;
                 !traps && self.pure(*a) && self.pure(*b)
             }
             ExprKind::Unary(_, a) | ExprKind::Is(a, _) => self.pure(*a),

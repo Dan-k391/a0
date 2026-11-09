@@ -14,6 +14,8 @@ APIs. `docs/milestones.md` has the details of each step, with measurements.
 
 ### Fixed
 
+- The HIR optimizer preserves traps from unused sized-integer division and remainder expressions;
+  optimized and unoptimized programs now agree when one divides by zero.
 - `a0 --help` describes cross-target executable builds and debug information on every supported
   target instead of saying that builds and debuggers are limited to the host or to Unix.
 - Language drivers accept build options before or after the source file, including the documented
