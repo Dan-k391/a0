@@ -143,7 +143,10 @@ uint64_t a0_array_pop(A0Array *a, uint64_t loc, void *frame) {
 
 /* Elements of A0_ELEM_BYTES + size bytes each (inline structs): appended, removed and filled by
  * address. */
-static void *element(A0Array *a, int64_t index) { return (char *)a->data + bytes_of(a, index); }
+/* Unchecked: an index is below the capacity, whose byte count was checked when it was allocated. */
+static void *element(A0Array *a, int64_t index) {
+    return (char *)a->data + (size_t)elem_size(a->elem_kind) * (size_t)index;
+}
 
 static void grow(A0Array *a) {
     int64_t cap = next_capacity(a);
