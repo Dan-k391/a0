@@ -16,6 +16,8 @@ APIs. `docs/milestones.md` has the details of each step, with measurements.
 
 - `a0 --help` describes cross-target executable builds and debug information on every supported
   target instead of saying that builds and debuggers are limited to the host or to Unix.
+- Language drivers accept build options before or after the source file, including the documented
+  `lang build -g file` form.
 - Array capacities are checked before converting them to byte counts, including inline structs
   and buffer growth. An oversized `filled` array reports a runtime error instead of allocating a
   wrapped, smaller buffer and allowing out-of-bounds memory access.

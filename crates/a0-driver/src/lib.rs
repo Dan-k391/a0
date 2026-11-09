@@ -844,6 +844,48 @@ impl Language {
             Some(_) if self.run_by_default => (Command::Run, args),
             _ => return None,
         };
+        if command == Command::Build {
+            let mut inv = Invocation {
+                command,
+                file: String::new(),
+                output: None,
+                args: Vec::new(),
+                debug: false,
+                target: None,
+                locked: false,
+            };
+            let mut rest = rest;
+            while let Some((arg, more)) = rest.split_first() {
+                match (arg.as_str(), more) {
+                    ("--locked", more) if !inv.locked => {
+                        inv.locked = true;
+                        rest = more;
+                    }
+                    ("-o", [out, more @ ..]) if inv.output.is_none() => {
+                        inv.output = Some(out.clone());
+                        rest = more;
+                    }
+                    ("-g", more) if !inv.debug => {
+                        inv.debug = true;
+                        rest = more;
+                    }
+                    ("--target", [target, more @ ..]) if inv.target.is_none() => {
+                        inv.target = Some(target.clone());
+                        rest = more;
+                    }
+                    ("-", more) if inv.file.is_empty() => {
+                        inv.file = arg.clone();
+                        rest = more;
+                    }
+                    (_, more) if !arg.starts_with('-') && inv.file.is_empty() => {
+                        inv.file = arg.clone();
+                        rest = more;
+                    }
+                    _ => return None,
+                }
+            }
+            return (!inv.file.is_empty() || self.modules.is_some()).then_some(inv);
+        }
         // Without a file (nothing, a flag, or `--` before the program's arguments), a language with
         // modules builds the package the current directory is in.
         let (file, rest) = match rest.split_first() {
@@ -883,29 +925,6 @@ impl Language {
                         }
                     }
                     rest = more;
-                }
-            }
-            (Command::Build, mut rest) => {
-                while let Some((flag, more)) = rest.split_first() {
-                    match (flag.as_str(), more) {
-                        ("--locked", more) if !inv.locked => {
-                            inv.locked = true;
-                            rest = more;
-                        }
-                        ("-o", [out, more @ ..]) if inv.output.is_none() => {
-                            inv.output = Some(out.clone());
-                            rest = more;
-                        }
-                        ("-g", more) if !inv.debug => {
-                            inv.debug = true;
-                            rest = more;
-                        }
-                        ("--target", [t, more @ ..]) if inv.target.is_none() => {
-                            inv.target = Some(t.clone());
-                            rest = more;
-                        }
-                        _ => return None,
-                    }
                 }
             }
             (_, []) => {}
@@ -984,6 +1003,13 @@ mod tests {
             (inv.command, inv.output.as_deref()),
             (Command::Build, Some("out"))
         );
+        let inv = l
+            .parse_args(&args("build -g --target x86_64-linux a.d -o out"))
+            .unwrap();
+        assert_eq!(inv.file, "a.d");
+        assert!(inv.debug);
+        assert_eq!(inv.target.as_deref(), Some("x86_64-linux"));
+        assert_eq!(inv.output.as_deref(), Some("out"));
         assert_eq!(l.parse_args(&args("ir a.d")).unwrap().command, Command::Ir);
         assert_eq!(
             l.parse_args(&args("hir a.d")).unwrap().command,
