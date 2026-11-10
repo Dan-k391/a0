@@ -132,7 +132,8 @@ jobs:
   # program linked against them for every target. aarch64 Linux executables run under QEMU, and the
   # Windows job runs every program linked against the Windows pack instead of by MSVC's linker.
   packs:
-    runs-on: ubuntu-latest
+    # shortcut: Ubuntu 26.04 has no qemu-user-static; move to its QEMU package before 24.04 retires.
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - name: Install Rust
