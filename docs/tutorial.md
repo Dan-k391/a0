@@ -1,15 +1,32 @@
 # Tutorial: Kaleidoscope on A0
 
-This tutorial builds Kaleidoscope, the language of [LLVM's tutorial](https://llvm.org/docs/tutorial/MyFirstLanguageFrontend/),
-on A0, in the order of LLVM's chapters: the grammar, code generation, running programs, control
-flow, user-defined operators and mutable variables. The language ends up with an interpreter,
-native executables, an optimizer, error messages with source locations and an editor with
-highlighting, an outline and go-to-definition, in about 490 lines of Rust and 70 of grammar.
+This tutorial builds a complete programming language on A0, one piece at a time. The language is
+Kaleidoscope, the small language of [LLVM's tutorial](https://llvm.org/docs/tutorial/MyFirstLanguageFrontend/).
+Its only type is the double, a 64-bit floating-point number. It has functions, `if`, `for` loops,
+mutable variables, and operators that programs define themselves.
 
-The finished language is `examples/kaleidoscope`. Every listing below is cut from it, and a test
-(`examples/kaleidoscope/tests/tutorial.rs`) checks that the listings are the code, that together
-they are all of it, and that every command shown prints what is shown. Kaleidoscope looks like
-this:
+You write two things: a grammar, which says what programs look like, and a compiler, which says
+what they mean. A0 provides the rest:
+
+- an interpreter, and a JIT that compiles programs to machine code in memory and runs them;
+- native executables;
+- an optimizer;
+- error messages that point into the source;
+- editor support: highlighting, an outline, go to definition.
+
+The whole language is about 500 lines of Rust and 70 lines of grammar. The chapters follow LLVM's
+order: the grammar, the compiler, running programs, control flow, user-defined operators and
+mutable variables.
+
+Before you start, follow [Getting started](book/getting-started.md). It installs Rust, a C
+compiler and the `a0` command, which this tutorial uses.
+
+The finished language is in `examples/kaleidoscope` in the A0 repository. Every listing on this
+page is cut from that code. A test checks three things: that each listing is the code, that the
+listings together show all of it, and that every command prints the output shown here.
+
+This is the program you will be able to run at the end. `#` starts a comment, and the `expect:`
+comments say what the program prints:
 
 ```kaleidoscope file=examples/kaleidoscope/tests/programs/fib.k
 # LLVM's chapter 7: recursive and iterative fib, ':' as a sequencing operator.
@@ -46,9 +63,13 @@ printd(fibi(30));
 
 ## 0. Setting up
 
-A language on A0 is a Rust crate with a library (the compiler) and a binary (the command). You need
-Rust and a C compiler (MSVC on Windows, `cc` on Linux and macOS). Kaleidoscope uses these A0
-crates:
+A language on A0 is a Rust crate, that is, a Rust package. The crate has two parts:
+
+- a library, which is the compiler;
+- a binary, which is the language's command, here `kaleidoscope`.
+
+Building it needs Rust and a C compiler: MSVC on Windows, `cc` on Linux and macOS.
+Kaleidoscope's `Cargo.toml` depends on these A0 crates:
 
 ```toml file=examples/kaleidoscope/Cargo.toml anchor=deps
 [dependencies]
@@ -60,24 +81,32 @@ a0-syntax.workspace = true
 a0-runtime.workspace = true
 ```
 
-Inside the A0 repository a crate says `workspace = true`. Elsewhere, depend on A0 from git, pinned
-to a release: `a0-hir = { git = "https://github.com/Dan-k391/a0", tag = "v1.0.0" }`, and the same
-for the others (`docs/compatibility.md` says what stays compatible).
+Kaleidoscope is inside the A0 repository, so each dependency says `workspace = true`. In your own
+project, depend on A0 from git, pinned to a release:
+`a0-hir = { git = "https://github.com/Dan-k391/a0", tag = "v1.0.0" }`. Do the same for the other
+crates. [Compatibility](compatibility.md) says what stays the same from one release to the next.
 
-The pieces are:
+What each crate does:
 
-- `a0-syntax` turns a grammar file into a parser (chapter 1);
-- `a0-diag` holds source files, positions and error messages;
-- `a0-hir` is A0's high-level IR: the compiler builds it and A0 does the rest, from checking types to
-  garbage collection (chapter 2);
-- `a0-driver` gives the language its command (chapter 3);
-- `a0-runtime` is the runtime programs run with; Kaleidoscope names it only so that its own two C
-  functions compile against the runtime's header (`a0rt.h`, chapter 3).
+- **`a0-syntax`** reads a grammar file and makes a parser from it (chapter 1).
+- **`a0-diag`** holds source files, positions in them, and error messages. A0 calls error messages
+  diagnostics.
+- **`a0-hir`** is A0's high-level IR, or HIR. An IR (intermediate representation) is a form of the
+  program between its source text and machine code. The compiler describes the program in HIR, and
+  A0 does the rest, from checking types to collecting garbage (chapter 2).
+- **`a0-driver`** gives the language its command, with `run`, `build` and more (chapter 3).
+- **`a0-runtime`** is A0's runtime: C code that programs call while they run, for output, memory
+  and errors. Kaleidoscope depends on it for one reason only. Its own two C functions are compiled
+  against the runtime's header, `a0rt.h` (chapter 3).
 
 ## 1. The grammar
 
-LLVM's chapters 1 and 2 write a lexer and a parser by hand. On A0 both come from one grammar file,
-loaded when the compiler starts (`docs/grammar.md`). It begins with the tokens:
+LLVM's chapters 1 and 2 write a lexer and a parser by hand. A lexer splits the program's text into
+tokens: numbers, names and symbols. A parser groups the tokens into a syntax tree, following the
+language's rules. On A0, both come from one grammar file, `kaleidoscope.a0g`. The compiler loads it
+when it starts. [Grammars](grammar.md) describes the whole notation.
+
+The grammar begins with its tokens:
 
 ```text file=examples/kaleidoscope/kaleidoscope.a0g anchor=tokens
 grammar kaleidoscope;
@@ -91,12 +120,20 @@ token OPCHAR /[^ \t\r\n0-9A-Za-z#(),;.]/;
 unknown "unexpected character";
 ```
 
-`skip` drops whitespace and comments, `token` names the kinds of tokens, and a literal written in a
-rule (`"def"`, `";"`) is a token by itself. The lexer takes the longest match, preferring literals,
-so `define` is an `IDENT` and `def` is the keyword.
+- `skip` drops what it matches: whitespace, and comments from `#` to the end of the line.
+- `token` names a kind of token and gives its pattern.
+- `unknown` is the error for a character that no token matches.
 
-A program is a list of items: function definitions, `extern` declarations of C functions, and
-top-level expressions.
+A literal written in a rule, such as `"def"` or `";"`, is a token too, with no declaration. At each
+position, the lexer takes the longest match. When a literal and a pattern match the same text, the
+literal wins. So `define` is an `IDENT`, and `def` is the keyword.
+
+Next come the rules. A rule says what one kind of node in the syntax tree contains. A program is a
+list of items. An item is one of these:
+
+- a function definition, `def`;
+- an `extern` declaration of a function written in C;
+- a top-level expression, which the program runs.
 
 ```text file=examples/kaleidoscope/kaleidoscope.a0g anchor=items,items_end
 program = (!EOF item)* EOF;
@@ -115,16 +152,28 @@ prototype = name:IDENT ~ "expected a function name in prototype"
 params @def(parameter: param) = param:IDENT*;
 ```
 
-Rules use the usual notation: sequences, `|` for ordered choice, `*` and `?`, and `!x` to look
-ahead. `name:x` labels a child so that the compiler can find it. `x ~ "message"` is the error to
-report if `x` is missing, and two attributes make the parser robust: `@inline` means `item` makes
-no node of its own, and `@recover(after ";" before "def" "extern")` means a broken item does not
-stop the parse: the error is reported, the parser skips to the next item, and one run reports every
-syntax error. (`@def` and `@scope` tell editors about names; chapter 7 comes back to them.)
+Rules use the usual notation:
 
-Expressions are where Kaleidoscope is unusual: programs define new binary operators with their own
-precedence (chapter 5), so precedence is not known when the grammar is written. The grammar parses
-a flat chain `operand (op operand)*`, and the compiler groups it.
+- items written one after another form a sequence;
+- `|` is an ordered choice: the first alternative that matches wins;
+- `*` repeats, and `?` makes something optional;
+- `!x` looks ahead: it matches when `x` does not come next, and consumes nothing.
+
+A few more marks help the compiler and the error messages:
+
+- `name:x` labels a child, so that the compiler can find it by name, such as `proto` or `body`.
+- `x ~ "message"` is the error to report when `x` is missing.
+- `@inline` means the rule makes no node of its own; its children go to the parent. `item` is only
+  a choice, so the tree has a `definition` node directly, with no `item` node around it.
+- `@recover(after ";" before "def" "extern")` keeps one broken item from stopping the parse. The
+  parser reports the error, then skips to just after a `;` or just before a `def` or `extern`, and
+  goes on. So one run reports every syntax error, not only the first.
+
+`@def` and `@scope` tell editors which names a rule declares. Chapter 7 explains them.
+
+Expressions are where Kaleidoscope is unusual. Programs can define new binary operators, each with
+its own precedence (chapter 5). So the precedence of an operator is not known when the grammar is
+written. The grammar parses a flat chain, `operand (op operand)*`, and the compiler groups it later.
 
 ```text file=examples/kaleidoscope/kaleidoscope.a0g anchor=expressions,primary,atoms
 // Binary operators are user-definable, so expressions are parsed as a flat chain
@@ -145,11 +194,12 @@ args = arg:expr ("," arg:expr)*;
 paren = "(" inner:expr ")" ~ "expected ')'";
 ```
 
-The odd `;` lines are where later chapters add alternatives. A language with fixed operators writes
-a precedence table instead (`@prec`, as in Lox's and Minnow's grammars).
+The `;` lines on their own are where later chapters add alternatives. A language whose operators
+are fixed does not need a chain. It writes a precedence table in the grammar instead, with `@prec`,
+as Lox's and Minnow's grammars do.
 
-Try a grammar before writing any Rust: `a0 parse` (the command-line tool of the A0 repository)
-prints the tree, or the errors. With this program,
+You can try a grammar before writing any Rust. `a0 parse` prints the syntax tree of a program, or
+its errors. Here is a program with a function, a call and a C function, `add.k`:
 
 ```kaleidoscope file=examples/kaleidoscope/tests/tutorial/add.k
 # A function, a call and a C function.
@@ -157,6 +207,9 @@ extern printd(x);
 def add(a b) a + b;
 printd(add(1, 2) * 3);
 ```
+
+`a0 parse` takes the grammar and a program. The second program, `broken.k`, is the same `add`
+definition with a `)` missing:
 
 ```console
 $ a0 parse kaleidoscope.a0g add.k
@@ -170,12 +223,23 @@ error[E0001]: expected ')' in prototype
   |               ^
 ```
 
+Each node in the tree is in parentheses, with its kind first. Labeled children show as
+`label=...`. For the broken program, the item becomes an `error` node, and the error says where the
+`)` was expected.
+
 ## 2. From trees to HIR
 
-LLVM's chapter 3 generates LLVM IR from the syntax tree. On A0, the compiler builds the high-level IR
-(`docs/hir.md`): functions, typed expressions, locals and calls, plus strings, structs, closures and
-more that Kaleidoscope does not need. It builds by name, so A0 resolves names, checks types and
-reports errors, and the compiler only translates. Its imports:
+LLVM's chapter 3 turns the syntax tree into LLVM IR. On A0, the compiler turns it into HIR instead.
+HIR has functions, typed expressions, local variables and calls. It also has strings, structs,
+closures and more, which Kaleidoscope does not need. [The high-level IR](hir.md) lists all of it.
+
+The compiler builds HIR with a builder: an object with a method for each kind of expression. The
+compiler refers to variables and functions by their names. The builder works out what each name
+means, infers and checks the types, and reports errors. So the compiler only translates. It walks
+the tree and calls the builder for each node.
+
+The compiler is `src/lib.rs`. It starts with its imports. The items from `a0_driver::backend` are
+for the C runtime library of chapter 3.
 
 ```rust file=examples/kaleidoscope/src/lib.rs anchor=uses
 use std::collections::{HashMap, HashSet};
@@ -186,7 +250,9 @@ use a0_hir::{BinOp, BodyId, ExprId, FuncId, HirBuilder, HirModule, TypeId, UnOp}
 use a0_syntax::{Grammar, NodeId, Operand, SyntaxTree, resolve_precedence};
 ```
 
-The grammar is a string compiled into the crate and loaded at run time:
+The grammar file is compiled into the crate as a string. `grammar` loads it into a `Grammar` when
+the compiler runs. The grammar ships with the compiler, so a grammar that fails to load is a bug in
+the language, and it panics:
 
 ```rust file=examples/kaleidoscope/src/lib.rs anchor=grammar
 /// The Kaleidoscope grammar.
@@ -201,8 +267,14 @@ pub fn grammar() -> Grammar {
 }
 ```
 
-and compiling is parsing, then walking the tree, then `finish`, which returns the checked module or
-every error found:
+`compile` is the compiler's entry point. It does three things:
+
+1. It parses the text. If there are syntax errors, it stops and returns them.
+2. It walks the tree, which builds the HIR.
+3. It calls `finish`, which checks the whole module. `finish` returns the module, or every error
+   found.
+
+`source` tells the errors which file they belong to.
 
 ```rust file=examples/kaleidoscope/src/lib.rs anchor=compile
 /// Compiles a Kaleidoscope program to a HIR module whose `main` runs its top-level expressions.
@@ -218,11 +290,22 @@ pub fn compile(text: &str, source: SourceId) -> Result<HirModule, Diagnostics> {
 }
 ```
 
-The compiler holds the tree, the `HirBuilder`, a table of the functions declared so far (Kaleidoscope
-checks arities and redefinitions itself, since those are its rules, not A0's), the operator table of
-chapter 5, and `main`, which runs the top-level expressions in order. A few helpers read the tree,
-whose nodes are handles: `field` finds a child by label, `text` is a node's source text.
-`at(node)` makes the builder report errors at that node:
+The compiler keeps its state in a `Compiler`:
+
+- the tree, and the builder, `b`;
+- the functions declared so far, with how many parameters each takes. Kaleidoscope checks the
+  number of parameters and redefinitions itself, because those are Kaleidoscope's rules, not A0's;
+- the table of binary operators and their precedence, which chapter 5 lets programs extend;
+- `main`, the function a program starts in, and the top-level expressions it runs, in order.
+
+The tree's nodes are handles (`NodeId`): small numbers that the tree looks up. A few helpers read
+them:
+
+- `field` finds a child by its label, and `opt` finds one that may be missing;
+- `text` is the source text that a node covers;
+- `at(node)` sets the builder's span, the place in the source that the code built next comes from.
+  Errors are reported there, and debuggers show it;
+- `error` reports one of Kaleidoscope's own errors at a node.
 
 ```rust file=examples/kaleidoscope/src/lib.rs anchor=compiler
 /// A function or operator declared with `def` or `extern`.
@@ -288,8 +371,10 @@ impl<'a> Compiler<'a> {
 }
 ```
 
-A program is a loop over its items. A top-level expression is built inside `main`'s body
-(`begin_body` puts a body's names in scope):
+`program` loops over the items and handles each kind. A top-level expression is built inside
+`main`'s body. `begin_body` makes a body the one being built and puts its parameters in scope, and
+`end_body` closes it. After the loop, `main`'s body becomes a block: the top-level expressions,
+then `0`, which `main` returns.
 
 ```rust file=examples/kaleidoscope/src/lib.rs anchor=program
 impl Compiler<'_> {
@@ -320,9 +405,16 @@ impl Compiler<'_> {
 }
 ```
 
-A prototype declares a function the first time it is seen. Every Kaleidoscope value is a double,
-`TypeId::FLOAT` in the HIR. `declare_extern` declares a C function and `declare_function` a function
-whose body is built later, its parameters given by name:
+A prototype is a function's name and parameters, as in `add(a b)`. `prototype` declares the
+function the first time its prototype appears, and checks later ones against it. Every
+Kaleidoscope value is a double, which is `TypeId::FLOAT` in the HIR. Two builder methods declare
+functions:
+
+- `declare_extern` declares a C function, which the runtime library provides (chapter 3);
+- `declare_function` declares a function whose body is built later. It names the parameters, so the
+  body can refer to them.
+
+The `match` with a single arm is where chapter 5 adds operators.
 
 ```rust file=examples/kaleidoscope/src/lib.rs anchor=functions,functions_rest
 impl Compiler<'_> {
@@ -406,10 +498,16 @@ impl Compiler<'_> {
 }
 ```
 
-`definition` opens the function's body, builds the expression that is its value, and sets it as the
-body's root. Expressions are a `match` on the node kind; later chapters add arms above the last one.
-A variable is `b.name(...)`: the builder finds the parameter or local it means, or reports an
-unknown name. A call is `b.call_named(...)`, checked against the function it names:
+`definition` opens the function's body and builds the expression that is the function's value. It
+sets that expression as the body's root.
+
+Expressions are a `match` on the node's kind. Later chapters add arms above the last one, which
+reports anything unsupported. Each arm calls the builder:
+
+- a number is `b.float(...)`;
+- a variable is `b.name(...)`. The builder finds the parameter or local variable that the name
+  means, or reports an unknown name;
+- a call is `b.call_named(...)`. The builder checks the call against the function it names.
 
 ```rust file=examples/kaleidoscope/src/lib.rs anchor=expr,expr_end
 impl Compiler<'_> {
@@ -444,10 +542,14 @@ impl Compiler<'_> {
 }
 ```
 
-An operator chain is grouped with `resolve_precedence`, which takes each operator's precedence from
-the table and returns the order in which to combine operands. The built-in `+`, `-` and `*` are HIR
-operators; `<` gives 1.0 or 0.0 as in the tutorial; any other operator is a call to a function
-named after it, which programs define in chapter 5.
+An `expr` node is the flat chain from the grammar, such as `1 + 2 * 3`, not yet grouped.
+`resolve_precedence` groups it. It takes each operator's precedence from the table, and returns
+steps: the order in which to combine the operands. `combine` builds each step:
+
+- `+`, `-` and `*` are HIR operators;
+- `<` gives 1.0 or 0.0, as in LLVM's tutorial;
+- any other operator is a call to a function named after it, such as `binary|`. Programs define
+  these functions in chapter 5.
 
 ```rust file=examples/kaleidoscope/src/lib.rs anchor=chain,chain_end
 impl Compiler<'_> {
@@ -507,17 +609,13 @@ impl Compiler<'_> {
 }
 ```
 
-That is a whole compiler for functions and arithmetic.
+That is a whole compiler for functions and arithmetic. Next, it needs a command that runs it.
 
 ## 3. The command and the runtime
 
-LLVM's chapter 4 adds a JIT. On A0, `a0-driver` gives a language its command: `run` compiles a
-program into memory with Cranelift's JIT and runs it at once (`A0_INTERP=1` interprets it), `build` compiles it to a native executable through Cranelift and the system linker, `hir`
-and `ir` print what the compiler built, `lsp` is a language server, `dap` a debugger, `repl` a
-read-eval-print loop (Kaleidoscope's top-level expressions run where they are typed, so
-it sets no `repl_main`) and `explain` explains an error code. Errors are rendered with the source,
-with A0's codes (`codes` can hide them or give the language's own); the interpreter, the JIT and
-native executables give the same output, errors and exit codes.
+LLVM's chapter 4 adds a JIT. A JIT (just-in-time compiler) compiles a program to machine code in
+memory, and runs it at once. On A0, the JIT and everything else a command needs come from
+`a0-driver`. This is the whole command, `src/main.rs`:
 
 ```rust file=examples/kaleidoscope/src/main.rs
 //! `kaleidoscope`: run or compile Kaleidoscope programs (`kaleidoscope run|build|ir <file.k>`).
@@ -541,8 +639,38 @@ fn main() -> ExitCode {
 }
 ```
 
-Kaleidoscope programs call `printd` and `putchard` through `extern`. They are C functions in a small
-runtime library:
+`Language::new` takes the language's name and its compile function. `grammar` gives the driver the
+grammar, which the language server and the REPL use. `runtime` gives it the runtime library, which
+comes next. `main` reads the command line and runs the command. The command then has these
+subcommands:
+
+| Command | What it does |
+|---|---|
+| `run` | compiles the program into memory with the JIT and runs it; with `A0_INTERP=1`, the interpreter runs it instead |
+| `build` | compiles the program to a native executable |
+| `check` | reports the program's errors without running it |
+| `hir` | prints the HIR the compiler built |
+| `ir` | prints the core IR, the lower-level IR that A0 turns HIR into before making machine code |
+| `lsp` | a language server, for editors (chapter 7) |
+| `dap` | a debugger, for editors |
+| `repl` | a read-eval-print loop, which runs what you type |
+| `explain` | explains an error code |
+
+A0 makes machine code with Cranelift, a code generator written in Rust. `build` then links the
+executable with the system's linker. The interpreter, the JIT and native executables give the same
+output, the same errors and the same exit status.
+
+Errors are shown with the source line they point at, and with A0's error codes. The driver's
+`codes` option can hide the codes, or show the language's own codes instead.
+
+The REPL needs no setup in Kaleidoscope. It adds each expression you type to the program's top
+level, where Kaleidoscope's expressions run anyway. A language whose statements must go inside a
+`main` function says so with `repl_main`.
+
+Kaleidoscope programs call `printd` and `putchard`, which they declare with `extern`. These are C
+functions in a small runtime library, `runtime/kaleidoscope.c`. They print through `a0_rt_write`,
+the A0 runtime's output function, so that a debugger can capture the output. The table at the end,
+`kaleidoscope_symbols`, lists the functions by name for the interpreter and the JIT:
 
 ```c file=examples/kaleidoscope/runtime/kaleidoscope.c
 /* Kaleidoscope's runtime library: the helpers the LLVM tutorial's programs call through `extern`.
@@ -575,7 +703,8 @@ const A0Symbol kaleidoscope_symbols[] = {
 };
 ```
 
-The build script compiles it (`a0-build` does the work):
+Cargo runs a crate's build script, `build.rs`, before it compiles the crate. Kaleidoscope's build
+script compiles the C file with `a0-build`, A0's helper for build scripts:
 
 ```rust file=examples/kaleidoscope/build.rs
 fn main() {
@@ -583,8 +712,12 @@ fn main() {
 }
 ```
 
-and the compiler hands it to the driver: `host_symbols` lets the interpreter call the functions, and
-`runtime_library` links them into executables.
+The compiler gives the library to the driver in two forms, the two functions that `main.rs` passes
+to `runtime`:
+
+- `host_symbols` is the table of functions, which the interpreter and the JIT call inside the
+  `kaleidoscope` process;
+- `runtime_library` is the compiled library, which `build` links into executables.
 
 ```rust file=examples/kaleidoscope/src/lib.rs anchor=runtime
 /// The Kaleidoscope runtime library (`putchard`, `printd`), for linking native executables.
@@ -608,11 +741,15 @@ pub fn host_symbols() -> HostSymbols {
 }
 ```
 
-(A language whose programs need only what the HIR has built in, such as strings, collections and
-printing, has no C code and skips all of this.)
+Many languages need none of this. The HIR has strings, collections and printing built in, and a
+language that uses only those has no C code.
 
-Now Kaleidoscope runs. `hir` shows what the compiler built; the HIR has a text form that A0 can
-read back. `main` comes first because the compiler declares it first.
+Now Kaleidoscope runs. Take `add.k` from chapter 1:
+
+- `hir` prints what the compiler built, in the HIR's text form. A0 can read that text back, too.
+  `main` comes first because the compiler declares it first.
+- `run` runs the program with the JIT.
+- `build` makes an executable, `add` (`add.exe` on Windows), which runs on its own.
 
 ```console
 $ kaleidoscope hir add.k
@@ -635,9 +772,9 @@ $ ./add
 9.000000
 ```
 
-Errors come from the builder, at the place in the source the compiler gave with `at`, with a code
-(`kaleidoscope explain E1001` says what it means) and, for a misspelled name, the closest one in
-scope:
+Errors come from the builder. Each one points at the place the compiler gave with `at`, and has an
+error code. For a misspelled name, the builder also suggests the closest name in scope. In this
+program, `y` is not defined:
 
 ```kaleidoscope file=examples/kaleidoscope/tests/tutorial/undefined.k
 def f(x) x + y;
@@ -652,11 +789,15 @@ error[E1001]: unknown name `y`
   |              ^ help: a variable with a similar name exists: `x`
 ```
 
+`kaleidoscope explain E1001` says more about the error code.
+
 ## 4. Control flow
 
-LLVM's chapter 5 adds `if`/`then`/`else` and `for` loops, and with them basic blocks and phi nodes.
-HIR has `if` and loops as expressions, so the compiler builds them directly. The grammar gets two
-rules,
+LLVM's chapter 5 adds `if`/`then`/`else` and `for` loops. In LLVM IR, they need basic blocks and
+phi nodes. HIR has `if` and loops as expressions, so the compiler builds them directly. This
+chapter adds them in three places: the grammar, the `expr` match, and two new functions.
+
+The grammar gets two rules:
 
 ```text file=examples/kaleidoscope/kaleidoscope.a0g anchor=control
 if_expr = "if" cond:expr "then" ~ "expected 'then'" then:expr "else" ~ "expected 'else'" else:expr;
@@ -669,25 +810,30 @@ for_expr @def(variable: var) @scope
       "in" ~ "expected 'in' after the loop header" body:expr;
 ```
 
-and `primary` two alternatives, before its `;`:
+`primary` gets two alternatives, on the line before its `;`:
 
 ```text file=examples/kaleidoscope/kaleidoscope.a0g anchor=primary_control
 | if_expr | for_expr
 ```
 
-The compiler gets two arms in `expr`:
+`expr` in the compiler gets two arms:
 
 ```rust file=examples/kaleidoscope/src/lib.rs anchor=expr_control
 "if_expr" => self.if_expr(node),
 "for_expr" => self.for_expr(node),
 ```
 
-and the code they call. A condition is true unless it is 0.0 or NaN; to test the value twice it goes
-into a local made with `new_local`, which is not in scope by any name the program could use. `if`
-is a HIR `if` with an `else`, so it has a value. `for` is a `loop` that ends with a `break`, laid out
-in the tutorial's order: the body, then the step and the end condition, then the increment. The
-loop variable is declared in a scope of its own, so it shadows an outer variable of the same name
-only inside the loop.
+Then come the functions those arms call:
+
+- `truthy` decides whether a condition is true. It is true unless it is 0.0 or NaN. `truthy` tests
+  the value twice, so it first stores it in a local variable. `new_local` makes a local that has no
+  name in scope, so the program cannot refer to it.
+- `if_expr` builds a HIR `if` with an `else`, so the `if` has a value.
+- `for_expr` builds a HIR `loop` that ends with a `break`. Each pass runs in the order of LLVM's
+  tutorial: the body, then the step and the end condition, then the increment.
+
+The loop variable is declared in a scope of its own, between `push_scope` and `pop_scope`. So it
+hides an outer variable of the same name only inside the loop.
 
 ```rust file=examples/kaleidoscope/src/lib.rs anchor=control
 impl Compiler<'_> {
@@ -752,6 +898,8 @@ impl Compiler<'_> {
 }
 ```
 
+This program, `count.k`, uses both:
+
 ```kaleidoscope file=examples/kaleidoscope/tests/tutorial/count.k
 # Chapter 4: if/then/else and a for loop.
 extern printd(x);
@@ -766,12 +914,18 @@ $ kaleidoscope run count.k
 3.000000
 ```
 
-(The end condition is tested after the body, so the loop runs for `i = 3` too, as in LLVM's
-tutorial.)
+The loop runs for `i = 3` too. The end condition is tested after the body, as in LLVM's tutorial.
 
 ## 5. User-defined operators
 
-LLVM's chapter 6 lets programs define operators, as functions with a precedence:
+LLVM's chapter 6 lets programs define their own operators. An operator is a function with a
+precedence:
+
+- `def binary^ 50 (base exp)` defines a binary operator `^` with precedence 50. A higher
+  precedence binds tighter.
+- `def unary~(n)` defines a prefix operator `~`.
+
+This program defines six operators and uses them:
 
 ```kaleidoscope file=examples/kaleidoscope/tests/programs/operators.k
 # User-defined operators with precedence, including recursion through an operator.
@@ -802,7 +956,8 @@ printd(2 ^ 3);
 printd(~5);
 ```
 
-A prototype can now start with `binary` or `unary`,
+The grammar changes in two places. First, a prototype can now start with `binary` or `unary`. A
+binary operator may also give its precedence:
 
 ```text file=examples/kaleidoscope/kaleidoscope.a0g anchor=prototype_operators
 | "binary" op:opchar ~ "expected an operator character after 'binary'"
@@ -812,7 +967,8 @@ A prototype can now start with `binary` or `unary`,
   "(" ~ "expected '(' in prototype" params:params ")" ~ "expected ')' in prototype"
 ```
 
-an operand can be a unary operator applied to an operand,
+Second, an operand can be a unary operator applied to an operand. `operand` gets an alternative,
+and a new rule, `unary`, describes it:
 
 ```text file=examples/kaleidoscope/kaleidoscope.a0g anchor=operand_unary
 | unary
@@ -822,21 +978,29 @@ an operand can be a unary operator applied to an operand,
 unary = op:OPCHAR operand:operand;
 ```
 
-and the compiler names operators `binary|`, `unary!` and so on. A prototype that starts with
-`binary` or `unary` gets its name from the operator:
+In the compiler, an operator's function is named after the operator: `binary|`, `unary!` and so
+on. A prototype that starts with `binary` or `unary` gets that name from `operator`. This arm goes
+into the `match` in `prototype`:
 
 ```rust file=examples/kaleidoscope/src/lib.rs anchor=prototype_operator
 kind @ ("binary" | "unary") => self.operator(proto, kind, params.len())?,
 ```
 
+and `expr` gets an arm for unary operators:
+
 ```rust file=examples/kaleidoscope/src/lib.rs anchor=expr_unary
 "unary" => self.unary(node),
 ```
 
-`operator` checks the definition and puts a binary operator's precedence in the table at once, so
-the operator's own body may use it; `unary` calls the function of a unary operator. A binary
-operator needs nothing more: `combine` already calls `binary` + the operator for anything that is
-not built in.
+`operator` checks the definition:
+
+- the number of parameters: two for a binary operator, one for a unary one;
+- that it does not redefine a built-in operator;
+- the precedence: a whole number from 1 to 100, or 30 when none is given.
+
+It puts a binary operator's precedence in the table at once, so the operator's own body may use
+it. `unary` calls a unary operator's function. Binary operators need nothing more, because
+`combine` already calls `binary` followed by the operator for any operator that is not built in.
 
 ```rust file=examples/kaleidoscope/src/lib.rs anchor=operators
 /// The precedence of a binary operator that does not give one.
@@ -901,13 +1065,17 @@ $ kaleidoscope run operators.k
 120.000000
 ```
 
-These operators cost nothing at run time: A0's optimizer, on by default, inlines small functions
-such as `binary&` into their callers. `A0_OPT=0` turns it off, to compare.
+These operators cost nothing at run time. A0's optimizer works on the HIR before machine code is
+made, and it is on by default. It inlines small functions such as `binary&`: it puts the function's
+body in place of each call. To compare, `A0_OPT=0` turns the optimizer off.
 
 ## 6. Mutable variables
 
-LLVM's chapter 7 adds assignment and `var`/`in`, and with them stack slots, `alloca` and a pass that
-turns them back into SSA registers. HIR has mutable locals, so Kaleidoscope needs neither:
+LLVM's chapter 7 adds assignment, `x = value`, and local variables, `var a = 1 in ...`. In LLVM,
+they need stack slots (`alloca`) and a pass that turns those back into SSA registers. HIR has
+mutable local variables, so Kaleidoscope needs neither.
+
+The grammar gets a rule for `var`, and `primary` an alternative for it:
 
 ```text file=examples/kaleidoscope/kaleidoscope.a0g anchor=variables
 var_expr @scope
@@ -920,8 +1088,8 @@ var_binding @def(variable) = name:IDENT ~ "expected an identifier after 'var'" (
 | var_expr
 ```
 
-`=` has been in the operator table since chapter 2. It becomes an assignment in `combine`, before
-the operands are built:
+`=` has been in the operator table since chapter 2. Now `combine` turns it into an assignment,
+before it builds the operands:
 
 ```rust file=examples/kaleidoscope/src/lib.rs anchor=chain_assign
 if self.text(op) == "=" {
@@ -929,13 +1097,20 @@ if self.text(op) == "=" {
 }
 ```
 
+`expr` gets an arm for `var`:
+
 ```rust file=examples/kaleidoscope/src/lib.rs anchor=expr_var
 "var_expr" => self.var_expr(node),
 ```
 
-`var` declares each variable with `let_named` after building its initializer, so an initializer
-sees the outer variable of the same name; `assign_named` assigns whatever local the name means
-(parameters are mutable too).
+The functions:
+
+- `var_expr` declares each variable with `let_named`, after it builds the variable's initializer.
+  So an initializer still sees an outer variable of the same name.
+- `assign` checks that the left side is a variable. Then `assign_named` assigns whatever local the
+  name means, and parameters can be assigned too. The assignment's value is the variable's new
+  value.
+- `unparen` looks through parentheses, so `(x) = 1` assigns `x`.
 
 ```rust file=examples/kaleidoscope/src/lib.rs anchor=variables
 impl Compiler<'_> {
@@ -996,8 +1171,8 @@ impl Compiler<'_> {
 }
 ```
 
-That is the whole language. The example at the top of the tutorial runs at once, or as an
-executable:
+That is the whole language. The program from the top of this page, `fib.k`, now runs with the JIT,
+or as an executable:
 
 ```console
 $ kaleidoscope run fib.k
@@ -1013,18 +1188,28 @@ $ ./fib
 
 ## 7. Editor support
 
-The `@def` and `@scope` annotations in the grammar say which rules declare names and which open
-scopes: `definition @def(function) @scope`, `params @def(parameter: param)`, and so on. That is
-all `kaleidoscope lsp` needs to give editors highlighting, an outline of the program's functions,
-go-to-definition and hovers, next to the compiler's errors as you type. `docs/editors.md` sets it
-up in VS Code (`editors/vscode`), Neovim or Helix.
+A language server is a program that an editor talks to, through the Language Server Protocol, for
+features such as highlighting and go to definition. Kaleidoscope has one, `kaleidoscope lsp`, with
+no code for it. It comes from two annotations in the grammar:
+
+- `@def` marks a rule that declares a name. `definition @def(function)` declares a function, and
+  `params @def(parameter: param)` declares each `param` as a parameter.
+- `@scope` marks a rule that opens a scope: the names declared inside it are visible only there.
+  `definition @def(function) @scope` makes a function's parameters visible only in its body.
+
+From these, the server gives editors highlighting, an outline of the program's functions, go to
+definition and hovers. It also shows the compiler's errors as you type. [Editor support](editors.md)
+sets it up in VS Code, Neovim or Helix.
 
 ## 8. Where to go from here
 
-- **More of the HIR.** Kaleidoscope uses doubles and functions. The HIR also has `int`, `bool`,
+- **More of the HIR.** Kaleidoscope uses only doubles and functions. The HIR also has `int`, `bool`,
   strings, arrays, maps, structs, enums with `match`, generics, closures, nullable references with
-  `if let`, and `any` for dynamic typing, all garbage collected. `examples/minnow` is a typed
-  language that uses them (about 760 lines); `examples/lox` is a dynamically typed one.
-- **Tests.** `examples/kaleidoscope/tests` runs every program interpreted, in the JIT, native and under GC stress,
-  with the optimizer on and off, checks the compiler's errors, and checks this tutorial.
-- **Other hosts.** A program written in C can build HIR with the same builder (`docs/c-api.md`).
+  `if let`, and `any` for dynamic typing. A0's garbage collector frees all of them. Minnow
+  (`examples/minnow`, about 860 lines) is a typed language that uses them. Lox (`examples/lox`) is
+  a dynamically typed one.
+- **Tests.** `examples/kaleidoscope/tests` runs every program four ways: interpreted, with the JIT,
+  as an executable, and with the garbage collector running at every allocation. Each runs with the
+  optimizer on and off. The tests also check the compiler's errors, and this tutorial.
+- **Other hosts.** A program written in C can build HIR with the same builder, through
+  [the C API](c-api.md).
