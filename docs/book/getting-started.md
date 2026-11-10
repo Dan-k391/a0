@@ -1,60 +1,182 @@
 # Getting started
 
-## Build A0
+By the end of this page you will have your own small programming language, made with one command,
+running a program. You will also see what it can do without any more work: build executables,
+report errors, and work in an editor.
 
-A0 is written in Rust and needs a C compiler for its runtime: `cc` on Linux and macOS, MSVC on
-Windows (found automatically). From a checkout:
+## What you need
+
+- **Rust**, from [rustup.rs](https://rustup.rs).
+- **A C compiler**, because part of A0 (its runtime) is written in C. On Linux and macOS, A0 uses
+  `cc`: install your distribution's build tools, or Xcode's command line tools on macOS. On
+  Windows, A0 uses Microsoft's compiler (MSVC), which comes with Visual Studio's "Desktop
+  development with C++". A0 finds it on its own.
+
+## Install the `a0` command
 
 ```
-cargo build --release
-target/release/a0 --help
-target/release/b0 run b0/tests/programs/prelude.b0
+git clone https://github.com/Dan-k391/a0
+cd a0
+cargo install --path crates/a0
 ```
 
-Release archives (`docs/releases.md`) carry `a0`, the example languages and the target packs, so
-that nothing needs building to use them.
+This compiles A0 and puts the `a0` command on your `PATH`. Check that it works:
+
+```
+a0 --help
+```
+
+If you would rather not compile A0, download the archive for your platform from the
+[release page](https://github.com/Dan-k391/a0/releases/latest). It has `a0`, the example
+languages, and everything needed to build for other platforms.
 
 ## Make a language
 
-`a0 new` makes a language project: a grammar, a compiler to HIR, a driver, tests, and editor
-settings, which builds and passes its tests as it is:
+Go to the folder where you keep your projects, and run:
 
 ```
-a0 new mylang --ext ml
+a0 new mylang
 cd mylang
-cargo run -- run examples/hello.ml
+```
+
+This makes a folder `mylang` with a complete small language called Mylang in it. The language is
+a Rust project. It builds and passes its tests before you change anything. A Mylang program looks
+like this (`examples/hello.mylang`):
+
+```
+fn greet(name: string) -> string {
+  return "Hello, " + name + "!";
+}
+
+fn main() {
+  print(greet("Mylang"));
+}
+```
+
+Run it:
+
+```
+cargo run -- run examples/hello.mylang
+```
+
+The first time, Cargo downloads and compiles A0, which takes a few minutes. Then it prints:
+
+```
+Hello, Mylang!
+```
+
+Here, `cargo run --` builds your language's command, `mylang`, and runs it with the words after
+`--`. So the line above runs `mylang run examples/hello.mylang`.
+
+Your project gets A0 from GitHub, at the release that matches your `a0`. To use your own copy of
+A0 instead, for example to change A0 itself, make the project with
+`a0 new mylang --a0 path/to/a0`.
+
+## What is in the project
+
+You will change two files:
+
+- **`mylang.a0g`, the grammar.** It says what Mylang programs look like: their words, symbols and
+  rules. [Grammars](../grammar.md) explains the notation.
+- **`src/lib.rs`, the compiler.** It reads the program that the grammar has parsed and describes
+  each part to A0, in A0's high-level IR: a typed form of the program that A0 knows how to run,
+  compile and debug. [The high-level IR](../hir.md) lists what it has.
+
+Two more you will rarely touch:
+
+- **`src/main.rs`** is the `mylang` command. It is a few lines, and gives the command everything
+  in the next section.
+- **`tests/`** holds the tests. Each file in `tests/programs` is a Mylang program that ends with
+  comments saying what it must print. `cargo test` runs each program, builds it into an
+  executable and runs that too, and checks that both print what the comments say. `tests/lsp.rs`
+  and `tests/dap.rs` test the editor support and the debugger.
+
+For example, `tests/programs/division.mylang` checks what happens when a program divides by zero:
+
+```
+// A runtime error stops the program with a message and where it happened.
+fn divide(a: int, b: int) -> int {
+  return a / b;
+}
+
+fn main() {
+  print(divide(7, 2));
+  print(divide(1, 0));
+}
+// expect: 3
+// expect-stderr: panic: integer division by zero
+// expect-stderr:     at divide (division.mylang:3:10)
+// expect-stderr:     at main (division.mylang:8:9)
+// expect-exit: 101
+```
+
+Run all the tests with:
+
+```
 cargo test
 ```
 
-The project depends on A0's crates (by path inside this repository, or `--a0 PATH`; from git,
-pinned to a release, elsewhere: `a0-hir = { git = "https://github.com/Dan-k391/a0", tag =
-"v1.0.0" }`). Its files:
+## What your language can do
 
-| File | What to change |
+A new language can already do everything below. In these commands, `mylang` stands for
+`cargo run --`. After a build, you can also run the command directly as `target/debug/mylang`.
+
+**Run a program.** A0 compiles it to machine code in memory, then runs it:
+
+```
+mylang run examples/hello.mylang
+```
+
+**Build an executable** that runs without A0 (`hello.exe` on Windows):
+
+```
+mylang build examples/hello.mylang -o hello
+./hello
+```
+
+**Check a program for errors** without running it. Errors point at the problem and suggest a fix
+when there is a likely one:
+
+```
+$ mylang check bad.mylang
+error[E1001]: unknown name `y`
+ --> bad.mylang:3:9
+  |
+3 |   print(y);
+  |         ^ help: a variable with a similar name exists: `x`
+```
+
+`mylang explain E1001` says more about an error code.
+
+**Show where a program failed.** When a program fails while it runs, it prints the error and
+where each function was called from, and exits with status 101:
+
+```
+$ mylang run tests/programs/division.mylang
+3
+panic: integer division by zero
+    at divide (tests/programs/division.mylang:3:10)
+    at main (tests/programs/division.mylang:8:9)
+```
+
+**And more:**
+
+| Command | What it does |
 |---|---|
-| `mylang.a0g` | the syntax: tokens, rules, `@def` and `@scope` for the editor (`docs/grammar.md`) |
-| `src/lib.rs` | the compiler: a walk over the syntax tree that builds HIR by name (`docs/hir.md`) |
-| `src/main.rs` | the command: `Language::new(...)` and what it has (a REPL, modules, a C runtime) |
-| `tests/` | programs with their expected output, run interpreted, in the JIT and natively (`programs.rs`); the language server and the debugger (`lsp.rs`, `dap.rs`) |
+| `mylang repl` | an interactive prompt that runs what you type ([the REPL](../repl.md)) |
+| `mylang lsp` | a language server, which gives editors errors as you type, go to definition, hovers and completion ([editors](../editors.md)) |
+| `mylang dap` | a debugger for editors: breakpoints, stepping and variables ([debugging](../debugging.md)) |
+| `mylang build -g prog.mylang` | an executable with debug information, for gdb, lldb or Visual Studio |
+| `mylang build --target x86_64-windows prog.mylang` | an executable for another platform, once you have that platform's target pack ([other platforms](../cross.md)) |
+| `mylang hir prog.mylang` | prints the high-level IR your compiler built, which helps when you change the compiler |
 
-## Run it every way
-
-With the project built (or through `cargo run --`), the command does all of this:
-
-```
-mylang run prog.ml          # compiled into memory and run (A0_INTERP=1 interprets)
-mylang build prog.ml -o p   # an executable; --target x86_64-windows for another platform
-mylang build -g prog.ml     # with debug information for gdb, lldb or Visual Studio
-mylang hir prog.ml          # the HIR the compiler built
-mylang check prog.ml        # diagnostics only
-mylang repl                 # a read-eval-print loop
-mylang lsp                  # the language server (VS Code: editors/vscode)
-mylang dap                  # the debugger
-mylang explain E2001        # what an error code means
-```
+The project also has settings for VS Code in `.vscode`. Install A0's VS Code extension (in
+`editors/vscode` in the A0 repository) and run `cargo build`. VS Code then uses your language's
+server for `.mylang` files, and F5 debugs the file you are editing.
 
 ## Next
 
-[The tutorial](../tutorial.md) builds a complete small language, Kaleidoscope, and explains each
-piece as it goes. To start a bigger language, read [Building a full language](b0.md) and B0's
-compiler, which is meant to be started from.
+- To learn how to change your language, follow [the tutorial](../tutorial.md). It builds a
+  complete small language, Kaleidoscope, one piece at a time, and explains each piece.
+- To start a bigger language, read [Building a full language](b0.md). It walks through B0, a
+  larger language whose compiler is meant to be copied and changed.
