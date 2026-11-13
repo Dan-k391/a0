@@ -10,11 +10,13 @@ use crate::model::*;
 
 const GRAMMAR: &str = include_str!("hir.a0g");
 
-fn grammar() -> Grammar {
-    match Grammar::from_str(GRAMMAR, SourceId(u32::MAX)) {
+fn grammar() -> &'static Grammar {
+    // Built once: compiling hir.a0g and its lexer's DFA costs more than parsing a std module.
+    static G: std::sync::OnceLock<Grammar> = std::sync::OnceLock::new();
+    G.get_or_init(|| match Grammar::from_str(GRAMMAR, SourceId(u32::MAX)) {
         Ok(g) => g,
         Err(d) => panic!("hir.a0g is invalid:\n{}", d.summary()),
-    }
+    })
 }
 
 /// Parses a module from text (`source` is its id in the caller's `SourceMap`, for spans) and checks
