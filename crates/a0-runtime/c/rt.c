@@ -153,15 +153,30 @@ static int32_t format_float(double value, char *buf, int single) {
     }
     /* Integers below 1e17 print as themselves (what the search below finds for them, faster). */
     if (value == floor(value) && fabs(value) < 1e17) return a0_format_i64((int64_t)value, buf);
-    /* The fewest significant digits that read back exactly: one at a time for short numbers, then
-     * by bisection, since more digits never read back worse. 17 always do. */
+    /* The fewest significant digits that read back exactly. Above the subnormals, at most one
+     * decimal of DBL_DIG (FLT_DIG) significant digits reads back as the value: those that do span
+     * at most 2^-52 (2^-23) of it, and such decimals are 10^-15 (10^-6) of it apart or more. So if
+     * the nearest one reads back, it is the shortest with its trailing zeros dropped. Subnormals
+     * have fewer bits: one digit at a time for them. Then bisection, since more digits never read
+     * back worse; 17 (9) always do. */
     char sci[40];
     int digits = 0;
-    for (int d = 1; d <= 6 && digits == 0; d++) {
-        if (round_trips(value, d, sci, sizeof sci, single)) digits = d;
+    int lo = 7;
+    if (fabs(value) >= (single ? FLT_MIN : DBL_MIN)) {
+        int base = single ? FLT_DIG : DBL_DIG;
+        if (round_trips(value, base, sci, sizeof sci, single)) {
+            const char *e = strchr(sci, 'e');
+            digits = base;
+            while (digits > 1 && e[digits - base - 1] == '0') digits--;
+        }
+        lo = base + 1;
+    } else {
+        for (int d = 1; d <= 6 && digits == 0; d++) {
+            if (round_trips(value, d, sci, sizeof sci, single)) digits = d;
+        }
     }
     if (digits == 0) {
-        int lo = 7, hi = single ? 9 : 17;
+        int hi = single ? 9 : 17;
         while (lo < hi) {
             int mid = (lo + hi) / 2;
             if (round_trips(value, mid, sci, sizeof sci, single)) {

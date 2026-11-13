@@ -462,19 +462,38 @@ mod tests {
 
     unsafe extern "C" {
         fn a0_format_f64(value: f64, buf: *mut c_char) -> i32;
+        fn a0_format_f32(value: f64, buf: *mut c_char) -> i32;
+    }
+
+    fn text(buf: &[c_char], n: i32) -> String {
+        let bytes: Vec<u8> = buf[..n as usize].iter().map(|&c| c as u8).collect();
+        String::from_utf8(bytes).unwrap()
     }
 
     fn fmt(v: f64) -> String {
         let mut buf = [0 as c_char; 32];
         let n = unsafe { a0_format_f64(v, buf.as_mut_ptr()) };
-        let bytes: Vec<u8> = buf[..n as usize].iter().map(|&c| c as u8).collect();
-        String::from_utf8(bytes).unwrap()
+        text(&buf, n)
+    }
+
+    fn fmt32(v: f32) -> String {
+        let mut buf = [0 as c_char; 32];
+        let n = unsafe { a0_format_f32(v as f64, buf.as_mut_ptr()) };
+        text(&buf, n)
     }
 
     /// The shortest digits that read back, from Rust's own formatting, laid out as the runtime
     /// does: plain for exponents from -5 to 16, else `d.ddde+XX`.
     fn reference(v: f64) -> String {
-        let e = format!("{v:e}");
+        layout(&format!("{v:e}"), v)
+    }
+
+    /// The same for an `f32`, whose shortest digits are fewer.
+    fn reference32(v: f32) -> String {
+        layout(&format!("{v:e}"), v as f64)
+    }
+
+    fn layout(e: &str, v: f64) -> String {
         let (mantissa, exponent) = e.split_once('e').unwrap();
         let exponent: i32 = exponent.parse().unwrap();
         let digits = mantissa.chars().filter(char::is_ascii_digit).count() as i32;
@@ -495,10 +514,12 @@ mod tests {
             state
         };
         for i in 0..20000 {
-            let v = match i % 4 {
+            let v = match i % 5 {
                 0 => f64::from_bits(next()),
                 1 => (next() % 1_000_000) as f64 / 100.0,
                 2 => (next() as i64 >> (next() % 60)) as f64,
+                // Subnormals, which random bits are only once in 2048 draws.
+                3 => f64::from_bits(next() % (1 << 52)),
                 _ => (next() % 10_000) as f64 * 10f64.powi((next() % 40) as i32 - 20),
             };
             if !v.is_finite() || v == 0.0 {
@@ -520,5 +541,36 @@ mod tests {
         assert_eq!(fmt(1e300), "1e+300");
         assert_eq!(fmt(f64::NAN), "nan");
         assert_eq!(fmt(f64::NEG_INFINITY), "-inf");
+        // Subnormals have fewer digits than their 15 significant digits suggest.
+        assert_eq!(fmt(5e-324), "5e-324");
+        assert_eq!(fmt(2.5e-320), "2.5e-320");
+        assert_eq!(fmt(f64::MIN_POSITIVE), reference(f64::MIN_POSITIVE));
+    }
+
+    #[test]
+    fn formats_floats_like_the_shortest_round_trip() {
+        let mut state = 0x9e3779b97f4a7c15u64;
+        let mut next = move || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state
+        };
+        assert_eq!(fmt32(f32::from_bits(1)), "1e-45");
+        assert_eq!(fmt32(0.1), "0.1");
+        assert_eq!(fmt32(f32::MIN_POSITIVE), reference32(f32::MIN_POSITIVE));
+        for i in 0..20000 {
+            let v = match i % 4 {
+                0 => f32::from_bits(next() as u32),
+                // Subnormals.
+                1 => f32::from_bits((next() % (1 << 23)) as u32),
+                2 => (next() % 1_000_000) as f32 / 100.0,
+                _ => (next() % 10_000) as f32 * 10f32.powi((next() % 40) as i32 - 20),
+            };
+            if !v.is_finite() || v == 0.0 {
+                continue;
+            }
+            assert_eq!(fmt32(v), reference32(v), "{v:e}");
+        }
     }
 }

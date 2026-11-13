@@ -12,6 +12,11 @@
 ; expect-stdout: nan
 ; expect-stdout: -0
 ; expect-stdout: 0
+; expect-stdout: 5e-324
+; expect-stdout: 2.5e-320
+; expect-stdout: 0.123456789012345
+; expect-stdout: 0.3333333333333333
+; expect-stdout: 1.2345678901234567
 module "floats"
 
 extern func @a0_print_f64(f64)
@@ -77,6 +82,19 @@ func @main() -> i32 {
   call @show(%nzroot)
   %nzabs: f64 = call @fabs(%nz)
   call @show(%nzabs)
+  ; Subnormals have fewer digits than normal numbers; the others need 15, 16 and 17.
+  %tiny: f64 = fconst 5e-324
+  call @show(%tiny)
+  %sub: f64 = fconst 2.5e-320
+  call @show(%sub)
+  %d15: f64 = fconst 0.123456789012345
+  call @show(%d15)
+  %unit: f64 = fconst 1.0
+  %three: f64 = fconst 3.0
+  %third: f64 = fdiv %unit, %three
+  call @show(%third)
+  %d17: f64 = fconst 1.2345678901234567
+  call @show(%d17)
   %ok: i32 = iconst 0
   return %ok
 }
