@@ -1004,7 +1004,7 @@ impl Gen {
                                 self.expr(Int, ctx, e)
                             );
                         }
-                        return if self.rng.chance(50) {
+                        return if self.rng.chance(65) {
                             format!("{p}.a = {};", self.expr(Int, ctx, e))
                         } else {
                             format!("{p}.b = {};", self.expr(U8, ctx, e))
