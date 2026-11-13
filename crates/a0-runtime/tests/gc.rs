@@ -169,6 +169,34 @@ unsafe fn maps() {
             assert_eq!(a0_map_has(m, i * 7), (i % 2) as i64);
         }
         assert_eq!(a0_map_get(m, 7 * 999), 999);
+
+        // A sliding window that keeps the map one short of its capacity. An insert that does not
+        // add one to `used` (the map's second word, entries including dead ones) rebuilt the map;
+        // with too little headroom that happened on every other insert, copying it all each time.
+        let m = a0_map_new(KEY_RAW, WORD_RAW as i64);
+        let n = 8191u64;
+        for k in 0..n {
+            a0_map_set(m, k, k);
+        }
+        let used = || *(m as *const i64).add(1);
+        let mut rebuilds = 0;
+        for k in 0..20_000u64 {
+            let before = used();
+            a0_map_set(m, n + k, k);
+            if used() != before + 1 {
+                rebuilds += 1;
+            }
+            assert_eq!(a0_map_remove(m, k), 1);
+        }
+        assert!(rebuilds < 10, "{rebuilds} rebuilds for 20000 inserts");
+        assert_eq!(a0_map_len(m), n as i64);
+        assert_eq!(a0_map_has(m, 19_999), 0);
+        assert_eq!(a0_map_get(m, 20_000), 20_000 - n);
+        let keys = a0_map_keys(m);
+        let order: Vec<u64> = (0..a0_array_len(keys))
+            .map(|i| a0_array_get(keys, i))
+            .collect();
+        assert_eq!(order, (20_000..20_000 + n).collect::<Vec<_>>());
     }
 }
 

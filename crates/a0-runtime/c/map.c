@@ -151,7 +151,9 @@ void a0_map_set(A0Map *m, uint64_t key, uint64_t value) {
         m->entries[e].value = value;
         return;
     }
-    if (m->used == m->entry_cap) rebuild(m, m->count + 1);
+    /* Ask for headroom: compacting a map that removals left nearly full would free only a few slots,
+     * and each insert would rebuild the whole map again. This way a rebuild frees a fifth of it. */
+    if (m->used == m->entry_cap) rebuild(m, m->count + m->count / 4 + 1);
     e = m->used++;
     m->entries[e].key = key;
     m->entries[e].value = value;
