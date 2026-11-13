@@ -1,6 +1,6 @@
 //! Lowering from A0 IR to Cranelift, producing an object file.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use a0_diag::{Diagnostic, Diagnostics};
 use a0_ir::{FloatCC, FuncId, GlobalId, Inst, IntCC, Module, Opcode, Region, SymbolKind, Type};
@@ -491,6 +491,8 @@ pub(crate) fn compile_functions<M: ClifModule>(
                 func_refs: HashMap::new(),
                 data_refs: HashMap::new(),
                 call_refs: HashMap::new(),
+                float_loads: HashSet::new(),
+                float_stores: HashSet::new(),
                 trap_sites: Vec::new(),
                 loops: Vec::new(),
                 locations,
@@ -889,6 +891,42 @@ fn emit_c_main(
     Ok(())
 }
 
+/// Words in memory that only ever hold floats: the `load`s of an `i32`/`i64` whose every use is a
+/// `bitcast` (to a float), and the `bitcast`s of a float whose every use is the value a `store`
+/// writes. HIR lowering reads and writes float fields this way; loading and storing them as floats
+/// moves the same bits without a trip through an integer register.
+fn float_words(m: &Module, insts: &[Inst]) -> (HashSet<Inst>, HashSet<Inst>) {
+    // Per value: (uses, uses as a bitcast's operand, uses as a store's value).
+    let mut uses: HashMap<a0_ir::Value, (u32, u32, u32)> = HashMap::new();
+    for &i in insts {
+        let op = m.inst_opcode(i);
+        for (n, &a) in m.inst_args(i).iter().enumerate() {
+            let u = uses.entry(a).or_default();
+            u.0 += 1;
+            u.1 += (op == Opcode::Bitcast) as u32;
+            u.2 += (op == Opcode::Store && n == 0) as u32;
+        }
+    }
+    let mut loads = HashSet::new();
+    let mut bitcasts = HashSet::new();
+    for &i in insts {
+        let Some(r) = m.inst_result(i) else { continue };
+        let Some(&(n, cast, stored)) = uses.get(&r) else {
+            continue;
+        };
+        match m.inst_opcode(i) {
+            Opcode::Load if m.value_type(r).is_int() && cast == n => {
+                loads.insert(i);
+            }
+            Opcode::Bitcast if m.value_type(r).is_int() && stored == n => {
+                bitcasts.insert(i);
+            }
+            _ => {}
+        }
+    }
+    (loads, bitcasts)
+}
+
 struct LoopBlocks {
     header: ir::Block,
     exit: ir::Block,
@@ -913,6 +951,9 @@ struct Lower<'a, M: ClifModule> {
     data_refs: HashMap<DataId, ir::GlobalValue>,
     /// The references calls use, which may be direct where `func_refs` (for addresses) is not.
     call_refs: HashMap<cranelift_module::FuncId, ir::FuncRef>,
+    /// The `load`s that load a float and the `bitcast`s that keep one (`float_words`).
+    float_loads: HashSet<Inst>,
+    float_stores: HashSet<Inst>,
     /// Cold blocks that report a trap: (block, trap code, location).
     trap_sites: Vec<(ir::Block, i32, u32)>,
     loops: Vec<LoopBlocks>,
@@ -1005,7 +1046,9 @@ impl<M: ClifModule> Lower<'_, M> {
             }
         }
         let body = m.func_body(self.f).unwrap();
-        for inst in a0_ir::insts_in_text_order(m, body) {
+        let insts = a0_ir::insts_in_text_order(m, body);
+        (self.float_loads, self.float_stores) = float_words(m, &insts);
+        for inst in insts {
             if m.inst_opcode(inst) == Opcode::StackSlot {
                 let (size, align) = m.inst_stack_slot(inst);
                 let data = ir::StackSlotData::new(
@@ -1294,6 +1337,14 @@ impl<M: ClifModule> Lower<'_, M> {
                 let v = self.b.ins().fcmp(cc, args[0], args[1]);
                 self.set(inst, v);
             }
+            // The operand is already the float (`float_words`), or the float a store writes.
+            Opcode::Bitcast
+                if self.float_stores.contains(&inst)
+                    || m.value_inst(m.inst_args(inst)[0])
+                        .is_some_and(|i| self.float_loads.contains(&i)) =>
+            {
+                self.set(inst, args[0]);
+            }
             op if op.is_cast() => {
                 let v = self.cast(op, arg_ty(0), result_ty.unwrap(), args[0]);
                 self.set(inst, v);
@@ -1304,7 +1355,11 @@ impl<M: ClifModule> Lower<'_, M> {
             }
             Opcode::Load => {
                 let ty = result_ty.unwrap();
-                let cty = self.ty(ty);
+                let cty = match ty {
+                    Type::I32 if self.float_loads.contains(&inst) => types::F32,
+                    Type::I64 if self.float_loads.contains(&inst) => types::F64,
+                    _ => self.ty(ty),
+                };
                 let v = self.b.ins().load(cty, MemFlagsData::new(), args[0], 0);
                 let v = if ty == Type::I1 {
                     self.b.ins().band_imm_u(v, 1)

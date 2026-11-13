@@ -1,0 +1,173 @@
+; Floats kept in memory as integer words (as HIR lowering keeps fields): a `load` whose uses are
+; all `bitcast`s, and a `bitcast` whose uses are all stored, keep every bit, NaN payloads and the
+; sign of zero included.
+; expect-stdout: 9218868437227405313
+; expect-stdout: 9221120237041090851
+; expect-stdout: -9223372036854775808
+; expect-stdout: 4609434218613702656
+; expect-stdout: 2139095041
+; expect-stdout: 2143289635
+; expect-stdout: -2147483648
+; expect-stdout: 1069547520
+; expect-stdout: nested 4609434218613702656 0
+; expect-stdout: twice 4609434218613702656 4609434218613702656
+; expect-stdout: mixed 4609434218613702657 1.5
+; expect-stdout: sum 3
+; expect-exit: 0
+module "float_words"
+
+extern func @a0_print_bytes(ptr, i64)
+extern func @a0_print_i64(i64)
+extern func @a0_print_f64(f64)
+extern func @a0_print_newline()
+
+data @nested_label = "nested "
+data @twice_label = "twice "
+data @mixed_label = "mixed "
+data @sum_label = "sum "
+data @space_text = " "
+
+; The bits through a float, into memory as a word, and back out through a float.
+func @word64(%bits: i64) -> i64 {
+  %slot: ptr = stack_slot 8, 8
+  %f: f64 = bitcast %bits
+  %w: i64 = bitcast %f
+  store %w, %slot
+  %l: i64 = load %slot
+  %g: f64 = bitcast %l
+  %r: i64 = bitcast %g
+  return %r
+}
+
+func @word32(%bits: i32) -> i32 {
+  %slot: ptr = stack_slot 4, 4
+  %f: f32 = bitcast %bits
+  %w: i32 = bitcast %f
+  store %w, %slot
+  %l: i32 = load %slot
+  %g: f32 = bitcast %l
+  %r: i32 = bitcast %g
+  return %r
+}
+
+; The load's only use is in a nested region.
+func @nested(%p: ptr, %c: i1) -> i64 {
+  %l: i64 = load %p
+  if %c {
+    %t: i1 = iconst 1
+    if %t {
+      %g: f64 = bitcast %l
+      %r: i64 = bitcast %g
+      return %r
+    }
+  }
+  %z: i64 = iconst 0
+  return %z
+}
+
+func @show(%x: i64) {
+  call @a0_print_i64(%x)
+  call @a0_print_newline()
+}
+
+func @show32(%x: i32) {
+  %w: i64 = sext %x
+  call @show(%w)
+}
+
+func @label(%l: ptr, %n: i64) {
+  call @a0_print_bytes(%l, %n)
+}
+
+func @space() {
+  %s: ptr = addr @space_text
+  %one: i64 = iconst 1
+  call @a0_print_bytes(%s, %one)
+}
+
+func @main() -> i32 {
+  %snan: i64 = iconst 9218868437227405313
+  %a: i64 = call @word64(%snan)
+  call @show(%a)
+  %qnan: i64 = iconst 9221120237041090851
+  %b: i64 = call @word64(%qnan)
+  call @show(%b)
+  %negz: i64 = iconst -9223372036854775808
+  %c: i64 = call @word64(%negz)
+  call @show(%c)
+  %onehalf: i64 = iconst 4609434218613702656
+  %d: i64 = call @word64(%onehalf)
+  call @show(%d)
+
+  %snan32: i32 = iconst 2139095041
+  %e: i32 = call @word32(%snan32)
+  call @show32(%e)
+  %qnan32: i32 = iconst 2143289635
+  %f: i32 = call @word32(%qnan32)
+  call @show32(%f)
+  %negz32: i32 = iconst -2147483648
+  %g: i32 = call @word32(%negz32)
+  call @show32(%g)
+  %onehalf32: i32 = iconst 1069547520
+  %h: i32 = call @word32(%onehalf32)
+  call @show32(%h)
+
+  ; Both branches of the nested load.
+  %slot: ptr = stack_slot 8, 8
+  store %onehalf, %slot
+  %yes: i1 = iconst 1
+  %no: i1 = iconst 0
+  %n1: i64 = call @nested(%slot, %yes)
+  %n2: i64 = call @nested(%slot, %no)
+  %nl: ptr = addr @nested_label
+  %seven: i64 = iconst 7
+  call @label(%nl, %seven)
+  call @a0_print_i64(%n1)
+  call @space()
+  call @show(%n2)
+
+  ; One bitcast stored twice.
+  %one: f64 = fconst 1.5
+  %w: i64 = bitcast %one
+  %s1: ptr = stack_slot 8, 8
+  %s2: ptr = stack_slot 8, 8
+  store %w, %s1
+  store %w, %s2
+  %l1: i64 = load %s1
+  %l2: i64 = load %s2
+  %tl: ptr = addr @twice_label
+  %six: i64 = iconst 6
+  call @label(%tl, %six)
+  call @a0_print_i64(%l1)
+  call @space()
+  call @show(%l2)
+
+  ; A word used both as an integer and as a float stays an integer load.
+  %m: i64 = load %s1
+  %one_i: i64 = iconst 1
+  %m1: i64 = iadd %m, %one_i
+  %mf: f64 = bitcast %m
+  %ml: ptr = addr @mixed_label
+  call @label(%ml, %six)
+  call @a0_print_i64(%m1)
+  call @space()
+  call @a0_print_f64(%mf)
+  call @a0_print_newline()
+
+  ; A float field read, added to and written back, as HIR lowering does it.
+  %x: i64 = load %s1
+  %xf: f64 = bitcast %x
+  %y: f64 = fadd %xf, %xf
+  %yw: i64 = bitcast %y
+  store %yw, %s2
+  %z: i64 = load %s2
+  %zf: f64 = bitcast %z
+  %sl: ptr = addr @sum_label
+  %four: i64 = iconst 4
+  call @label(%sl, %four)
+  call @a0_print_f64(%zf)
+  call @a0_print_newline()
+
+  %ok: i32 = iconst 0
+  return %ok
+}
