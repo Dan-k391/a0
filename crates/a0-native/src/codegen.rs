@@ -75,9 +75,12 @@ pub(crate) fn make_isa(
         target.requires_pic()
     };
     set(&mut flags, "is_pic", if pic { "true" } else { "false" })?;
-    if jit {
-        set(&mut flags, "use_colocated_libcalls", "false")?;
-    }
+    // In an object, calls (Cranelift's libcalls and ours, `Lower::call_ref`) are direct.
+    set(
+        &mut flags,
+        "use_colocated_libcalls",
+        if jit { "false" } else { "true" },
+    )?;
     let isa = cranelift_codegen::isa::lookup_by_name(target.triple())
         .map_err(|e| backend_error(format!("Cranelift does not support {target}: {e}")))?;
     isa.finish(settings::Flags::new(flags))
@@ -487,6 +490,7 @@ pub(crate) fn compile_functions<M: ClifModule>(
                 stack_slots: HashMap::new(),
                 func_refs: HashMap::new(),
                 data_refs: HashMap::new(),
+                call_refs: HashMap::new(),
                 trap_sites: Vec::new(),
                 loops: Vec::new(),
                 locations,
@@ -907,6 +911,8 @@ struct Lower<'a, M: ClifModule> {
     stack_slots: HashMap<Inst, ir::StackSlot>,
     func_refs: HashMap<cranelift_module::FuncId, ir::FuncRef>,
     data_refs: HashMap<DataId, ir::GlobalValue>,
+    /// The references calls use, which may be direct where `func_refs` (for addresses) is not.
+    call_refs: HashMap<cranelift_module::FuncId, ir::FuncRef>,
     /// Cold blocks that report a trap: (block, trap code, location).
     trap_sites: Vec<(ir::Block, i32, u32)>,
     loops: Vec<LoopBlocks>,
@@ -951,6 +957,23 @@ impl<M: ClifModule> Lower<'_, M> {
         let gv = self.obj.declare_data_in_func(id, self.b.func);
         self.data_refs.insert(id, gv);
         gv
+    }
+
+    /// The reference a call of `id` uses. In an object every call can be direct, even of a function
+    /// in a shared library or another unit: linkers route it through a PLT, stub or import thunk
+    /// and add range thunks. JIT code (`use_colocated_libcalls` is off for it, `make_isa`) may be
+    /// loaded too far from the runtime for that. An address (`func_ref`) still goes through the
+    /// GOT, since PIE cannot take a shared library function's address PC-relatively.
+    fn call_ref(&mut self, id: cranelift_module::FuncId) -> ir::FuncRef {
+        if let Some(&r) = self.call_refs.get(&id) {
+            return r;
+        }
+        let r = self.obj.declare_func_in_func(id, self.b.func);
+        if self.obj.isa().flags().use_colocated_libcalls() {
+            self.b.func.dfg.ext_funcs[r].colocated = true;
+        }
+        self.call_refs.insert(id, r);
+        r
     }
 
     fn function(&mut self) {
@@ -1070,7 +1093,7 @@ impl<M: ClifModule> Lower<'_, M> {
     }
 
     fn terminate_with_trap(&mut self, code: i32, loc: u32) {
-        let trap = self.func_ref(self.rt.trap);
+        let trap = self.call_ref(self.rt.trap);
         let c = self.iconst(types::I32, code as i64);
         let l = self.iconst(types::I64, loc as i64);
         let fp = self.b.ins().get_frame_pointer(self.ptr);
@@ -1312,7 +1335,7 @@ impl<M: ClifModule> Lower<'_, M> {
             }
             Opcode::Call => {
                 let callee = m.inst_callee(inst);
-                let fr = self.func_ref(self.func_ids[callee.index()]);
+                let fr = self.call_ref(self.func_ids[callee.index()]);
                 let mut args = args;
                 if m.func_is_extern(callee) && a0_runtime::reports_location(m.func_name(callee)) {
                     let loc = self.iconst(types::I64, self.locations.of(inst) as i64);
@@ -1434,7 +1457,7 @@ impl<M: ClifModule> Lower<'_, M> {
                 Pass::Returned(parts) => result = Some((a, parts, size)),
             }
         }
-        let fr = self.func_ref(self.func_ids[callee.index()]);
+        let fr = self.call_ref(self.func_ids[callee.index()]);
         self.mark_call(Some(inst));
         let call = self.b.ins().call(fr, &abi_args);
         self.mark_call(None);

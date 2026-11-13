@@ -186,6 +186,54 @@ fn library_objects_export_functions_under_their_names() {
     }
 }
 
+/// Calls of functions the object imports are direct branches, which linkers send through a PLT,
+/// stub or import thunk; a function's address still comes from the GOT or an absolute word.
+#[test]
+fn imported_functions_are_called_directly() {
+    use object::{ObjectSection, RelocationFlags, RelocationTarget, elf, macho, pe};
+    let text = "module \"m\"\nextern func @putchar(i32) -> i32\nextern func @abs(i32) -> i32\nfunc @main() -> i32 {\n  %c: i32 = iconst 65\n  %r: i32 = call @putchar(%c)\n  %p: ptr = addr @abs\n  %a: i32 = call_indirect %p(%r) : (i32) -> i32\n  return %a\n}\n";
+    let m = a0_ir::parse_and_verify(text, SourceId(0)).unwrap();
+    let is_branch = |flags: RelocationFlags| match flags {
+        RelocationFlags::Elf { r_type } => {
+            r_type == elf::R_X86_64_PLT32 || r_type == elf::R_AARCH64_CALL26
+        }
+        RelocationFlags::MachO { r_type, .. } => {
+            r_type == macho::X86_64_RELOC_BRANCH || r_type == macho::ARM64_RELOC_BRANCH26
+        }
+        RelocationFlags::Coff { typ } => {
+            typ == pe::IMAGE_REL_AMD64_REL32 || typ == pe::IMAGE_REL_ARM64_BRANCH26
+        }
+        _ => false,
+    };
+    for target in emittable_targets() {
+        let bytes = compile_object(&m, target, &CodegenOptions::default()).unwrap();
+        let file = object::File::parse(&*bytes).unwrap();
+        let relocs_of = |name: &str| -> Vec<RelocationFlags> {
+            let want = c_name(target, name);
+            file.sections()
+                .flat_map(|s| s.relocations().collect::<Vec<_>>())
+                .filter_map(|(_, r)| match r.target() {
+                    RelocationTarget::Symbol(i) => {
+                        let sym = file.symbol_by_index(i).ok()?;
+                        (sym.name().ok()? == want).then_some(r.flags())
+                    }
+                    _ => None,
+                })
+                .collect()
+        };
+        let calls = relocs_of("putchar");
+        assert!(
+            !calls.is_empty() && calls.iter().all(|&f| is_branch(f)),
+            "{target}: {calls:?}"
+        );
+        let addrs = relocs_of("abs");
+        assert!(
+            !addrs.is_empty() && addrs.iter().all(|&f| !is_branch(f)),
+            "{target}: {addrs:?}"
+        );
+    }
+}
+
 #[test]
 fn invalid_modules_are_rejected_with_diagnostics() {
     let text = "module \"m\"\nfunc @f() -> i64 {\n  %x: f64 = fconst 1.0\n  return %x\n}\n";
