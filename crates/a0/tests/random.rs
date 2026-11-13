@@ -703,7 +703,11 @@ impl Gen {
                 }
             },
             Any => {
-                let from = self.rng.pick(&[Int, Bool, Float, Str, Rec, Unit, Any]);
+                // Sized integers too: they box as `int`, which type tests must not decide from the
+                // static type.
+                let from = self
+                    .rng
+                    .pick(&[Int, Bool, Float, Str, Rec, Unit, Any, U8, I32]);
                 if self.rng.chance(25) {
                     // Lox's `a and b`: a branch that ends in a local holding a boxed value.
                     let t = self.name("v");
@@ -1004,7 +1008,7 @@ impl Gen {
                                 self.expr(Int, ctx, e)
                             );
                         }
-                        return if self.rng.chance(65) {
+                        return if self.rng.chance(75) {
                             format!("{p}.a = {};", self.expr(Int, ctx, e))
                         } else {
                             format!("{p}.b = {};", self.expr(U8, ctx, e))
