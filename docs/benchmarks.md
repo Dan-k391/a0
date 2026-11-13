@@ -9,7 +9,9 @@ This page answers three questions:
    A0's optimizer off?
 
 The programs are small, written the obvious way, and written the same way in each language.
-Nothing was tuned for this page, and it is not a CI check. The numbers are for A0 v1.0.0.
+Nothing was tuned for this page, and it is not a CI check. The numbers are for A0's unreleased
+code after v1.0.0 (commit 5a98dad), which adds a pass of optimizations
+([the changelog](../CHANGELOG.md) lists them).
 
 ## How to read the tables
 
@@ -18,9 +20,10 @@ Nothing was tuned for this page, and it is not a CI check. The numbers are for A
   (about 1 ms). Compile times include linking.
 - **Each table answers one question**, written above it. A0's columns come first; the columns
   after them are what A0 is compared with. The sentence under the table says what it shows.
-- The machine is a shared cloud machine with 4 processors. Differences under about 10% are noise,
-  and some programs vary more than that between runs (Minnow's `nbody` took 125–195 ms). Earlier
-  releases were measured on a faster machine, so compare numbers within this page only.
+- The machine is a laptop with a 16-core processor (32 hardware threads), running Linux under WSL2
+  on Windows. Differences under about 10% are noise.
+- [From release to release](#from-release-to-release) was measured on another machine. Compare
+  its numbers only with each other, not with the tables above it.
 
 The words used for A0's ways of running a program:
 
@@ -38,16 +41,18 @@ Minnow, Tin, Kaleidoscope and Lox are example languages built on A0
 
 | A0 language | Compared with | Result |
 |---|---|---|
-| Minnow (typed, with a collector) | C and Go | About as fast as clang -O0, about half as fast as clang -O2, and slower than Go except on allocation |
-| Tin (no collector) | C | About as fast as clang -O0 |
-| Kaleidoscope | LLVM's tutorial | Slightly faster than the tutorial's code on `mandel` (916 against 1015 ms), 4.2 times slower than LLVM's full -O2 |
-| Lox (dynamic) | clox | Faster on five of six programs (up to 2.7 times), slower on `invocation` (417 against 382 ms) |
-| Minnow with threads | itself on one thread | 3.8 times faster on 4 processors |
-| A large program | | 100,000 lines in 175 modules build in 1.3 s; the language server answers after an edit in about 0.4 s |
-| Compiling | clang and Go | A0's own work takes under 20 ms on these programs; most of a build is the linker |
+| Minnow (typed, with a collector) | C and Go | Faster than clang -O0 on three of five programs, 1.2–2.3 times slower than clang -O2, and as fast as Go or faster on three of five |
+| Tin (no collector) | C | Faster than clang -O0 on `sieve` and `nbody`, as fast as clang -O2 on `nbody`, 1.2 times slower than -O0 on `fib` and within noise of it on `binarytrees` |
+| Kaleidoscope | LLVM's tutorial | 1.6 times faster than the tutorial's code on `mandel` (241 against 391 ms), 2.2 times slower than LLVM's full -O2 |
+| Lox (dynamic) | clox | Faster on the five programs that compare, from 1.1 times (`invocation`, close to noise) to 4.1 times (`binary_trees`); `equality` does not compare |
+| Minnow with threads | itself on one thread | 4.0 times faster on 4 threads, 7.3 times on 8 |
+| A large program | | 100,000 lines in 175 modules build in 0.4 s; the language server answers after an edit in about 0.15 s |
+| Compiling | clang and Go | A0's own work takes under 10 ms on these programs; most of a build is the linker |
 
-v1.0 changed nothing in the code A0 generates, and runs as fast as v0.9
-([From release to release](#from-release-to-release)).
+Every table above [From release to release](#from-release-to-release) measures the code after
+v1.0.0 on this laptop. That section compares releases 0.8 to 1.0, which were measured earlier on
+another machine, so its numbers cannot be compared with these. [The changelog](../CHANGELOG.md)
+gives the before and after of this pass of optimizations, measured on Windows.
 
 ## Minnow against C and Go
 
@@ -66,63 +71,69 @@ Minnow, C and Go:
 
 | Program | Minnow (executable) | clang -O0 | clang -O2 | Go |
 |---|---|---|---|---|
-| fib | 63 ms | 76 ms | 41 ms | 57 ms |
-| sieve | 150 ms | 165 ms | 72 ms | 103 ms |
-| nbody | 195 ms | 185 ms | 60 ms | 129 ms |
-| binarytrees | 475 ms | 363 ms | 316 ms | 730 ms |
-| closures | 144 ms | 232 ms | 64 ms | 49 ms |
+| fib | 36 ms | 28 ms | 16 ms | 28 ms |
+| sieve | 32 ms | 43 ms | 26 ms | 32 ms |
+| nbody | 45 ms | 79 ms | 36 ms | 53 ms |
+| binarytrees | 156 ms | 136 ms | 116 ms | 353 ms |
+| closures | 40 ms | 115 ms | 21 ms | 27 ms |
 
-Minnow runs at about clang -O0's speed, and clang -O2 is about twice as fast. On allocation
-(`binarytrees`), Minnow is 1.3–1.5 times slower than `malloc` and `free`, and faster than Go.
+Minnow is faster than clang -O0 on `sieve`, `nbody` and `closures`, and slower on `fib` and
+`binarytrees`. clang -O2 is 1.2–1.3 times faster than Minnow on `sieve`, `nbody` and
+`binarytrees`, and about twice as fast on `fib` and `closures`. On allocation (`binarytrees`),
+Minnow is 1.1–1.3 times slower than `malloc` and `free`, and 2.3 times faster than Go.
 
 **How long does building an executable take?**
 
 | Program | Minnow | clang -O0 | clang -O2 | go build |
 |---|---|---|---|---|
-| fib | 37 ms | 93 ms | 92 ms | 198 ms |
-| sieve | 40 ms | 101 ms | 106 ms | 187 ms |
-| nbody | 61 ms | 97 ms | 147 ms | 180 ms |
-| binarytrees | 38 ms | 93 ms | 122 ms | 197 ms |
-| closures | 40 ms | 98 ms | 108 ms | 176 ms |
+| fib | 131 ms | 98 ms | 104 ms | 183 ms |
+| sieve | 140 ms | 101 ms | 104 ms | 176 ms |
+| nbody | 145 ms | 101 ms | 118 ms | 149 ms |
+| binarytrees | 144 ms | 107 ms | 111 ms | 192 ms |
+| closures | 141 ms | 97 ms | 101 ms | 158 ms |
 
-Minnow builds faster than clang and Go. Go's time is with its standard library already cached.
+Minnow builds faster than Go and slower than clang. Almost all of a Minnow build is linking with
+`cc`, which on this machine takes about 130 ms even for a plain C object; clang links in about
+80 ms ([Compiling](#compiling)). Go's time is with its standard library already cached.
 
 **What do A0's options cost?**
 
 | Program | executable | executable, no HIR optimizer | JIT (`minnow run`) | build, no HIR optimizer |
 |---|---|---|---|---|
-| fib | 63 ms | 68 ms | 62 ms | 34 ms |
-| sieve | 150 ms | 143 ms | 109 ms | 43 ms |
-| nbody | 195 ms | 134 ms | 168 ms | 55 ms |
-| binarytrees | 475 ms | 581 ms | 526 ms | 43 ms |
-| closures | 144 ms | 782 ms | 198 ms | 42 ms |
+| fib | 36 ms | 36 ms | 32 ms | 133 ms |
+| sieve | 32 ms | 31 ms | 34 ms | 134 ms |
+| nbody | 45 ms | 44 ms | 50 ms | 142 ms |
+| binarytrees | 156 ms | 160 ms | 168 ms | 154 ms |
+| closures | 40 ms | 108 ms | 35 ms | 140 ms |
 
-The JIT's times include compiling, and are still close to the executable's: from 27% faster
-(`sieve`) to 37% slower (`closures`). The HIR optimizer matters only on `closures`. The other four
+The JIT's times include compiling, and are still close to the executable's: from 12% faster
+(`closures`) to 11% slower (`nbody`). The HIR optimizer matters only on `closures`. The other four
 programs have no small functions for it to inline, so their differences are noise.
 
 ### Why
 
-- **Cranelift's code is like clang -O0's.** A0 leaves optimizing each function to Cranelift, its
-  code generator. clang -O2 runs LLVM's whole pipeline: inlining, loop and vector optimizations,
-  which Cranelift does not attempt. On `fib`, for example, -O2 turns one of the two recursive calls
-  into a loop.
+- **On loops, Cranelift's code lies between clang -O0's and -O2's.** A0 leaves optimizing each
+  function to Cranelift, its code generator. clang -O0 keeps every variable in memory on the
+  stack, where Cranelift keeps them in registers, so Minnow is faster than -O0 where a loop does
+  the work. On `fib`, which is only calls, it is 1.3 times slower than -O0; we have not found why.
+  clang -O2 runs LLVM's whole pipeline: inlining, loop and vector optimizations, which Cranelift
+  does not attempt. On `fib`, for example, -O2 turns one of the two recursive calls into a loop.
 - **`closures`:** A0's optimizer inlines `fold`, and then the closure passed to it. That takes the
-  program from 782 ms to 144 ms, between clang -O0 (232 ms) and -O2 (64 ms). clang -O2 also inlines
-  the function pointer once it has inlined `fold`, and Go's 49 ms comes from the same inlining.
-- **`sieve`:** the array holds one byte per boolean, as in C. What remains is Cranelift's code and
-  a bounds check on every index, which Go has too. Tin, which has no check, takes 105 ms.
+  program from 108 ms to 40 ms, between clang -O0 (115 ms) and -O2 (21 ms). clang -O2 also inlines
+  the function pointer once it has inlined `fold`, and Go's 27 ms comes from the same inlining.
+- **`sieve`:** the array holds one byte per boolean, as in C. Every index is bounds-checked, as in
+  Go. A failed check ends the program, so the check is a compare and a branch out of the loop that
+  is never taken. Minnow runs as fast as Go, and within noise of Tin, which has no check (36 ms).
 - **`nbody`:** the bodies are structs on the heap, reached through a bounds-checked array of
-  references. When these numbers were measured, `math.sqrt` was also a call to C's `sqrt`; it is
-  now an instruction, which takes about 5% off this program. Since then, the backend also loads and
-  stores the bodies' float fields as floats, where it used to move each one through an integer
-  register; on Windows that took the program from 123 ms to 92 ms (medians of 31 runs).
-- **`binarytrees`:** close to a third of A0's time is the collector. With `A0_GC_STATS=1` it
-  reports 56 collections taking 152.5 ms, 82.8 ms of it marking, with a peak of 22.4 MB and 240,329
-  objects live after the last collection. A0's collector is a non-moving mark and sweep, so every
+  references. `math.sqrt` is an instruction, not a call to C's `sqrt`. The bodies' float fields
+  are loaded and stored as floats, without a move through an integer register. Minnow runs it 1.8
+  times faster than clang -O0 and 1.25 times slower than -O2.
+- **`binarytrees`:** over a quarter of A0's time is the collector. With `A0_GC_STATS=1` it reports
+  56 collections taking 42.4 ms, 29.2 ms of it marking, with a peak of 22.4 MB and 240,329 objects
+  live after the last collection. A0's collector is a non-moving mark and sweep, so every
   collection marks every live object, including the long-lived tree. A generational collector
-  would avoid most of that work. Go is slower still (730 ms): its collector is built for short
-  pauses beside a running program, not for the throughput of a small single-threaded one.
+  would avoid most of that work. Go is slower (353 ms): its collector is built for short pauses
+  beside a running program, not for the throughput of a small single-threaded one.
 
 ## Tin against C
 
@@ -136,22 +147,22 @@ collector, from the section above.
 
 | Program | Tin (executable) | Minnow (executable) | clang -O0 | clang -O2 |
 |---|---|---|---|---|
-| fib | 68 ms | 63 ms | 62 ms | 37 ms |
-| sieve | 105 ms | 150 ms | 166 ms | 84 ms |
-| nbody | 152 ms | 195 ms | 184 ms | 63 ms |
-| binarytrees | 488 ms | 475 ms | 402 ms | 325 ms |
+| fib | 36 ms | 36 ms | 29 ms | 16 ms |
+| sieve | 36 ms | 32 ms | 43 ms | 25 ms |
+| nbody | 37 ms | 45 ms | 78 ms | 36 ms |
+| binarytrees | 151 ms | 156 ms | 138 ms | 122 ms |
 
-Tin runs at about clang -O0's speed. `binarytrees` varied from 372 to 488 ms across runs of this
-benchmark, around clang -O0's 402 ms.
+Tin is faster than clang -O0 on `sieve` and `nbody`, and as fast as -O2 on `nbody`. It is 1.2
+times slower than -O0 on `fib`, and within noise of it on `binarytrees`.
 
 **What do A0's options cost?**
 
 | Program | executable | executable, no HIR optimizer | JIT (`tin run`) | build |
 |---|---|---|---|---|
-| fib | 68 ms | 72 ms | 64 ms | 42 ms |
-| sieve | 105 ms | 106 ms | 119 ms | 45 ms |
-| nbody | 152 ms | 122 ms | 100 ms | 55 ms |
-| binarytrees | 488 ms | 387 ms | 809 ms | 39 ms |
+| fib | 36 ms | 32 ms | 33 ms | 135 ms |
+| sieve | 36 ms | 39 ms | 36 ms | 130 ms |
+| nbody | 37 ms | 36 ms | 43 ms | 136 ms |
+| binarytrees | 151 ms | 153 ms | 371 ms | 144 ms |
 
 ### Why
 
@@ -159,14 +170,15 @@ Tin's programs use the same compiler, optimizer and code generator as Minnow's, 
 collector, the bounds checks and the references.
 
 - **`binarytrees`:** Tin allocates with C's `calloc` and frees each tree as the C program does, so
-  the collector's time is gone. In the JIT it takes 809 ms because `tin run` runs `main` on a
+  the collector's time is gone. In the JIT it takes 371 ms because `tin run` runs `main` on a
   thread of its own, and glibc's allocator is slower on a thread's memory arena than on the main
   one for this pattern of allocating and freeing.
 - **`nbody`:** the five bodies are structs in one block of memory, reached through pointers, where
-  Minnow goes through a checked array of references. The 122 ms without the HIR optimizer is noise
-  of this run, not a real difference.
-- **`sieve`:** bytes from `alloc`, indexed without checks, land between clang -O0 and -O2.
-- **`fib`** is only calls, and runs as Minnow's does.
+  Minnow goes through a checked array of references. Their float fields are loaded and stored as
+  floats, as in Minnow, and Tin runs as fast as clang -O2.
+- **`sieve`:** bytes from `alloc`, indexed without checks, land between clang -O0 and -O2. Minnow's
+  checked array is as fast (32 ms).
+- **`fib`** is only calls, and runs as Minnow's does: 1.2 times slower than clang -O0.
 
 ## Kaleidoscope against LLVM
 
@@ -190,26 +202,31 @@ A0 is compared with two builds of the tutorial's code, both JIT compilers:
 
 | Program | A0 (executable) | LLVM tutorial | LLVM -O2 |
 |---|---|---|---|
-| fib | 19 ms | 9 ms | 9 ms |
-| mandel | 916 ms | 1015 ms | 217 ms |
+| fib | 6 ms | 4 ms | 4 ms |
+| mandel | 241 ms | 391 ms | 108 ms |
 
-A0 is slightly faster than the tutorial's code on `mandel` and 4.2 times slower than LLVM -O2. LLVM's
-times leave out its compile time (see [How each tool was run](#how-each-tool-was-run)); A0's include
-starting the process.
+A0 is 1.6 times faster than the tutorial's code on `mandel` and 2.2 times slower than LLVM -O2.
+LLVM's times leave out its compile time (see [How each tool was run](#how-each-tool-was-run)); A0's
+include starting the process.
 
 **How long does compiling take?**
 
 | Program | A0 build (an executable, linking included) | A0 build, no HIR optimizer | LLVM tutorial (start and compile) | LLVM -O2 (start and compile) |
 |---|---|---|---|---|
-| fib | 33 ms | 31 ms | 25 ms | 24 ms |
-| mandel | 41 ms | 44 ms | 38 ms | 48 ms |
+| fib | 134 ms | 134 ms | 10 ms | 9 ms |
+| mandel | 133 ms | 135 ms | 16 ms | 18 ms |
+
+A0's build is almost all linking ([Compiling](#compiling)). LLVM's JIT does not link.
 
 **What do A0's options cost?**
 
 | Program | executable | executable, no HIR optimizer | JIT (`kaleidoscope run`) | interpreted |
 |---|---|---|---|---|
-| fib | 19 ms | 15 ms | 21 ms | 453 ms |
-| mandel | 916 ms | 980 ms | 926 ms | 17.8 s |
+| fib | 6 ms | 6 ms | 8 ms | 271 ms |
+| mandel | 241 ms | 383 ms | 173 ms | 10.4 s |
+
+On `mandel`, A0's JIT (173 ms, compiling included) is faster than its executable (241 ms); the
+next section says what we know of why.
 
 ### Why
 
@@ -220,14 +237,20 @@ stack. So `mandel`'s inner loop calls the program's `|` and `>` operators on eve
 recurses for every step.
 
 A0's HIR optimizer inlines small functions like those operators. That makes `mandel` faster than
-the tutorial's code; without the optimizer, A0 is about as fast (980 ms). `fib` has nothing to
+the tutorial's code; without the optimizer, A0 is about as fast (383 ms). `fib` has nothing to
 inline.
 
 LLVM's -O2 pipeline, given the whole program, does everything: it inlines the operators and
 `mandelconverge`, turns the recursion into loops, keeps every variable in a register and
-vectorizes. Its 217 ms shows what a full optimizing pipeline buys over Cranelift's per-function
+vectorizes. Its 108 ms shows what a full optimizing pipeline buys over Cranelift's per-function
 optimization plus A0's inlining. On these small programs it compiles as fast as the tutorial's
 code.
+
+A0's JIT runs `mandel` faster than its executable, and that holds up: five more runs of each gave
+239–244 ms for the executable and 176–200 ms for the JIT. Both get their code from Cranelift and
+the same optimizer; the one difference the changelog names is that executables call the runtime,
+the C library and other codegen units directly, where the JIT loads each address first. We have
+not found why the executable is slower.
 
 ## Lox against clox
 
@@ -242,42 +265,41 @@ two:
 
 | Program | A0's Lox (executable) | clox | A0 against clox |
 |---|---|---|---|
-| fib | 496 ms | 1116 ms | 2.2 times faster |
-| binary_trees | 994 ms | 2661 ms | 2.7 times faster |
-| method_call | 214 ms | 242 ms | 1.1 times faster |
-| invocation | 417 ms | 382 ms | 1.1 times slower |
-| equality | 98 ms | 4777 ms | (see below) |
-| zoo | 218 ms | 409 ms | 1.9 times faster |
+| fib | 143 ms | 492 ms | 3.4 times faster |
+| binary_trees | 305 ms | 1249 ms | 4.1 times faster |
+| method_call | 65 ms | 109 ms | 1.7 times faster |
+| invocation | 134 ms | 151 ms | 1.1 times faster |
+| equality | 65 ms | 2436 ms | (see below) |
+| zoo | 95 ms | 160 ms | 1.7 times faster |
 
 `equality` compares constants and throws the results away. A0's optimizer removes the comparisons,
-so its 98 ms is the loop alone, and the comparison with clox means nothing.
+so its 65 ms is the loop alone, and the comparison with clox means nothing.
 
 **What do A0's options cost?**
 
 | Program | executable | executable, no HIR optimizer | JIT (`lox file`) | interpreted |
 |---|---|---|---|---|
-| fib | 496 ms | 2483 ms | 487 ms | 30.7 s |
-| binary_trees | 994 ms | 3176 ms | 1310 ms | 49.4 s |
-| method_call | 214 ms | 546 ms | 416 ms | 9821 ms |
-| invocation | 417 ms | 886 ms | 573 ms | 17.3 s |
-| equality | 98 ms | 1076 ms | 153 ms | 5935 ms |
-| zoo | 218 ms | 1044 ms | 306 ms | 16.9 s |
+| fib | 143 ms | 762 ms | 164 ms | 10.8 s |
+| binary_trees | 305 ms | 853 ms | 356 ms | 18.9 s |
+| method_call | 65 ms | 170 ms | 116 ms | 4383 ms |
+| invocation | 134 ms | 269 ms | 176 ms | 7376 ms |
+| equality | 65 ms | 288 ms | 81 ms | 1787 ms |
+| zoo | 95 ms | 302 ms | 125 ms | 7625 ms |
 
 The JIT time includes compiling, so it is the time to run a file as clox does (`lox file` against
-`clox file`). It is up to about 300 ms slower than the executable (`fib` is as fast), because a
-Lox program first compiles the functions of Lox's prelude that it reaches. Without the HIR
-optimizer, Lox is 2–11 times slower.
+`clox file`). It is 16–51 ms slower than the executable, because a Lox program first compiles the
+functions of Lox's prelude that it reaches. Without the HIR optimizer, Lox is 2–5 times slower.
 
 **How long does building an executable take?**
 
 | Program | A0's Lox | A0's Lox, no HIR optimizer |
 |---|---|---|
-| fib | 62 ms | 58 ms |
-| binary_trees | 105 ms | 69 ms |
-| method_call | 184 ms | 86 ms |
-| invocation | 202 ms | 87 ms |
-| equality | 75 ms | 70 ms |
-| zoo | 115 ms | 73 ms |
+| fib | 148 ms | 147 ms |
+| binary_trees | 170 ms | 167 ms |
+| method_call | 184 ms | 160 ms |
+| invocation | 171 ms | 146 ms |
+| equality | 141 ms | 139 ms |
+| zoo | 160 ms | 147 ms |
 
 ### Why
 
@@ -293,32 +315,37 @@ specializes. That is why the optimizer matters more here than anywhere else.
   cache of the shape it saw last, so a property access is usually a comparison and a load. clox
   looks the name up in each instance's hash table.
 - **Method calls** (`invocation`): A0 looks the method up and calls it on the object without
-  allocating a bound method, as clox's `OP_INVOKE` does. This is the one program where clox is
-  faster.
-- **`binary_trees`:** an instance is a struct plus one object of slots. The collector takes 261.2 ms
-  of the time: 144 collections, 150.4 ms of it marking, with a peak of 20.9 MB and 96,759 objects
-  live after the last collection.
-- **Interpreted**, A0 is 1.2–45 times slower than clox. A0's interpreter runs the core IR and is
-  not built for speed: it is the reference that every test checks native code against, and the
-  debugger's engine.
+  allocating a bound method, as clox's `OP_INVOKE` does. This is the program where clox comes
+  closest: A0 is 1.1 times faster.
+- **`binary_trees`:** an instance is a struct plus one object of slots. Calling a class whose
+  `init` takes up to three parameters builds the instance without first putting the arguments in
+  an array. The collector takes 63.6 ms of the time: 92 collections, 44.6 ms of it marking, with a
+  peak of 19.8 MB and 93,328 objects live after the last collection.
+- **Interpreted**, A0 is 15–49 times slower than clox. On `equality` it is faster, because the
+  optimizer has removed the comparisons. A0's interpreter runs the core IR and is not built for
+  speed: it is the reference that every test checks native code against, and the debugger's
+  engine.
 
 ## Threads
 
 `parallel` (`bench/minnow/parallel.mn`) counts the primes below 5,000,000. With `n` threads, each
-thread tests every `n`-th odd number. The machine has 4 processors.
+thread tests every `n`-th odd number. The machine has 32 hardware threads.
 
 **How much faster do more threads make it?**
 
 | Threads | executable | speedup | JIT (`minnow run`) | speedup |
 |---|---|---|---|---|
-| 1 | 2406 ms | 1.0x | 2416 ms | 1.0x |
-| 2 | 1213 ms | 2.0x | 1230 ms | 2.0x |
-| 4 | 626 ms | 3.8x | 636 ms | 3.8x |
-| 8 | 618 ms | 3.9x | 626 ms | 3.9x |
+| 1 | 903 ms | 1.0x | 867 ms | 1.0x |
+| 2 | 432 ms | 2.1x | 502 ms | 1.7x |
+| 4 | 226 ms | 4.0x | 247 ms | 3.5x |
+| 8 | 124 ms | 7.3x | 145 ms | 6.0x |
 
-The threads share nothing but the counts they return, so the speedup is the processors'; 8
-threads on 4 processors gain nothing more. Work that allocates speeds up less, because threads that
-allocate share one lock on the heap, and each collection stops them all.
+The threads share nothing but the counts they return, so the executable speeds up almost as much
+as it has threads: 7.3 times on 8. The JIT speeds up less, 6.0 times on 8: it is faster than the
+executable on one thread and slower on two or more, and we have not found why. The benchmark goes
+up to 8 threads, a quarter of the machine's. Work that allocates
+speeds up less, because threads that allocate share one lock on the heap, and each collection
+stops them all.
 
 ## Compiling
 
@@ -327,15 +354,15 @@ object file is made from the IR text with `a0 obj`.
 
 | Program | A0: source to HIR | A0: to IR | A0: to an object file | whole build (linked by `cc`) | whole build (linked by clang) |
 |---|---|---|---|---|---|
-| fib | 4 ms | 4 ms | 4 ms | 33 ms | 63 ms |
-| nbody | 11 ms | 17 ms | 13 ms | 54 ms | 79 ms |
+| fib | 2 ms | 2 ms | 2 ms | 134 ms | 97 ms |
+| nbody | 4 ms | 5 ms | 6 ms | 141 ms | 91 ms |
 
 **How long does linking alone take?** The same linkers, linking a plain C object file:
 
 | Program | `cc` (gcc 13) | clang |
 |---|---|---|
-| fib | 27 ms | 53 ms |
-| nbody | 32 ms | 48 ms |
+| fib | 132 ms | 81 ms |
+| nbody | 129 ms | 81 ms |
 
 A0's own work, from source to an object file, takes a few milliseconds: parsing, building and
 checking the HIR, optimizing, lowering and Cranelift together. Most of a build is linking. A0 runs
@@ -344,8 +371,9 @@ driver takes most of that time. A whole build takes about as long as A0's work p
 each linker. lld, run directly on a target pack, links in about 10 ms
 ([other platforms](cross.md)).
 
-To run a program at once, A0 does not link at all: `run` compiles into memory. That is why the JIT
-columns above are close to the executables'.
+To run a program at once, A0 does not link at all: `run` compiles into memory in a few
+milliseconds. That is why the JIT's times, compiling included, are near the executables' run times
+rather than their build times. Where they differ by more, the sections above say why.
 
 ## Large programs
 
@@ -358,27 +386,31 @@ times below are A0's.
 
 | Build | `minnow run` (compiling included) | the executable |
 |---|---|---|
-| 1276 ms | 1302 ms | 2 ms |
+| 404 ms | 304 ms | 1 ms |
 
 **Where does the build's time go?** (`A0_TIME=1`)
 
 | Step | Time |
 |---|---|
-| parse | 218 ms |
-| analyze (build and check the HIR) | 391 ms |
+| parse | 59 ms |
+| analyze (build and check the HIR) | 114 ms |
 | monomorphize | 0 ms |
-| optimize (HIR) | 481 ms |
-| lower to IR | 135 ms |
-| verify IR | 9 ms |
-| code generation | 89 ms |
-| link | 38 ms |
+| optimize (HIR) | 18 ms |
+| lower to IR | 22 ms |
+| verify IR | 3 ms |
+| code generation | 29 ms |
+| link | 148 ms |
+
+The optimizer works only on the functions `main` can reach, so it takes little time here. Linking
+takes the longest, as in the small programs. `minnow run` does not link, so it is faster than the
+build.
 
 **How fast does the language server answer?** `minnow lsp` on the same program:
 
 | File opened | Program it belongs to | open to diagnostics | an edit to the next answer | hover | go to definition | completion |
 |---|---|---|---|---|---|---|
-| m87.mn | half the modules | 533 ms | 169 ms | 2 ms | 1 ms | 0 ms |
-| main.mn | every module | 865 ms | 413 ms | 4 ms | 3 ms | 0 ms |
+| m87.mn | half the modules | 324 ms | 74 ms | 0 ms | 0 ms | 0 ms |
+| main.mn | every module | 455 ms | 153 ms | 1 ms | 1 ms | 0 ms |
 
 "An edit to the next answer" is the time from an edit to the answer of the next request, which
 waits for the edited program to be analyzed again.
@@ -401,12 +433,14 @@ program.
 
 Yes. v1.0 changed APIs, the headers of text formats, documentation and tooling, not code
 generation, the optimizer or the collector. The two releases differ by less than one release
-differs from itself between rounds. The full run in the sections above has outliers of the same
-size (`nbody` at 195 ms, Tin's `binarytrees` at 488).
+differs from itself between rounds. The full v1.0.0 run on that machine had outliers of the same
+size (`nbody` at 195 ms, Tin's `binarytrees` at 488). The tables above are newer than this
+comparison: they measure the code after v1.0.0 on a different machine. That code is faster than
+v1.0.0; [the changelog](../CHANGELOG.md) has before-and-after times measured on Windows.
 
 **How have the headline numbers changed?** `bench/history.csv` keeps each release's numbers
 (`bench/run.py --record`; see [releases](releases.md)), and `python3 bench/history.py` prints them
-by machine. On this machine, in milliseconds:
+by machine. On the machine the releases were measured on, in milliseconds:
 
 | | 0.8.0 | 0.9.0 | 1.0.0 |
 |---|---|---|---|
@@ -449,14 +483,14 @@ Its old numbers ("old large program") are kept apart, and 0.9.0 was measured wit
 
 ## Tools
 
-- Machine: x86_64, Linux 6.18 (a cloud virtual machine), 4 threads
-- CPU: Intel(R) Xeon(R) Processor @ 2.10GHz
-- A0: v1.0.0, rustc 1.97.0 (2d8144b78 2026-07-07), Cranelift 0.137, release build
+- Machine: x86_64, Linux 6.6 (WSL2 on Windows), 32 threads
+- CPU: AMD Ryzen 9 9955HX3D 16-Core Processor
+- A0: unreleased, commit 5a98dad (after v1.0.0), rustc 1.99.1 (58cf8f9c3 2026-10-13), Cranelift 0.137, release build
 - Ubuntu clang version 18.1.3 (1ubuntu1)
 - `cc`, which A0 links with: cc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0
 - LLVM 18.1.3: the Kaleidoscope tutorial, chapter 7, built with `clang++ -O2`, and the same with
   LLVM's -O2 pipeline on the whole program
-- go version go1.24.7 linux/amd64
+- go version go1.22.2 linux/amd64
 - clox at craftinginterpreters 4a840f70f69c, built with `clang -O2 -std=c99 -w`
 
 ### How each tool was run
@@ -475,8 +509,11 @@ full run counts as running.
 
 ## What these numbers do not say
 
-- They come from one shared cloud machine and from small programs written the obvious way.
-  Differences of 10% between runs, and in linking times, are noise.
+- They come from one laptop running Linux under WSL2, and from small programs written the obvious
+  way. Differences of 10% between runs are noise.
+- Linking is slow on this machine: `cc` takes about 130 ms even for a plain C object, so it is
+  most of every build time here. lld, run directly on a target pack, links in about 10 ms
+  ([Compiling](#compiling)).
 - A0 is shown with its optimizer on and off. The other tools are run as they usually are: Go
   builds with its standard library cached, and LLVM's tutorial is a JIT.
 - Every implementation of a program must print the same output, and the benchmark checks it before
