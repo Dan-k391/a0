@@ -230,8 +230,81 @@ fn call3(callee: any, a: any, b: any, c: any, line: int) -> any {
   call_with3(callee, () as any, a, b, c, line)
 }
 
+// What `call_with0` to `call_with3` call for anything but a function or method of their arity: a
+// class whose `init` takes the arguments directly is constructed without an argument array (a
+// non-null `codeN` means the arity is right); anything else goes through `call_with`. Written with
+// early returns so that they stay calls, out of every call site.
+fn call_other0(callee: any, receiver: any, line: int) -> any {
+  if callee is LoxClass {
+    let k = callee as LoxClass;
+    if has_field(k.methods, "init") {
+      if let code = (field(k.methods, "init") as LoxFunction).code0 {
+        enter(line);
+        let instance = new LoxInstance { class: k, fields: new object } as any;
+        code(instance);
+        depth = depth - 1;
+        return instance;
+      }
+    } else {
+      enter(line);
+      let instance = new LoxInstance { class: k, fields: new object } as any;
+      depth = depth - 1;
+      return instance;
+    }
+  }
+  call_with(callee, receiver, new array<any>, line)
+}
+
+fn call_other1(callee: any, receiver: any, a: any, line: int) -> any {
+  if callee is LoxClass {
+    let k = callee as LoxClass;
+    if has_field(k.methods, "init") {
+      if let code = (field(k.methods, "init") as LoxFunction).code1 {
+        enter(line);
+        let instance = new LoxInstance { class: k, fields: new object } as any;
+        code(instance, a);
+        depth = depth - 1;
+        return instance;
+      }
+    }
+  }
+  call_with(callee, receiver, [a], line)
+}
+
+fn call_other2(callee: any, receiver: any, a: any, b: any, line: int) -> any {
+  if callee is LoxClass {
+    let k = callee as LoxClass;
+    if has_field(k.methods, "init") {
+      if let code = (field(k.methods, "init") as LoxFunction).code2 {
+        enter(line);
+        let instance = new LoxInstance { class: k, fields: new object } as any;
+        code(instance, a, b);
+        depth = depth - 1;
+        return instance;
+      }
+    }
+  }
+  call_with(callee, receiver, [a, b], line)
+}
+
+fn call_other3(callee: any, receiver: any, a: any, b: any, c: any, line: int) -> any {
+  if callee is LoxClass {
+    let k = callee as LoxClass;
+    if has_field(k.methods, "init") {
+      if let code = (field(k.methods, "init") as LoxFunction).code3 {
+        enter(line);
+        let instance = new LoxInstance { class: k, fields: new object } as any;
+        code(instance, a, b, c);
+        depth = depth - 1;
+        return instance;
+      }
+    }
+  }
+  call_with(callee, receiver, [a, b, c], line)
+}
+
 // Calls with zero to three arguments on a receiver (as `call_with`): functions and methods of that
-// arity directly, anything else (classes, natives, wrong arities, errors) through `call_with`.
+// arity directly, anything else (classes, natives, wrong arities, errors) through `call_otherN`.
 // Written without early returns so that the optimizer inlines them at each call site.
 fn call_with0(callee: any, receiver: any, line: int) -> any {
   if callee is LoxFunction {
@@ -242,7 +315,7 @@ fn call_with0(callee: any, receiver: any, line: int) -> any {
       depth = depth - 1;
       r
     } else {
-      call_with(callee, receiver, new array<any>, line)
+      call_other0(callee, receiver, line)
     }
   } else if callee is LoxBound {
     let m = callee as LoxBound;
@@ -252,10 +325,10 @@ fn call_with0(callee: any, receiver: any, line: int) -> any {
       depth = depth - 1;
       r
     } else {
-      call_with(callee, receiver, new array<any>, line)
+      call_other0(callee, receiver, line)
     }
   } else {
-    call_with(callee, receiver, new array<any>, line)
+    call_other0(callee, receiver, line)
   }
 }
 
@@ -268,7 +341,7 @@ fn call_with1(callee: any, receiver: any, a: any, line: int) -> any {
       depth = depth - 1;
       r
     } else {
-      call_with(callee, receiver, [a], line)
+      call_other1(callee, receiver, a, line)
     }
   } else if callee is LoxBound {
     let m = callee as LoxBound;
@@ -278,10 +351,10 @@ fn call_with1(callee: any, receiver: any, a: any, line: int) -> any {
       depth = depth - 1;
       r
     } else {
-      call_with(callee, receiver, [a], line)
+      call_other1(callee, receiver, a, line)
     }
   } else {
-    call_with(callee, receiver, [a], line)
+    call_other1(callee, receiver, a, line)
   }
 }
 
@@ -294,7 +367,7 @@ fn call_with2(callee: any, receiver: any, a: any, b: any, line: int) -> any {
       depth = depth - 1;
       r
     } else {
-      call_with(callee, receiver, [a, b], line)
+      call_other2(callee, receiver, a, b, line)
     }
   } else if callee is LoxBound {
     let m = callee as LoxBound;
@@ -304,10 +377,10 @@ fn call_with2(callee: any, receiver: any, a: any, b: any, line: int) -> any {
       depth = depth - 1;
       r
     } else {
-      call_with(callee, receiver, [a, b], line)
+      call_other2(callee, receiver, a, b, line)
     }
   } else {
-    call_with(callee, receiver, [a, b], line)
+    call_other2(callee, receiver, a, b, line)
   }
 }
 
@@ -320,7 +393,7 @@ fn call_with3(callee: any, receiver: any, a: any, b: any, c: any, line: int) -> 
       depth = depth - 1;
       r
     } else {
-      call_with(callee, receiver, [a, b, c], line)
+      call_other3(callee, receiver, a, b, c, line)
     }
   } else if callee is LoxBound {
     let m = callee as LoxBound;
@@ -330,10 +403,10 @@ fn call_with3(callee: any, receiver: any, a: any, b: any, c: any, line: int) -> 
       depth = depth - 1;
       r
     } else {
-      call_with(callee, receiver, [a, b, c], line)
+      call_other3(callee, receiver, a, b, c, line)
     }
   } else {
-    call_with(callee, receiver, [a, b, c], line)
+    call_other3(callee, receiver, a, b, c, line)
   }
 }
 

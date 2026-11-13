@@ -1,0 +1,51 @@
+// Constructing instances: calls of zero to three arguments skip the argument array, and must still
+// behave like the general path, errors included.
+class Zero {
+  init() { this.n = 0; }
+}
+print Zero().n; // expect: 0
+
+class One {
+  init(a) { this.n = a; }
+}
+print One(1).n; // expect: 1
+
+class Two {
+  init(a, b) { this.n = a + b; }
+}
+print Two(1, 2).n; // expect: 3
+
+class Three {
+  init(a, b, c) { this.n = a + b + c; }
+}
+print Three(1, 2, 3).n; // expect: 6
+
+class Four {
+  init(a, b, c, d) { this.n = a + b + c + d; }
+}
+print Four(1, 2, 3, 4).n; // expect: 10
+
+// An inherited `init`.
+class Child < Two {}
+print Child(3, 4).n; // expect: 7
+
+// No `init` at all.
+class Empty {}
+print Empty(); // expect: Empty instance
+
+// `init` returning early still gives the instance, and an `init` method called again returns it.
+class Early {
+  init(a) {
+    this.a = a;
+    if (a) return;
+    this.b = "late";
+  }
+}
+var e = Early(true);
+print e.a; // expect: true
+print Early(false).b; // expect: late
+print e.init(false) == e; // expect: true
+print e.b; // expect: late
+
+// A wrong argument count is an error, as in jlox.
+Two(1); // expect runtime error: Expected 2 arguments but got 1.
