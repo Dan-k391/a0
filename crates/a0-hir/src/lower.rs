@@ -2151,6 +2151,7 @@ impl<'a> Lowerer<'a> {
             | ExprKind::Call(..)
             | ExprKind::CallExtern(..)
             | ExprKind::CallValue(..)
+            | ExprKind::InterfaceCall(..)
             | ExprKind::New(..)
             | ExprKind::Variant(..)
             | ExprKind::Array(_)

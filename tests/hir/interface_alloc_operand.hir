@@ -1,0 +1,44 @@
+// A fresh object passed before an interface call whose method allocates: the call can collect, so
+// the object must stay rooted while it runs.
+// expect-stdout: 2005
+// expect-exit: 0
+module "interface_alloc_operand";
+
+struct Box { v: int }
+struct A { k: int }
+struct B { k: int }
+interface Maker { fn make(self) -> Box; }
+
+impl Maker for A;
+impl Maker for B;
+
+impl A {
+  fn make(self: A) -> Box {
+    new Box { v: self.k }
+  }
+}
+
+impl B {
+  fn make(self: B) -> Box {
+    new Box { v: self.k * 2 }
+  }
+}
+
+// Recursive, so that the optimizer does not inline it.
+fn sum(a: Box, b: Box, n: int) -> int {
+  if n == 0 { a.v + b.v } else { sum(a, b, n - 1) }
+}
+
+fn main() -> int {
+  let makers = new array<Maker>;
+  push(makers, new A { k: 1 });
+  push(makers, new B { k: 2 });
+  let total = 0;
+  let i = 0;
+  while i < len(makers) {
+    total = total + sum(new Box { v: 1000 }, makers[i].make(), 3);
+    i = i + 1;
+  }
+  print(str(total) + "\n");
+  0
+}

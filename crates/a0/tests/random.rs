@@ -107,7 +107,7 @@ const PRELUDE: &str = r#"module "random";
 struct R { n: int, s: string }
 inline struct P { a: int, b: u8 }
 enum Shape { Dot, Num(int), Txt(string) }
-interface Sized { fn size(self) -> int; fn twice(self) -> int; }
+interface Sized { fn size(self) -> int; fn twice(self) -> int; fn copy(self) -> R; }
 
 impl Sized for R;
 impl Sized for Shape;
@@ -119,6 +119,9 @@ impl R {
   fn twice(self: R) -> int {
     2 * self.size()
   }
+  fn copy(self: R) -> R {
+    new R { n: self.n, s: self.s }
+  }
 }
 
 impl Shape {
@@ -128,6 +131,9 @@ impl Shape {
   fn twice(self: Shape) -> int {
     2 * self.size()
   }
+  fn copy(self: Shape) -> R {
+    new R { n: self.size(), s: show_shape(self) }
+  }
 }
 
 fn size_of(x: Sized) -> int {
@@ -136,6 +142,10 @@ fn size_of(x: Sized) -> int {
 
 fn twice_of<T: Sized>(x: T) -> int {
   x.twice()
+}
+
+fn both(a: R, b: R) -> int {
+  a.n + b.n
 }
 
 fn note(n: int) -> int {
@@ -556,6 +566,21 @@ impl Gen {
                         1 => format!("size_of({x})"),
                         _ => format!("twice_of({x})"),
                     }
+                }
+                // An interface method that allocates, after a fresh reference it must not let go;
+                // the receiver is a local, so that only the call itself can collect.
+                13 if self.rng.chance(50) => {
+                    let mut xs = self.locals_of(ctx, Rec, false);
+                    xs.extend(self.locals_of(ctx, Shape, false));
+                    let a = self.expr(Rec, ctx, d);
+                    let x = match xs.is_empty() {
+                        true => "new R { n: 3, s: \"c\" }".to_string(),
+                        false => self
+                            .rng
+                            .pick(&xs.iter().map(String::as_str).collect::<Vec<_>>())
+                            .to_string(),
+                    };
+                    format!("both({a}, ({x} as Sized).copy())")
                 }
                 13 => {
                     let x = self.expr(Any, ctx, d);
@@ -1409,6 +1434,7 @@ fn the_generator_is_deterministic_and_varied() {
         "fget(",
         "oget(",
         "set_field(",
+        "as Sized).copy()",
     ] {
         let uses = programs.iter().filter(|p| p.contains(feature)).count();
         assert!(uses >= 3, "only {uses} programs use {feature}");
