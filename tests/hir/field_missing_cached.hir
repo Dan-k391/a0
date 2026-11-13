@@ -1,0 +1,15 @@
+// A field read with a literal name goes through the place's cache; one the object lacks fails with
+// its name, like the runtime's way does.
+// expect-stdout: x 1
+// expect-stderr: panic: no field `missing`
+// expect-stderr:     at main (tests/hir/field_missing_cached.hir:13:3)
+// expect-exit: 101
+module "field_missing_cached";
+
+fn main() -> int {
+  let o = new object;
+  set_field(o, "x", 1);
+  print("x " + str(field(o, "x") as int) + "\n");
+  field(o, "missing");
+  0
+}

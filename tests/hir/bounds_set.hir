@@ -1,0 +1,17 @@
+// Storing past the end of an array fails inside a loop, after the stores that fit.
+// expect-stdout: 0 10 20
+// expect-stderr: panic: index out of bounds: the length is 3 but the index is 3
+// expect-stderr:     at main (tests/hir/bounds_set.hir:13:5)
+// expect-exit: 101
+module "bounds_set";
+
+fn main() -> int {
+  let xs = [0, 0, 0];
+  let i = 0;
+  while i < 5 {
+    if i == 3 { print(str(xs[0]) + " " + str(xs[1]) + " " + str(xs[2]) + "\n"); }
+    xs[i] = i * 10;
+    i = i + 1;
+  }
+  0
+}

@@ -1679,7 +1679,8 @@ impl<'a> Lowerer<'a> {
     }
 
     // Element access is inline: a bounds check, then a load or a store. Out of bounds, the runtime
-    // function does the access instead, which fails with the message and the stack trace.
+    // function is called only to fail with the message and the stack trace, and never returns, so
+    // the access is a straight line after the check and the failing path does not join it.
 
     /// Whether `index` is outside `0..len` of the string or array `object` (whose first word is its
     /// length): one unsigned comparison.
@@ -1690,20 +1691,17 @@ impl<'a> Lowerer<'a> {
 
     /// `byte_at(s, i)`: the byte, after the length and hash words (`A0String`).
     fn string_byte(&mut self, s: Value, i: Value) -> Value {
-        let result = self.b.declare_var("byte", Type::I64);
         let bad = self.out_of_bounds(s, i);
         self.b.if_(bad);
-        let r = self.b.call(self.rt.string_byte_at, &[s, i]).unwrap();
-        self.b.set(result, r);
-        self.b.else_();
+        // Fails with the index and the length.
+        self.b.call(self.rt.string_byte_at, &[s, i]);
+        self.b.unreachable();
+        self.b.end_if();
         let header = self.b.iconst(Type::I64, 16);
         let bytes = self.b.ptradd(s, header);
         let at = self.b.ptradd(bytes, i);
         let byte = self.b.load(Type::I8, at);
-        let byte = self.b.cast(Opcode::Zext, byte, Type::I64);
-        self.b.set(result, byte);
-        self.b.end_if();
-        self.b.get(result)
+        self.b.cast(Opcode::Zext, byte, Type::I64)
     }
 
     /// The address of element `i` of an array (`A0Array`: length, capacity, then the pointer to
@@ -1747,22 +1745,19 @@ impl<'a> Lowerer<'a> {
     /// `a[i]`, as a word, for an array of `elem`s.
     fn array_element(&mut self, a: Value, i: Value, elem: TypeId) -> Value {
         let (size, mem) = self.elem_layout(elem);
-        let result = self.b.declare_var("element", Type::I64);
         let bad = self.out_of_bounds(a, i);
         self.b.if_(bad);
-        let r = self.b.call(self.rt.array_get, &[a, i]).unwrap();
-        self.b.set(result, r);
-        self.b.else_();
+        // Fails with the index and the length.
+        self.b.call(self.rt.array_get, &[a, i]);
+        self.b.unreachable();
+        self.b.end_if();
         let at = self.element_address(a, i, size);
-        let w = if size < 8 {
+        if size < 8 {
             let narrow = self.b.load(mem, at);
             self.b.cast(Opcode::Zext, narrow, Type::I64)
         } else {
             self.b.load(Type::I64, at)
-        };
-        self.b.set(result, w);
-        self.b.end_if();
-        self.b.get(result)
+        }
     }
 
     /// `a[i] = w`, for an array of `elem`s.
@@ -1770,8 +1765,10 @@ impl<'a> Lowerer<'a> {
         let (size, mem) = self.elem_layout(elem);
         let bad = self.out_of_bounds(a, i);
         self.b.if_(bad);
+        // Fails with the index and the length.
         self.b.call(self.rt.array_set, &[a, i, w]);
-        self.b.else_();
+        self.b.unreachable();
+        self.b.end_if();
         let at = self.element_address(a, i, size);
         if size < 8 {
             let narrow = self.b.cast(Opcode::Trunc, w, mem);
@@ -1779,7 +1776,6 @@ impl<'a> Lowerer<'a> {
         } else {
             self.b.store(w, at);
         }
-        self.b.end_if();
     }
 
     /// A new place's field cache (`A0FieldCache`), zero until the runtime fills it.
@@ -3347,18 +3343,14 @@ impl<'a> Lowerer<'a> {
                 if op == Builtin::HasField {
                     return V::Val(self.b.icmp(IntCC::Sge, index, zero));
                 }
-                let result = self.b.declare_var("field", Type::I64);
                 let missing = self.b.icmp(IntCC::Slt, index, zero);
                 self.b.if_(missing);
-                // Fails with the field's name.
-                let r = self.b.call(self.rt.object_get, &[o, name]).unwrap();
-                self.b.set(result, r);
-                self.b.else_();
-                let at = self.slot_address(o, index);
-                let w = self.b.load(Type::I64, at);
-                self.b.set(result, w);
+                // Fails with the field's name (the cache and the runtime find the same slot).
+                self.b.call(self.rt.object_get, &[o, name]);
+                self.b.unreachable();
                 self.b.end_if();
-                V::Val(self.b.get(result))
+                let at = self.slot_address(o, index);
+                V::Val(self.b.load(Type::I64, at))
             }
             Builtin::SetField => {
                 let (o, name) = (vs[0].val(), vs[1].val());

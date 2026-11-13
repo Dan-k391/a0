@@ -1,0 +1,13 @@
+// Reading the byte just past the end of a string fails, after the bytes that are there.
+// expect-stdout: 104 105
+// expect-stderr: panic: index out of bounds: the length is 2 but the index is 2
+// expect-stderr:     at main (tests/hir/bounds_byte_at.hir:11:3)
+// expect-exit: 101
+module "bounds_byte_at";
+
+fn main() -> int {
+  let s = "hi";
+  print(str(byte_at(s, 0)) + " " + str(byte_at(s, 1)) + "\n");
+  byte_at(s, len(s));
+  0
+}
