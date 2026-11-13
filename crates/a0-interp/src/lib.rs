@@ -1016,13 +1016,13 @@ impl Interpreter {
                     }
                 }
                 Op::If { c, then, els } => {
-                    let flow = if self.get(base, *c) != 0 {
-                        self.exec(shared, then, base)?
-                    } else {
-                        self.exec(shared, els, base)?
-                    };
-                    if !matches!(flow, Flow::Next) {
-                        return Ok(flow);
+                    let region = if self.get(base, *c) != 0 { then } else { els };
+                    // An empty region (an `if` without `else`) can only fall through: skip the call.
+                    if !region.is_empty() {
+                        let flow = self.exec(shared, region, base)?;
+                        if !matches!(flow, Flow::Next) {
+                            return Ok(flow);
+                        }
                     }
                 }
                 Op::Loop { body } => loop {
