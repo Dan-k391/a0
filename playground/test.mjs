@@ -132,6 +132,7 @@ function expectations(text) {
 // functions declared with 64-bit integers for C types that are 32 bits on wasm32 (`size_t`, `long`).
 const unsupported = new Set([
   'threads.hir', 'c_structs.hir', 'c_structs.a0ir', 'ffi.hir', 'pointers.hir', 'arrays_filled.hir',
+  'channels_many.hir',
 ]);
 for (const dir of ['tests/programs', 'tests/hir']) {
   for (const name of readdirSync(dir).sort()) {
