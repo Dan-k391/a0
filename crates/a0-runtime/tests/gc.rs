@@ -115,6 +115,27 @@ unsafe fn strings() {
         assert_eq!(text(a0_string_from_float(2.5)), "2.5");
         assert_eq!(text(a0_string_from_float(3.0)), "3");
         assert_eq!(text(a0_string_from_bool(1)), "true");
+
+        // Long strings, before and after a map caches one's hash: equality compares hashes only
+        // when both strings have one, and bytes otherwise.
+        let a = s("a long string of thirty bytes!");
+        let b = s("a long string of thirty bytes!");
+        let c = s("A long string of thirty bytes!");
+        let d = s("a long string of thirty bytes?");
+        let check = || {
+            assert_eq!(a0_string_eq(a, b), 1);
+            assert_eq!(a0_string_eq(a, c), 0);
+            assert_eq!(a0_string_eq(a, d), 0);
+            assert_eq!(a0_any_eq(any(a), any(b)), 1);
+            assert_eq!(a0_any_eq(any(a), any(d)), 0);
+        };
+        check();
+        let m = a0_map_new(KEY_STRING, WORD_RAW as i64);
+        a0_map_set(m, a as u64, 1);
+        check();
+        a0_map_set(m, d as u64, 2);
+        check();
+        assert_eq!(a0_map_get(m, b as u64), 1);
     }
 }
 

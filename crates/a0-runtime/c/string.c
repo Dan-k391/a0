@@ -46,13 +46,9 @@ uint64_t a0_string_hash(A0String *s) {
 int64_t a0_string_eq(A0String *a, A0String *b) {
     if (a == b) return 1;
     if (a == NULL || b == NULL || a->len != b->len) return 0;
-    /* Hashes are cached in the strings, so comparing the same long strings again is quick; strings
-     * are not interned (D16). */
-    if (a->len > 16) {
-        uint64_t ha = a->hash != 0 ? a->hash : a0_string_hash(a);
-        uint64_t hb = b->hash != 0 ? b->hash : a0_string_hash(b);
-        if (ha != hb) return 0;
-    }
+    /* Hashes that maps or interning already cached tell unequal strings apart at once. Computing one
+     * here would read both strings to the end, where memcmp stops at the first difference. */
+    if (a->hash != 0 && b->hash != 0 && a->hash != b->hash) return 0;
     return memcmp(a->bytes, b->bytes, (size_t)a->len) == 0;
 }
 
