@@ -491,6 +491,8 @@ void a0_gc_collect(void) {
     mark_time += a0_clock() - start;
 
     int64_t live = 0;
+    /* Counted once at the end: with threads, every SUB_BYTES is a locked instruction. */
+    size_t freed = 0;
     for (size_t k = 0; k < chunk_count; k++) {
         char *base = chunks[k].base;
         size_t cell = chunks[k].cell;
@@ -502,7 +504,7 @@ void a0_gc_collect(void) {
                 live++;
             } else {
                 finalize(PAYLOAD(h));
-                SUB_BYTES(cell);
+                freed += cell;
                 object_cell_free(h, cell);
             }
         }
@@ -519,10 +521,11 @@ void a0_gc_collect(void) {
             *link = big->next;
             if (big->next != NULL) big->next->prev = big->prev;
             finalize(PAYLOAD(h));
-            SUB_BYTES(big->size);
+            freed += big->size;
             free(big);
         }
     }
+    SUB_BYTES(freed);
     live_objects = live;
     collections++;
     gc_time += a0_clock() - start;

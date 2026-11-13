@@ -40,8 +40,16 @@ typedef struct BigObject {
 #define HEADER(p) ((Header *)(p) - 1)
 #define PAYLOAD(h) ((void *)((h) + 1))
 
+/* Hidden, so that a compiler building position-independent code may inline calls within a file
+ * (GCC does not inline a function another library could replace). */
+#if defined(__GNUC__) && defined(__ELF__)
+#define A0_HIDDEN __attribute__((visibility("hidden")))
+#else
+#define A0_HIDDEN
+#endif
+
 /* Allocates an object with `payload_size` zeroed bytes. May collect first. */
-void *a0_gc_alloc(const A0Type *type, size_t payload_size);
+A0_HIDDEN void *a0_gc_alloc(const A0Type *type, size_t payload_size);
 
 /* Memory owned by an object (array elements, map tables): counted toward the next collection, but
  * never starts one, so growing a buffer needs no rooting. */
@@ -50,8 +58,8 @@ void *a0_gc_buffer_realloc(void *buffer, size_t old_size, size_t new_size);
 void a0_gc_buffer_free(void *buffer, size_t size);
 
 /* Marking, for the tracers of built-in kinds. */
-void a0_gc_mark_object(const void *object);
-void a0_gc_mark_word(uint64_t word, int64_t word_kind);
+A0_HIDDEN void a0_gc_mark_object(const void *object);
+A0_HIDDEN void a0_gc_mark_word(uint64_t word, int64_t word_kind);
 
 /* Called by the collector for built-in kinds. */
 void a0_array_trace(A0Array *a);
@@ -102,7 +110,12 @@ size_t a0_any_describe(uint64_t value, char *buf, size_t cap);
 #if defined(_MSC_VER)
 #include <intrin.h>
 static __inline int64_t a0_atomic_load(volatile int64_t *p) {
+#if defined(_M_X64)
+    /* A plain load is already ordered after the locked stores on x86-64, and costs no lock. */
+    return *p;
+#else
     return _InterlockedCompareExchange64(p, 0, 0);
+#endif
 }
 static __inline void a0_atomic_store(volatile int64_t *p, int64_t v) { _InterlockedExchange64(p, v); }
 static __inline int64_t a0_atomic_add(volatile int64_t *p, int64_t delta) {
