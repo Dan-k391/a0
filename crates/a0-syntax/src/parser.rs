@@ -247,7 +247,7 @@ impl<'g> Parser<'g> {
 
     /// Turns `pending[from..]` into the children of a new node, which takes their place.
     fn wrap(&mut self, kind: KindId, from: usize) {
-        let kids: Vec<(NodeId, FieldId)> = self.pending.drain(from..).collect();
+        let kids = &self.pending[from..];
         let (start, end) = match (kids.first(), kids.last()) {
             (Some(first), Some(last)) => (
                 self.nodes[first.0.0 as usize].start,
@@ -259,8 +259,9 @@ impl<'g> Parser<'g> {
             }
         };
         let children_start = self.children.len() as u32;
-        let children_len = kids.len() as u32;
-        self.children.extend(kids);
+        // Straight from pending: collecting the drain first allocated a Vec for every node.
+        self.children.extend(self.pending.drain(from..));
+        let children_len = self.children.len() as u32 - children_start;
         let id = NodeId(self.nodes.len() as u32);
         self.nodes.push(NodeData {
             kind,
