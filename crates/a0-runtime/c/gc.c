@@ -125,8 +125,11 @@ static void maybe_collect(size_t incoming) {
 /* Small objects come from per-size free lists carved out of chunks, so allocating one is a list pop
  * and freeing it a list push; bigger ones use malloc. The collector sweeps small objects chunk by
  * chunk, through memory in order (a free cell has a null type), and only big ones through the
- * `objects` list. Buffers have chunks of their own, which are not swept. Chunks are never returned
- * to the system. */
+ * `objects` list. Each object chunk keeps the free list its last sweep built, handed to the
+ * allocator whole when the class's list runs dry; a chunk that held nothing live and has not been
+ * allocated from since is not swept again, so a heap that peaked and emptied costs nothing to
+ * collect. Buffers have chunks of their own, which are not swept. Chunks are never returned to the
+ * system. */
 #define GRANULE 16
 #define SMALL_LIMIT 256
 #define CHUNK_SIZE (64 * 1024)
@@ -142,10 +145,15 @@ static FreeCell *buffer_cells[CLASSES];
 typedef struct {
     char *base;
     size_t cell;
+    FreeCell *free; /* its free cells, not yet handed out (NULL once they are) */
+    size_t live;    /* objects the last sweep found live */
+    int touched;    /* allocated from since the last sweep */
 } Chunk;
 
+/* Object chunks, under the heap lock; `cursor` is where each class looks for its next free list. */
 static Chunk *chunks;
 static size_t chunk_count, chunk_cap;
+static size_t cursor[CLASSES];
 
 /* `any` keeps only the low 48 bits of a reference (see a0rt.h). User-space addresses fit on every
  * supported target; check rather than corrupt references silently where they might not. */
@@ -159,6 +167,17 @@ static void *check_address(void *p, size_t size) {
  * chunk of objects is recorded for the sweep. */
 static void *small_alloc(FreeCell **lists, size_t size, int objects) {
     size_t cls = size / GRANULE;
+    if (lists[cls] == NULL && objects) {
+        for (; cursor[cls] < chunk_count; cursor[cls]++) {
+            Chunk *k = &chunks[cursor[cls]];
+            if (k->cell == size && k->free != NULL) {
+                lists[cls] = k->free;
+                k->free = NULL;
+                k->touched = 1;
+                break;
+            }
+        }
+    }
     if (lists[cls] == NULL) {
         /* Zeroed, so that every cell's type is null until it is allocated. */
         char *chunk = (char *)check_address(calloc(1, CHUNK_SIZE), CHUNK_SIZE);
@@ -168,8 +187,7 @@ static void *small_alloc(FreeCell **lists, size_t size, int objects) {
                 chunks = (Chunk *)realloc(chunks, sizeof(Chunk) * chunk_cap);
                 if (chunks == NULL) a0_panic("out of memory");
             }
-            chunks[chunk_count].base = chunk;
-            chunks[chunk_count].cell = size;
+            chunks[chunk_count] = (Chunk){.base = chunk, .cell = size, .touched = 1};
             chunk_count++;
         }
         /* Pushed from the end, so that cells are handed out in address order. */
@@ -493,21 +511,45 @@ void a0_gc_collect(void) {
     int64_t live = 0;
     /* Counted once at the end: with threads, every SUB_BYTES is a locked instruction. */
     size_t freed = 0;
+    /* Every free cell goes back to its chunk's list: what was left of the lists handed out, cells
+     * `a0_gc_free` released (whose chunks had something live or were allocated from, so they are
+     * swept) and the newly dead. */
+    for (size_t c = 0; c < CLASSES; c++) {
+        object_cells[c] = NULL;
+        cursor[c] = 0;
+    }
     for (size_t k = 0; k < chunk_count; k++) {
-        char *base = chunks[k].base;
-        size_t cell = chunks[k].cell;
-        for (size_t off = 0; off + cell <= CHUNK_SIZE; off += cell) {
+        Chunk *chunk = &chunks[k];
+        /* Nothing in it, and its list was never handed out: still all free. */
+        if (!chunk->touched && chunk->live == 0) continue;
+        char *base = chunk->base;
+        size_t cell = chunk->cell;
+        size_t chunk_live = 0;
+        FreeCell *free_cells = NULL;
+        /* From the end, so that the list is in address order. */
+        for (size_t off = (CHUNK_SIZE / cell - 1) * cell;; off -= cell) {
             Header *h = (Header *)(base + off);
-            if (h->type == NULL) continue;
-            if (h->marked) {
+            if (h->type != NULL && h->marked) {
                 h->marked = 0;
-                live++;
+                chunk_live++;
             } else {
-                finalize(PAYLOAD(h));
-                freed += cell;
-                object_cell_free(h, cell);
+                if (h->type != NULL) {
+                    finalize(PAYLOAD(h));
+                    freed += cell;
+                    /* Under stress, poison dead memory so a missing root shows up as garbage. */
+                    if (stress) memset(h, 0xdd, cell);
+                    h->type = NULL;
+                }
+                FreeCell *f = (FreeCell *)h;
+                f->next = free_cells;
+                free_cells = f;
             }
+            if (off == 0) break;
         }
+        chunk->free = free_cells;
+        chunk->live = chunk_live;
+        chunk->touched = 0;
+        live += (int64_t)chunk_live;
     }
     BigObject **link = &big_objects;
     while (*link != NULL) {

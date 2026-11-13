@@ -24,6 +24,7 @@ unsafe extern "C" {
     fn a0_gc_add_root(address: *mut c_void, kind: i64);
     fn a0_gc_collect();
     fn a0_gc_live_objects() -> i64;
+    fn a0_gc_free(object: Ptr, loc: u64, frame: Ptr);
 
     fn a0_any_from_float(v: f64) -> u64;
     fn a0_any_from_int(v: i64) -> u64;
@@ -326,6 +327,85 @@ unsafe fn collection() {
             text(*(b as *const u64).add(39) as Ptr),
             "held by a big object"
         );
+        *frame = 0;
+        a0_gc_frame_pop(1);
+        assert_eq!(live(), 1);
+        emptied_chunks();
+    }
+}
+
+/// Fills `keep` with `n` cells holding `seed + i` and a string, kept by `keep`.
+unsafe fn fill(keep: Ptr, cell: Ptr, n: u64, seed: u64) {
+    unsafe {
+        for i in 0..n {
+            let c = a0_gc_new(cell) as *mut u64;
+            a0_array_push(keep, c as u64);
+            *c = seed + i;
+            *c.add(1) = a0_string_from_int((seed + i) as i64) as u64;
+        }
+    }
+}
+
+unsafe fn check(keep: Ptr, seed: u64) {
+    unsafe {
+        for i in 0..a0_array_len(keep) as u64 {
+            let c = a0_array_get(keep, i as i64) as *const u64;
+            assert_eq!(*c, seed + i, "cell {i} was handed out twice");
+            assert_eq!(text(*c.add(1) as Ptr), (seed + i).to_string());
+        }
+    }
+}
+
+/// Chunks emptied by a collection are skipped by the next ones until allocated from again; their
+/// cells must come back exactly once, alongside cells freed by `a0_gc_free`.
+unsafe fn emptied_chunks() {
+    unsafe {
+        let cell = a0_type_new(
+            b"Cell".as_ptr(),
+            4,
+            2,
+            [WORD_RAW, WORD_REF].as_ptr(),
+            std::ptr::null_mut(),
+        );
+        let frame = a0_gc_frame_push(1);
+        let keep = a0_array_new(WORD_REF as i64, 0);
+        *frame = any(keep);
+        fill(keep, cell, 50_000, 0);
+        assert_eq!(live(), 1 + 1 + 100_000);
+        check(keep, 0);
+
+        // Everything dies; the second collection finds the chunks empty and untouched.
+        *frame = 0;
+        assert_eq!(live(), 1);
+        assert_eq!(live(), 1);
+
+        let keep = a0_array_new(WORD_REF as i64, 0);
+        *frame = any(keep);
+        fill(keep, cell, 30_000, 1_000_000);
+        assert_eq!(live(), 1 + 1 + 60_000);
+        check(keep, 1_000_000);
+
+        // Cells freed by hand in chunks no allocation has touched since the last collection,
+        // then reused by new objects before and after the next one.
+        for i in (0..30_000).step_by(3) {
+            let c = a0_array_get(keep, i) as Ptr;
+            a0_gc_free(c, 0, std::ptr::null_mut());
+            a0_array_set(keep, i, 0);
+        }
+        let more = a0_array_new(WORD_REF as i64, 0);
+        a0_array_push(keep, more as u64);
+        fill(more, cell, 20_000, 2_000_000);
+        assert_eq!(live(), 1 + 1 + 1 + 20_000 * 2 + 20_000 * 2);
+        check(more, 2_000_000);
+        fill(more, cell, 20_000, 2_020_000);
+        assert_eq!(live(), 1 + 1 + 1 + 40_000 * 2 + 20_000 * 2);
+        check(more, 2_000_000);
+        for i in 0..30_000u64 {
+            let c = a0_array_get(keep, i as i64) as *const u64;
+            if i % 3 != 0 {
+                assert_eq!(*c, 1_000_000 + i);
+            }
+        }
         *frame = 0;
         a0_gc_frame_pop(1);
         assert_eq!(live(), 1);
