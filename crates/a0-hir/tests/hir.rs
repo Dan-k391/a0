@@ -655,6 +655,22 @@ fn the_optimizer_inlines_small_functions_and_folds_any_tests() {
 }
 
 #[test]
+fn the_optimizer_folds_any_through_a_branch_that_ends_in_a_boxed_local() {
+    // Lox's `a and b`: the `else` branch is the local `left`, which holds `bool as any`.
+    let m = parse_ok(
+        "module \"m\";\nfn truthy(v: any) -> bool {\n  if v is unit { false } else if v is bool { v as bool } else { true }\n}\nfn main() -> int {\n  let n = 3;\n  if truthy({ let left = (n > 2) as any; if truthy(left) { (n < 9) as any } else { left } }) { 1 } else { 0 }\n}\n",
+    );
+    let ir = lower_with(&m, LowerOptions::optimized(true))
+        .unwrap()
+        .to_string();
+    let start = ir.find("func @hir.main(").unwrap();
+    let end = ir[start..].find("\n}\n").unwrap();
+    let main = &ir[start..start + end];
+    assert!(!main.contains("a0_any"), "{main}");
+    assert!(!main.contains("select"), "{main}");
+}
+
+#[test]
 fn the_optimizer_reaches_what_main_reaches_and_skips_the_rest() {
     // `Sq.area` is reached only through its interface table and `plus_one` only as a value: both
     // must still be optimized. Adding a function nothing reaches changes nothing.

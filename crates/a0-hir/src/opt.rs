@@ -895,16 +895,31 @@ impl Opt<'_> {
         let mut lets = Vec::new();
         for &b in bodies {
             if let Some(root) = self.m.bodies[b.index()].root {
-                self.walk(root, &mut |m, e| {
-                    if let ExprKind::Let(l, init) = m.exprs[e.index()].kind {
-                        lets.push((e, l, init));
-                    }
-                });
+                self.lets_inner_first(root, &mut lets);
+            }
+        }
+        let fixed = |l: LocalId| !uses.writes.contains_key(&l) && !uses.captured.contains(&l);
+        // Locals known to hold `raw as any`, which a branch may end in: boxing `raw` again gives the
+        // same word. Not for `int`, whose boxing can allocate a new box (and so not the same one).
+        let reboxable = |m: &HirModule, t: TypeId| {
+            decided(m.kind(t))
+                && !matches!(m.kind(t), TypeKind::Int | TypeKind::SizedInt(..))
+                && m.inline_struct(t).is_none()
+        };
+        let mut boxed: HashMap<LocalId, (LocalId, TypeId)> = HashMap::new();
+        for &(_, l, init) in &lets {
+            if let ExprKind::Cast(x) = *self.kind(init)
+                && let ExprKind::Local(raw) = *self.kind(x)
+                && self.m.locals[l.index()].ty == TypeId::ANY
+                && fixed(l)
+                && fixed(raw)
+                && reboxable(self.m, self.m.locals[raw.index()].ty)
+            {
+                boxed.insert(l, (raw, self.m.locals[raw.index()].ty));
             }
         }
         for (e, l, init) in lets {
-            let fixed = !uses.writes.contains_key(&l) && !uses.captured.contains(&l);
-            if !fixed || self.m.locals[l.index()].ty != TypeId::ANY {
+            if !fixed(l) || self.m.locals[l.index()].ty != TypeId::ANY {
                 continue;
             }
             // Already split.
@@ -913,7 +928,7 @@ impl Opt<'_> {
             {
                 continue;
             }
-            let Some(t) = self.boxed_source(init) else {
+            let Some(t) = self.boxed_source(init, &boxed) else {
                 continue;
             };
             let data = &self.m.locals[l.index()];
@@ -931,31 +946,49 @@ impl Opt<'_> {
                 body,
                 span,
             });
-            let unboxed = self.strip_box(init, t);
+            let unboxed = self.strip_box(init, t, &boxed);
             let let_raw = self.node(ExprKind::Let(raw, unboxed), TypeId::UNIT, e);
             let raw_ref = self.node(ExprKind::Local(raw), t, e);
-            let boxed = self.node(ExprKind::Cast(raw_ref), TypeId::ANY, e);
-            let let_v = self.node(ExprKind::Let(l, boxed), TypeId::UNIT, e);
+            let boxed_raw = self.node(ExprKind::Cast(raw_ref), TypeId::ANY, e);
+            let let_v = self.node(ExprKind::Let(l, boxed_raw), TypeId::UNIT, e);
             self.m.exprs[e.index()].kind = ExprKind::Block(vec![let_raw, let_v], None);
+            // `raw` is new, so nothing else reads or writes it.
+            if reboxable(self.m, t) {
+                boxed.insert(l, (raw, t));
+            }
+        }
+    }
+
+    /// The `let`s under `e`, each after the `let`s inside it and those before it.
+    fn lets_inner_first(&self, e: ExprId, out: &mut Vec<(ExprId, LocalId, ExprId)>) {
+        visit_children(self.m, e, &mut |c| self.lets_inner_first(c, out));
+        if let ExprKind::Let(l, init) = self.m.exprs[e.index()].kind {
+            out.push((e, l, init));
         }
     }
 
     /// The type of the value boxed into `any` at the end of `e`, when that is the same type on
-    /// every path: `x as any`, possibly as the value of blocks and of both branches of an `if`.
-    fn boxed_source(&self, e: ExprId) -> Option<TypeId> {
+    /// every path: `x as any`, or a local in `boxed` (one that holds `raw as any`), possibly as the
+    /// value of blocks and of both branches of an `if`.
+    fn boxed_source(
+        &self,
+        e: ExprId,
+        boxed: &HashMap<LocalId, (LocalId, TypeId)>,
+    ) -> Option<TypeId> {
         match self.kind(e) {
             ExprKind::Cast(x) if self.ty(e) == TypeId::ANY => {
                 let t = self.ty(*x);
                 decided(self.m.kind(t)).then_some(t)
             }
-            ExprKind::Block(_, Some(t)) => self.boxed_source(*t),
+            ExprKind::Local(l) if self.ty(e) == TypeId::ANY => boxed.get(l).map(|&(_, t)| t),
+            ExprKind::Block(_, Some(t)) => self.boxed_source(*t, boxed),
             ExprKind::If(_, a, Some(b)) => {
                 match (self.ty(*a) == TypeId::NEVER, self.ty(*b) == TypeId::NEVER) {
-                    (true, _) => self.boxed_source(*b),
-                    (_, true) => self.boxed_source(*a),
+                    (true, _) => self.boxed_source(*b, boxed),
+                    (_, true) => self.boxed_source(*a, boxed),
                     _ => {
-                        let t = self.boxed_source(*a)?;
-                        (self.boxed_source(*b)? == t).then_some(t)
+                        let t = self.boxed_source(*a, boxed)?;
+                        (self.boxed_source(*b, boxed)? == t).then_some(t)
                     }
                 }
             }
@@ -964,19 +997,25 @@ impl Opt<'_> {
     }
 
     /// `e` without its final boxing (see [`Opt::boxed_source`]), of type `t`.
-    fn strip_box(&mut self, e: ExprId, t: TypeId) -> ExprId {
+    fn strip_box(
+        &mut self,
+        e: ExprId,
+        t: TypeId,
+        boxed: &HashMap<LocalId, (LocalId, TypeId)>,
+    ) -> ExprId {
         if self.ty(e) == TypeId::NEVER {
             return e;
         }
         match self.kind(e).clone() {
             ExprKind::Cast(x) => x,
+            ExprKind::Local(l) => self.node(ExprKind::Local(boxed[&l].0), t, e),
             ExprKind::Block(items, Some(tail)) => {
-                let tail = self.strip_box(tail, t);
+                let tail = self.strip_box(tail, t, boxed);
                 self.node(ExprKind::Block(items, Some(tail)), t, e)
             }
             ExprKind::If(c, a, Some(b)) => {
-                let a = self.strip_box(a, t);
-                let b = self.strip_box(b, t);
+                let a = self.strip_box(a, t, boxed);
+                let b = self.strip_box(b, t, boxed);
                 self.node(ExprKind::If(c, a, Some(b)), t, e)
             }
             _ => unreachable!("boxed_source accepted it"),

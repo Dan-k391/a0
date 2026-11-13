@@ -698,7 +698,10 @@ variables it captured need no box.
 
 **`any` folding.** `(x as any) is T` and `(x as any) as T` are decided from `x`'s type. This also
 works through a local: `let v = <... x as any>` (never reassigned) becomes
-`let raw = <... x>; let v = raw as any`, so tests of `v` fold and `v as T` reads `raw`.
+`let raw = <... x>; let v = raw as any`, so tests of `v` fold and `v as T` reads `raw`. A branch
+may also end in a local already known to hold `raw as any`, as in Lox's
+`{ let left = a; if truthy(left) { b } else { left } }`, unless `raw` is an `int`, whose boxing can
+allocate.
 
 **Guarded casts.** In `if v is T { ... v as T ... }`, with `v` a local that is never assigned, the
 cast does not check again.

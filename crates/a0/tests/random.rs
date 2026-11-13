@@ -704,6 +704,28 @@ impl Gen {
             },
             Any => {
                 let from = self.rng.pick(&[Int, Bool, Float, Str, Rec, Unit, Any]);
+                if self.rng.chance(25) {
+                    // Lox's `a and b`: a branch that ends in a local holding a boxed value.
+                    let t = self.name("v");
+                    let first = self.expr(from, ctx, d);
+                    let mut inner = ctx.clone();
+                    inner.locals.push(Local {
+                        name: t.clone(),
+                        ty: Any,
+                        mutable: false,
+                    });
+                    let cond = self.expr(Bool, &inner, d);
+                    let other = self.rng.pick(&[from, from, Int, Str]);
+                    let other = format!("({} as any)", self.expr(other, &inner, d));
+                    let (a, b) = if self.rng.chance(50) {
+                        (other, t.clone())
+                    } else {
+                        (t.clone(), other)
+                    };
+                    return format!(
+                        "({{ let {t} = {first} as any; if {cond} {{ {a} }} else {{ {b} }} }})"
+                    );
+                }
                 format!("({} as any)", self.expr(from, ctx, d))
             }
             Arr if self.rng.chance(30) => {

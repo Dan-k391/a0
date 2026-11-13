@@ -1,0 +1,72 @@
+// `and` and `or` as Lox builds them: `{ let left = a; if truthy(left) { b } else { left } }`. When
+// `left` holds a value of a known type and `b` has the same type, the optimizer unboxes the whole
+// expression; ints, and branches of different types, stay boxed. Values and effects must not change.
+// expect-stdout: 0: and false or false float 0 string  unit nil int 0 mixed 0 nan nan false
+// expect-stdout: 1: and true or false float 0.5 string  unit nil int 1 mixed one nan nan false
+// expect-stdout: 2: and true or false float 1 string big unit nil int 2 mixed two nan nan false
+// expect-stdout: 3: and false or true float 1.5 string big unit nil int 3 mixed two nan nan false
+// expect-stdout: effects a b a c true
+module "boxed_branches";
+
+fn truthy(v: any) -> bool {
+  if v is unit { false } else if v is bool { v as bool } else { true }
+}
+
+fn show(v: any) -> string {
+  if v is bool {
+    if v as bool { "true" } else { "false" }
+  } else if v is float {
+    let f = v as float;
+    if f != f { "nan" } else { str(f) }
+  } else if v is string {
+    v as string
+  } else if v is int {
+    str(v as int)
+  } else if v is unit {
+    "nil"
+  } else {
+    "?"
+  }
+}
+
+fn note(s: string, v: bool) -> any {
+  print(s + " ");
+  v as any
+}
+
+fn main() -> int {
+  let i = 0;
+  while i < 4 {
+    // i > 0 and i < 3
+    let a = { let left = (i > 0) as any; if truthy(left) { (i < 3) as any } else { left } };
+    // (i == 1 and i > 5) or i == 3
+    let o = {
+      let left = { let left = (i == 1) as any; if truthy(left) { (i > 5) as any } else { left } };
+      if truthy(left) { left } else { (i == 3) as any }
+    };
+    let f = { let left = (i as float / 2.0) as any; if truthy(left) { left } else { 9.5 as any } };
+    let s = {
+      let left = (if i > 1 { "big" } else { "" }) as any;
+      if truthy(left) { left } else { "small" as any }
+    };
+    let u = { let left = () as any; if truthy(left) { () as any } else { left } };
+    // Boxing an int may allocate: this one is left alone.
+    let n = { let left = i as any; if truthy(left) { left } else { 0 as any } };
+    let mixed = {
+      let left = (if i == 1 { "one" } else { "two" }) as any;
+      if i > 0 { left } else { 0 as any }
+    };
+    let nan = { let left = (0.0 / 0.0) as any; if truthy(left) { left } else { 1.0 as any } };
+    print(str(i) + ": and " + show(a) + " or " + show(o) + " float " + show(f) + " string "
+      + show(s) + " unit " + show(u) + " int " + show(n) + " mixed " + show(mixed) + " nan "
+      + show(nan) + " " + str(nan == nan) + "\n");
+    i = i + 1;
+  }
+  print("effects ");
+  let e = {
+    let left = { let left = note("a", true); if truthy(left) { note("b", false) } else { left } };
+    if truthy(left) { left } else { { let left = note("a", false); if truthy(left) { left } else { note("c", true) } } }
+  };
+  print(show(e) + "\n");
+  0
+}
