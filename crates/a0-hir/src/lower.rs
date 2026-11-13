@@ -334,6 +334,9 @@ struct Lowerer<'a> {
     reassigned: Vec<bool>,
     /// Locals whose address is taken (`addr`), which live in memory.
     addressed: Vec<bool>,
+    /// Locals something binds, assigns or reads, and parameters. The others (such as those of a
+    /// `let` the optimizer removed) always hold zero, which roots nothing, so they get no slot.
+    used: Vec<bool>,
     f: Option<FnState>,
     /// The IR inline site of each HIR one, made when first needed.
     inline_ids: HashMap<u32, a0_ir::InlineId>,
@@ -434,6 +437,7 @@ impl<'a> Lowerer<'a> {
             captures: HashMap::new(),
             scoped: Vec::new(),
             addressed: Vec::new(),
+            used: Vec::new(),
             reassigned: Vec::new(),
             f: None,
             inline_ids: HashMap::new(),
@@ -1161,8 +1165,23 @@ impl<'a> Lowerer<'a> {
         self.scoped = vec![false; m.locals.len()];
         self.reassigned = vec![false; m.locals.len()];
         self.addressed = vec![false; m.locals.len()];
+        self.used = vec![false; m.locals.len()];
+        for p in m.bodies.iter().flat_map(|b| &b.params) {
+            self.used[p.index()] = true;
+        }
         let mut stack: Vec<ExprId> = m.bodies.iter().filter_map(|b| b.root).collect();
         while let Some(e) = stack.pop() {
+            match &m.expr(e).kind {
+                ExprKind::Local(l) | ExprKind::Let(l, _) => self.used[l.index()] = true,
+                ExprKind::Match(_, arms) => {
+                    for a in arms {
+                        for b in &m.arms[a.index()].binds {
+                            self.used[b.index()] = true;
+                        }
+                    }
+                }
+                _ => {}
+            }
             match &m.expr(e).kind {
                 ExprKind::Block(items, _) => {
                     for &item in items {
@@ -1171,7 +1190,10 @@ impl<'a> Lowerer<'a> {
                         }
                     }
                 }
-                ExprKind::SetLocal(l, _) => self.reassigned[l.index()] = true,
+                ExprKind::SetLocal(l, _) => {
+                    self.reassigned[l.index()] = true;
+                    self.used[l.index()] = true;
+                }
                 ExprKind::Builtin(Builtin::Addr, args) => {
                     if let Some(&a) = args.first()
                         && let ExprKind::Local(l) = m.expr(a).kind
@@ -1179,7 +1201,10 @@ impl<'a> Lowerer<'a> {
                         self.addressed[l.index()] = true;
                     }
                 }
-                ExprKind::IfLet(l, ..) | ExprKind::Try(_, l, _) => self.scoped[l.index()] = true,
+                ExprKind::IfLet(l, ..) | ExprKind::Try(_, l, _) => {
+                    self.scoped[l.index()] = true;
+                    self.used[l.index()] = true;
+                }
                 _ => {}
             }
             visit_children(m, e, &mut |c| stack.push(c));
@@ -1999,7 +2024,11 @@ impl<'a> Lowerer<'a> {
                     self.b.iconst(t, 0)
                 };
                 self.b.set(var, zero);
-                Storage::Rooted(var, self.alloc_slot())
+                if self.used[l.index()] {
+                    Storage::Rooted(var, self.alloc_slot())
+                } else {
+                    Storage::Var(var)
+                }
             }
             Some(t) => {
                 let var = self.b.declare_var(&data.name, t);
@@ -2117,11 +2146,9 @@ impl<'a> Lowerer<'a> {
         if closure && !self.captures[&body].is_empty() {
             return true;
         }
-        let gc_local = m
-            .locals
-            .iter()
-            .enumerate()
-            .any(|(i, l)| l.body == body && (self.captured[i] || self.is_gc(l.ty)));
+        let gc_local = m.locals.iter().enumerate().any(|(i, l)| {
+            l.body == body && (self.captured[i] || (self.is_gc(l.ty) && self.used[i]))
+        });
         if gc_local {
             return true;
         }

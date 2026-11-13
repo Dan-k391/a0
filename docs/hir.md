@@ -615,7 +615,9 @@ replaces generic items with one copy per combination of type arguments.
   - Every reference or `any` that lives across something that can allocate is kept in a slot of
     the function's frame, stored in the `any` encoding.
   - Locals of these types are IR variables whose every assignment is also written to their slot.
-    The collector never moves objects, so the variable stays valid.
+    The collector never moves objects, so the variable stays valid. A local that nothing binds,
+    assigns or reads, such as one whose `let` the optimizer removed, always holds zero and gets
+    no slot.
   - A local declared in a block has its slot only while the block runs.
   - Temporaries are spilled to a slot only when a later operand or the operation itself may
     allocate. Reads of locals that are never reassigned are not spilled.

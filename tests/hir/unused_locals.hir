@@ -1,0 +1,39 @@
+// Inlined helpers leave behind locals whose `let` the optimizer removed: they get no frame slot,
+// while every local something binds, assigns or reads stays rooted across allocations.
+// expect-stdout: a! b! c! d!
+// expect-stdout: 10 x
+// expect-stdout: kept 1234
+// expect-exit: 0
+module "unused_locals";
+
+struct Box { v: int, s: string }
+
+fn shout(s: string) -> string {
+  s + "!"
+}
+
+fn first(b: Box, unused: string) -> int {
+  b.v
+}
+
+fn label(b: Box) -> string {
+  let copy = b;
+  copy.s
+}
+
+fn main() -> int {
+  print(shout("a") + " " + shout("b") + " " + shout("c") + " " + shout("d") + "\n");
+  let b = new Box { v: 10, s: "x" };
+  print(str(first(b, shout("e"))) + " " + label(new Box { v: 0, s: "x" }) + "\n");
+  // Assigned but never read: still rooted.
+  let kept = new Box { v: 0, s: "" };
+  let i = 0;
+  let s = "";
+  while i < 4 {
+    kept = new Box { v: i, s: str(i + 1) };
+    s = s + kept.s;
+    i = i + 1;
+  }
+  print("kept " + s + "\n");
+  0
+}

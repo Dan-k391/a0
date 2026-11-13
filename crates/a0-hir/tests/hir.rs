@@ -530,6 +530,32 @@ fn main() -> int {
 }
 
 #[test]
+fn locals_nothing_mentions_get_no_frame_slot() {
+    // Inlining `shout` six times leaves six parameters whose `let` the optimizer removed.
+    let m = parse_ok(
+        r#"module "m";
+fn shout(s: string) -> string { s + "!" }
+fn main() -> int {
+  print(shout("a") + shout("b") + shout("c") + shout("d") + shout("e") + shout("f"));
+  0
+}
+"#,
+    );
+    let ir = lower_with(&m, LowerOptions::optimized(true))
+        .unwrap()
+        .to_string();
+    let main = &ir[ir.find("func @hir.main(").unwrap()..];
+    let push = main.find("call @a0_gc_frame_push(").unwrap();
+    let size: u32 = main[..push]
+        .rsplit("iconst ")
+        .next()
+        .and_then(|s| s.split_whitespace().next())
+        .and_then(|n| n.parse().ok())
+        .unwrap();
+    assert!(size < 6, "a frame of {size} slots:\n{ir}");
+}
+
+#[test]
 fn builders_infer_types_and_generics_are_monomorphized() {
     // fn id<T>(x: T) -> T { x }, called with an int and a string; `xs` is `[]` until a push.
     let mut b = HirBuilder::new("m");
