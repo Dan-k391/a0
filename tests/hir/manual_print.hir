@@ -1,0 +1,48 @@
+// Without a collector, print and eprint free the text they make for a value that is not a string;
+// what they write stays the same.
+// expect-stdout: 42 2.5 18446744073709551615 0.1 true -7 done
+// expect-stdout: 0123456789
+// expect-stderr: -1 0.5 7 1.25 false 200
+// expect-exit: 0
+module "manual_print";
+memory manual;
+
+fn main() -> int {
+  let u: u64 = 0 as u64 - 1 as u64;
+  let f: f32 = 0.1;
+  let small: i32 = -7;
+  print(42);
+  print(" ");
+  print(2.5);
+  print(" ");
+  print(u);
+  print(" ");
+  print(f);
+  print(" ");
+  print(true);
+  print(" ");
+  print(small);
+  print(" done\n");
+  let i = 0;
+  while i < 10 {
+    print(i);
+    i = i + 1;
+  }
+  print("\n");
+  let w: u64 = 7;
+  let g: f32 = 1.25;
+  let b: u8 = 200;
+  eprint(-1);
+  eprint(" ");
+  eprint(0.5);
+  eprint(" ");
+  eprint(w);
+  eprint(" ");
+  eprint(g);
+  eprint(" ");
+  eprint(false);
+  eprint(" ");
+  eprint(b);
+  eprint("\n");
+  0
+}

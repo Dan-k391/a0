@@ -297,8 +297,9 @@ integer (`i32` for C's `int main`). Its result is the exit status, as a C `int`.
 - `gc`, the default: precise tracing collection.
 - `manual`, set with `memory manual;` after the module line, or `set_memory` in the builder. There
   is no collector at all: no shadow stack, no roots, nothing ever collected. The builtin `free(r)`
-  releases an object, array, string, map or closure, and an object freed twice panics. Without the
-  collector, inline structs and pointers may hold references too, since nothing traces them.
+  releases an object, array, string, map or closure, and an object freed twice panics. `print` and
+  `eprint` free the text they make for a value that is not a string. Without the collector, inline
+  structs and pointers may hold references too, since nothing traces them.
 
 ## Expressions
 

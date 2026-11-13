@@ -3434,14 +3434,18 @@ impl<'a> Lowerer<'a> {
             ),
             Builtin::ByteAt => V::Val(self.string_byte(vs[0].val(), vs[1].val())),
             Builtin::Str => V::Val(self.format(vs[0].val(), arg_ty(0))),
-            Builtin::Print => {
+            Builtin::Print | Builtin::Eprint => {
                 let s = self.format(vs[0].val(), arg_ty(0));
-                self.b.call(self.rt.string_print, &[s]);
-                V::Unit
-            }
-            Builtin::Eprint => {
-                let s = self.format(vs[0].val(), arg_ty(0));
-                self.b.call(self.rt.string_eprint, &[s]);
+                let f = if op == Builtin::Print {
+                    self.rt.string_print
+                } else {
+                    self.rt.string_eprint
+                };
+                self.b.call(f, &[s]);
+                // Without a collector, nothing else would free the text a value was printed as.
+                if arg_ty(0) != TypeId::STRING && m.memory() == Memory::Manual {
+                    self.b.call(self.rt.gc_free, &[s]);
+                }
                 V::Unit
             }
             Builtin::Exit => {

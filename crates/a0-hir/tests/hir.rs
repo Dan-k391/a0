@@ -474,6 +474,23 @@ fn lowering_needs_an_entry_point() {
 }
 
 #[test]
+fn printing_a_number_frees_its_text_without_a_collector() {
+    let body = "fn main() -> int { print(42); eprint(1.5); print(\"\\n\"); 0 }\n";
+    let manual = lower(&parse_ok(&format!("module \"m\";\nmemory manual;\n{body}")))
+        .unwrap()
+        .to_string();
+    let print = manual.find("call @a0_string_print").expect(&manual);
+    let free = manual.find("call @a0_gc_free").expect(&manual);
+    assert!(print < free, "{manual}");
+    // One free each for the int and the float; the string literal is not the print's to free.
+    assert_eq!(manual.matches("call @a0_gc_free").count(), 2, "{manual}");
+    let gc = lower(&parse_ok(&format!("module \"m\";\n{body}")))
+        .unwrap()
+        .to_string();
+    assert!(!gc.contains("call @a0_gc_free"), "{gc}");
+}
+
+#[test]
 fn lowered_closures_take_their_environment_first() {
     let m = parse_ok(
         "module \"m\";\nfn main() -> int {\n  let n = 1;\n  let f = fn(x: int) -> int { x + n };\n  f(41)\n}\n",

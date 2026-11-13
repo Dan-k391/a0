@@ -855,6 +855,15 @@ impl Gen {
                         _ => format!("{t} = {v};"),
                     };
                 }
+                // A value that is not a string is printed through text the print makes (and,
+                // without a collector, frees).
+                5 if self.rng.chance(25) => {
+                    let ty = self.rng.pick(&[Int, U8, I32, Bool, Float]);
+                    return format!(
+                        "print(\"[\"); print({}); print(\"]\");",
+                        self.expr(ty, ctx, e)
+                    );
+                }
                 5 => return format!("print(\"[\" + {} + \"]\");", self.expr(Str, ctx, e)),
                 6 if d > 0 => {
                     let c = self.expr(Bool, ctx, e);
@@ -1528,6 +1537,7 @@ fn the_generator_is_deterministic_and_varied() {
         "as Sized).copy()",
         "with_any(",
         "if p0 == 0 {",
+        "print(\"[\"); print(",
     ] {
         let uses = programs.iter().filter(|p| p.contains(feature)).count();
         assert!(uses >= 3, "only {uses} programs use {feature}");
