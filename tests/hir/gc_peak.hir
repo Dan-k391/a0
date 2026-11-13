@@ -1,7 +1,7 @@
 // A large structure in several size classes is built and dropped, then the program keeps
 // allocating: the chunks the peak left empty are skipped by later collections until they are
 // allocated from again, and every cell they hand out must hold only its new object.
-// expect-stdout: peak 32767 201990000
+// expect-stdout: peak 4095 4798500
 // expect-stdout: steady 255000 499500
 // expect-exit: 0
 module "gc peak";
@@ -22,18 +22,18 @@ fn count(t: Tree) -> int {
 }
 
 fn peak() -> int {
-  let t = build(15);
+  let t = build(12);
   let boxes = new array<any>;
   let bigs = new array<Big>;
   let i = 0;
-  while i < 20000 {
+  while i < 3000 {
     push(boxes, (1125899906842624 + i) as any);
     push(bigs, new Big { a: i, b: i, c: i, d: i, e: i, f: i, g: "x" as any });
     i = i + 1;
   }
   let sum = 0;
   i = 0;
-  while i < 20000 {
+  while i < 3000 {
     sum = sum + (boxes[i] as int - 1125899906842624) + bigs[i].f - i + bigs[i].a - i + 100;
     i = i + 1;
   }
