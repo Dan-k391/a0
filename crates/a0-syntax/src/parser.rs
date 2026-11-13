@@ -154,10 +154,10 @@ impl Grammar {
             p.pending.pop().unwrap().0
         };
         let tree = SyntaxTree {
-            text: text.to_string(),
+            text: Arc::from(text),
             source,
-            nodes: p.nodes,
-            children: p.children,
+            nodes: Arc::new(p.nodes),
+            children: Arc::new(p.children),
             root,
             names: Arc::clone(&self.names),
         };

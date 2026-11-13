@@ -36,10 +36,13 @@ pub(crate) struct NodeData {
 /// operator that produced them), their span and their children, which may be labeled with fields.
 #[derive(Clone)]
 pub struct SyntaxTree {
-    pub(crate) text: String,
+    // Shared, never changed after parsing: the driver's tree cache clones a whole program's trees on
+    // every compile, and a deep copy cost tens of MB for a large one. (Arc<[T]> would copy each
+    // array once more on every parse.)
+    pub(crate) text: Arc<str>,
     pub(crate) source: SourceId,
-    pub(crate) nodes: Vec<NodeData>,
-    pub(crate) children: Vec<(NodeId, FieldId)>,
+    pub(crate) nodes: Arc<Vec<NodeData>>,
+    pub(crate) children: Arc<Vec<(NodeId, FieldId)>>,
     pub(crate) root: NodeId,
     pub(crate) names: Arc<Names>,
 }

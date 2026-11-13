@@ -414,3 +414,17 @@ fn backtracking_over_unclosed_nesting_is_linear() {
         .join()
         .unwrap();
 }
+
+#[test]
+fn cloning_a_tree_shares_it() {
+    // The driver's tree cache clones every file's tree on every compile: a deep copy was tens of MB
+    // for a large program.
+    let g = grammar("expr = NUM (\"+\" NUM)*; token NUM /[0-9]+/; skip / +/;");
+    let (a, diags) = g.parse("1 + 2 + 3", SourceId(0));
+    assert!(!diags.has_errors());
+    let mut b = a.clone();
+    assert!(std::ptr::eq(a.source_text(), b.source_text()));
+    b.set_source(SourceId(1));
+    assert_eq!((a.source(), b.source()), (SourceId(0), SourceId(1)));
+    assert_eq!(b.to_sexpr(b.root()), a.to_sexpr(a.root()));
+}
