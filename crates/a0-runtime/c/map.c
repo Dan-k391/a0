@@ -29,7 +29,8 @@ struct A0Map {
     int64_t key_kind;
     int64_t value_kind;
     /* The entry the last lookup found. `has(m, k)` followed by `m[k]` (the usual way to read a key
-     * that may be missing) then hashes `k` once; the key word must match exactly. */
+     * that may be missing), or `m[k] = m[k] + 1`, then hashes `k` once; the key word must match
+     * exactly. */
     int64_t last;
 };
 
@@ -145,8 +146,14 @@ uint64_t a0_map_get(A0Map *m, uint64_t key, uint64_t loc, void *frame) {
 
 void a0_map_set(A0Map *m, uint64_t key, uint64_t value) {
     check(m);
+    /* As in `lookup`; the miss path needs the hash for the insert, so it is not shared. */
+    int64_t e = m->last;
+    if (e >= 0 && e < m->used && m->entries[e].live && m->entries[e].key == key) {
+        m->entries[e].value = value;
+        return;
+    }
     uint64_t hash = hash_key(m, key);
-    int64_t e = find(m, key, hash);
+    e = find(m, key, hash);
     if (e >= 0) {
         m->entries[e].value = value;
         return;
