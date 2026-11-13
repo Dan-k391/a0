@@ -1,0 +1,31 @@
+// A sized integer boxed into an `any` may allocate (beyond 48 bits it is an object), as a cast and
+// as an object's field: a fresh object passed before it must stay rooted.
+// expect-stdout: 3003 101
+// expect-exit: 0
+module "sized_any_alloc";
+
+struct Box { v: int }
+
+// Recursive, so that the optimizer does not inline them.
+fn pair(a: Box, b: any, n: int) -> int {
+  if n == 0 { a.v + (if b is int { 1 } else { -1 }) } else { pair(a, b, n - 1) }
+}
+
+fn pobj(a: Box, o: object, n: int) -> int {
+  if n == 0 { a.v + len(field_names(o)) } else { pobj(a, o, n - 1) }
+}
+
+fn main() -> int {
+  let big: u64 = 1;
+  big = big shl 60;
+  let total = 0;
+  let i = 0;
+  while i < 3 {
+    total = total + pair(new Box { v: 1000 }, big as any, 2);
+    i = i + 1;
+  }
+  let o = new object;
+  let k = pobj(new Box { v: 100 }, { set_field(o, "x", big); o }, 2);
+  print(str(total) + " " + str(k) + "\n");
+  0
+}

@@ -148,6 +148,10 @@ fn both(a: R, b: R) -> int {
   a.n + b.n
 }
 
+fn with_any(a: R, v: any) -> int {
+  a.n
+}
+
 fn note(n: int) -> int {
   print("<" + str(n) + ">");
   n
@@ -524,6 +528,14 @@ impl Gen {
                 5 => format!("note({})", self.expr(Int, ctx, d)),
                 6 if self.rng.chance(50) => format!("({}).a", self.expr(Pt, ctx, d)),
                 6 => format!("({}).n", self.expr(Rec, ctx, d)),
+                // A 64-bit sized number boxed into an `any`, which allocates beyond 48 bits.
+                7 if self.rng.chance(30) => {
+                    let a = self.expr(Rec, ctx, d);
+                    let to = self.rng.pick(&["u64", "i64"]);
+                    // A leaf, so that only the boxing allocates.
+                    let n = self.leaf(Int, ctx);
+                    format!("with_any({a}, (({n} as {to}) + 281474976710656) as any)")
+                }
                 7 => format!("({} as int)", self.expr(Float, ctx, d)),
                 8 => {
                     let v = self.expr(Any, ctx, d);
@@ -893,7 +905,11 @@ impl Gen {
                             .to_string();
                         let k = self.rng.pick(&["x", "y", "z"]);
                         let ty = self.rng.pick(&[Int, Str, Any]);
-                        return format!("set_field({o}, \"{k}\", {});", self.expr(ty, ctx, e));
+                        let v = self.expr(ty, ctx, e);
+                        if ty == Int && self.rng.chance(30) {
+                            return format!("set_field({o}, \"{k}\", ({v}) as u64);");
+                        }
+                        return format!("set_field({o}, \"{k}\", {v});");
                     }
                     let flags = self.locals_of(ctx, Flags, false);
                     if !flags.is_empty() && self.rng.chance(40) {
@@ -1435,6 +1451,7 @@ fn the_generator_is_deterministic_and_varied() {
         "oget(",
         "set_field(",
         "as Sized).copy()",
+        "with_any(",
     ] {
         let uses = programs.iter().filter(|p| p.contains(feature)).count();
         assert!(uses >= 3, "only {uses} programs use {feature}");

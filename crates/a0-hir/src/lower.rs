@@ -2160,7 +2160,7 @@ impl<'a> Lowerer<'a> {
             | ExprKind::NewObject => true,
             ExprKind::Binary(BinOp::Add, a, _) => m.expr_type(*a) == TypeId::STRING,
             ExprKind::Builtin(op, args) => builtin_allocates(m, *op, args),
-            ExprKind::Cast(a) => m.expr_type(*a) == TypeId::INT && m.expr_type(e) == TypeId::ANY,
+            ExprKind::Cast(a) => m.expr_type(e) == TypeId::ANY && boxes(m, m.expr_type(*a)),
             ExprKind::Match(_, arms) => arms.iter().any(|a| {
                 m.arms[a.index()]
                     .binds
@@ -3850,11 +3850,16 @@ fn builtin_allocates(m: &HirModule, op: Builtin, args: &[ExprId]) -> bool {
         Builtin::Keys | Builtin::Substr | Builtin::Str | Builtin::Filled | Builtin::FieldNames => {
             true
         }
-        // Boxing an `int` may allocate.
-        Builtin::SetField => m.expr_type(args[2]) == TypeId::INT,
+        Builtin::SetField => boxes(m, m.expr_type(args[2])),
         Builtin::Print | Builtin::Eprint => m.expr_type(args[0]) != TypeId::STRING,
         _ => false,
     }
+}
+
+/// Whether boxing a value of type `t` into an `any` may allocate: 64-bit integers beyond 48 bits,
+/// sized ones included, become objects.
+fn boxes(m: &HirModule, t: TypeId) -> bool {
+    matches!(m.kind(t), TypeKind::Int | TypeKind::SizedInt(64, _))
 }
 
 /// What stack traces call a closure.
