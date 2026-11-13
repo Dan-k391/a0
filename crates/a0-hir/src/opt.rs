@@ -1450,6 +1450,12 @@ fn known_test(m: &HirModule, yt: TypeId, t: TypeId) -> Option<bool> {
         }
         (_, TypeKind::Interface(_)) => false,
         (_, TypeKind::Nullable(_)) => return None,
+        // A sized integer boxes as an `int` and an `f32` as a `float`, so the boxed value's type
+        // is not the static one: the test is left to run time.
+        (TypeKind::SizedInt(..) | TypeKind::F32, _)
+        | (_, TypeKind::SizedInt(..) | TypeKind::F32) => {
+            return None;
+        }
         _ => yt == t,
     })
 }

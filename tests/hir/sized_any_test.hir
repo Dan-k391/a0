@@ -1,0 +1,17 @@
+// A sized integer boxes as an `int`, so a type test of the boxed value is true for `int` whatever
+// the optimizer knows about where it came from.
+// expect-stdout: -5 true
+// expect-stdout: -9223372036854775808 true false
+module "sized_any_test";
+fn f(v: any) -> int {
+  if v is int { v as int } else { 7 }
+}
+fn main() -> int {
+  let a = (-5 as u64) as any;
+  print(str(f(a)) + " " + str(a is int) + "\n");
+  let x: u64 = 1;
+  x = x shl 63;
+  let b = x as any;
+  print(str(f(b)) + " " + str(b is int) + " " + str(b is float) + "\n");
+  0
+}
