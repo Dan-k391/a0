@@ -283,7 +283,8 @@ int64_t a0_thread_started(void);
 int64_t a0_thread_id(void);
 /* A channel of `capacity` values (at least 1). */
 uint64_t a0_chan_new(int64_t capacity);
-/* Waits for room; fails on a closed channel. */
+/* Waits for room; fails on a closed channel. The caller keeps the channel rooted until this and
+ * a0_chan_recv return: its lock is in the object, and other threads may collect during the wait. */
 void a0_chan_send(uint64_t chan, uint64_t value, uint64_t loc, void *frame);
 /* Waits for a value. On a closed channel with nothing left it returns unit and a0_chan_closed then
  * returns 1 on this thread. */

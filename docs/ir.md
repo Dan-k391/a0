@@ -115,7 +115,8 @@ printed. For most opcodes it is implied by the operands, and the verifier checks
 
 Each `stack_slot` instruction has its own slot. Its address is the same on every execution within
 one call, and different in each call. The slot is gone when the function returns, and its contents
-start undefined. A slot may be large: frames of any size work, up to the thread's stack size.
+start undefined. A slot may be large: frames of any size work, up to the thread's stack size (in
+WebAssembly, 1 MiB for all slots together).
 
 Defined behaviour, identical in the interpreter and native code:
 

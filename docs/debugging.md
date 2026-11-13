@@ -223,4 +223,6 @@ requests and waits for events. Each example language has a test, in `examples/*/
 - A line's code can be in several places, such as a loop's condition or a failed bounds check
   that Cranelift moves to the end of the function. Windows' debuggers refuse a breakpoint on such a
   line as ambiguous, so in CodeView only the line's first place has its number. The others are
-  hidden (line `0xfeefee`), which the debuggers step through.
+  hidden (line `0xfeefee`), which the debuggers step through. So a breakpoint on a line whose
+  first place runs once, such as the set-up of a `for` loop, stops there once and not on every
+  iteration: put it on a line of the body. gdb and lldb read DWARF, which keeps every place.

@@ -78,7 +78,7 @@ before and after; `docs/benchmarks.md` has the comparison with C, Go, clox and L
 - A fresh object passed before an interface call whose method allocates, or before a 64-bit
   integer is boxed into an `any`, is kept alive. A collection there could free it, and the program
   read freed memory.
-- Functions whose stack frame is 64 KB or larger no longer crash on Windows in the JIT and in
+- Functions whose stack frame is larger than a page no longer crash on Windows in the JIT and in
   executables: Cranelift emits inline stack probes.
 - `str.find_from` with a very large start returns -1 instead of crashing, and `parse_int` and
   `parse_float` no longer share their result flag between threads.
@@ -89,14 +89,15 @@ before and after; `docs/benchmarks.md` has the comparison with C, Go, clox and L
 - Programs with `memory manual` no longer leak the text `print` and `eprint` make for a number, a
   bool or a float.
 - On Windows, standard input is read in binary, as stdout and stderr already were: `read_all`
-  keeps `
-`, and a 0x1A byte no longer ends the input.
+  keeps `\r\n`, and a 0x1A byte no longer ends the input.
 - Programs with interfaces build reproducibly: method tables were made in the order a hash map
   iterated, so the same source could lower to different IR from run to run.
 - The optimizer leaves `x is int` to run time when `x` was boxed from a sized integer or an `f32`,
   which box as `int` and `float`; it folded the test to false.
 - WinDbg, cdb and Visual Studio can set a breakpoint on a line whose code is in several places,
   such as a loop's body line or a line with a bounds check (D95).
+- `a0 build -g` turns Cranelift's optimizations off, as `lang build -g` does and as the debugging
+  guide says, so a debugger finds each line's code where the line is.
 - `a0 --help` lists `check`, `dap` and `repl` among `a0 lang`'s commands, and every language
   driver's usage text lists `repl`.
 
