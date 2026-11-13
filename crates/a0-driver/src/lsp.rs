@@ -827,11 +827,27 @@ impl Server<'_> {
             files.push((source, uri.to_string()));
         }
         files.extend(manifests.iter().map(|(id, p)| (*id, path_to_uri(p))));
-        let lines = Lines::new(&text);
-        let index = self.grammar.as_ref().map(|g| {
+        // A single file, or a program that did not load: the document alone.
+        if program_files.is_empty()
+            && let Some(g) = self.grammar.as_ref()
+        {
             let (tree, _) = g.parse(&text, source);
-            SyntaxIndex::new(g, &tree)
-        });
+            program_files.push(FileInfo {
+                source,
+                uri: uri.to_string(),
+                text: text.clone(),
+                lines: Lines::new(&text),
+                index: SyntaxIndex::new(g, &tree),
+                imports: Vec::new(),
+            });
+        }
+        let lines = Lines::new(&text);
+        // The document's index: built while loading the program, or just above; parsing it again
+        // here cost a parse and an index of the document on every analysis.
+        let index = program_files
+            .iter()
+            .find(|f| f.source == source)
+            .map(|f| f.index.clone());
         // Per file of the program: its diagnostics.
         let mut published: HashMap<String, Vec<Json>> = HashMap::new();
         published.insert(uri.to_string(), Vec::new());
@@ -940,20 +956,6 @@ impl Server<'_> {
         // The last types known help completion while the program does not compile.
         if hir.is_none() {
             hir = self.docs.get_mut(uri).and_then(|d| d.hir.take());
-        }
-        // A single file, or a program that did not load: the document alone.
-        if program_files.is_empty()
-            && let Some(g) = self.grammar.as_ref()
-        {
-            let (tree, _) = g.parse(&text, source);
-            program_files.push(FileInfo {
-                source,
-                uri: uri.to_string(),
-                text: text.clone(),
-                lines: Lines::new(&text),
-                index: SyntaxIndex::new(g, &tree),
-                imports: Vec::new(),
-            });
         }
         self.docs.insert(
             uri.to_string(),
