@@ -1459,12 +1459,6 @@ fn cast(op: Opcode, from: Type, to: Type, a: u64) -> u64 {
             }
         }
         Opcode::Trunc => canon(to, a),
-        Opcode::Sitofp => float_bits(to, a as i64 as f64),
-        Opcode::Uitofp => float_bits(to, (a & mask(from)) as f64),
-        Opcode::Fptosi => float_to_int(to, float_of(from, a), true),
-        Opcode::Fptoui => float_to_int(to, float_of(from, a), false),
-        Opcode::Fext => (f32::from_bits(a as u32) as f64).to_bits(),
-        Opcode::Ftrunc => (f64::from_bits(a) as f32).to_bits() as u64,
         Opcode::Bitcast => match to {
             Type::F32 => a & 0xffff_ffff,
             Type::I32 => canon(Type::I32, a),
@@ -1472,6 +1466,22 @@ fn cast(op: Opcode, from: Type, to: Type, a: u64) -> u64 {
         },
         Opcode::Ptrtoint => canon(to, a),
         Opcode::Inttoptr => a & mask(from),
+        _ => float_cast(op, from, to, a),
+    }
+}
+
+/// The conversions to and from floats.
+// Not inlined: inside `exec` their constants are hoisted to its entry, which then saves and loads
+// ten xmm registers every time it runs a region.
+#[inline(never)]
+fn float_cast(op: Opcode, from: Type, to: Type, a: u64) -> u64 {
+    match op {
+        Opcode::Sitofp => float_bits(to, a as i64 as f64),
+        Opcode::Uitofp => float_bits(to, (a & mask(from)) as f64),
+        Opcode::Fptosi => float_to_int(to, float_of(from, a), true),
+        Opcode::Fptoui => float_to_int(to, float_of(from, a), false),
+        Opcode::Fext => (f32::from_bits(a as u32) as f64).to_bits(),
+        Opcode::Ftrunc => (f64::from_bits(a) as f32).to_bits() as u64,
         _ => unreachable!(),
     }
 }
