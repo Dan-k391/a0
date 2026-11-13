@@ -39,6 +39,8 @@ long each stage of compiling takes), `A0_CODEGEN_UNITS=n` (compile into `n` obje
 programs are),
 `A0_GC_STRESS=1` (the collector runs on every allocation), `A0_GC_STATS=1` (what the collector did,
 printed at exit), `A0_OPT=0` (no HIR optimizer),
+`CARGO_PROFILE_DEV_DEBUG=2` (full Rust debug information, to step through A0 itself in a debugger;
+the dev profile keeps only line tables),
 `a0 explain E2001` (what an error code means), `A0_BLESS=1` (rewrite the tutorial's listings and the
 diagnostic snapshots after a deliberate change).
 Every language driver also has `lang lsp`, the language server (`docs/editors.md`), and `lang dap`,

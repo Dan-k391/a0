@@ -50,9 +50,14 @@ a0-capi = { path = "crates/a0-capi", version = "=1.0.0" }
 
 [profile.dev]
 opt-level = 1
+# Line tables keep panic locations and backtraces readable; full debug information made every test
+# binary's PDB or DWARF tens of MB. To step through A0 itself in a debugger, build with
+# CARGO_PROFILE_DEV_DEBUG=2.
+debug = "line-tables-only"
 
 [profile.dev.package."*"]
 opt-level = 2
+debug = false
 
 # A copy of cranelift-object with the COFF relocations aarch64-windows needs (vendor/README.md).
 [patch.crates-io]
