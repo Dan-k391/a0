@@ -1,7 +1,8 @@
 //! `a0 lang <grammar.a0g> <command> ...`: runs a language defined by its grammar alone, whose rules
 //! say what their nodes mean with `@hir` forms (`a0_hir::dsl`, D55). The commands are those of
-//! every language's driver (`run`, `build`, `hir`, `ir`, `lsp`, `explain`), so such a language gets
-//! both backends and a language server with no code of its own.
+//! every language's driver (`run`, `build`, `check`, `hir`, `ir`, `lsp`, `dap`, `repl`,
+//! `explain`), so such a language gets both backends, a language server, a debugger and a REPL with
+//! no code of its own.
 
 use std::path::Path;
 use std::process::ExitCode;

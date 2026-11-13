@@ -963,6 +963,7 @@ impl Language {
              \x20 hir <file>             print the high-level IR\n\
              \x20 lsp                    serve the Language Server Protocol on stdin/stdout\n\
              \x20 dap                    serve the Debug Adapter Protocol (debugging) on stdin/stdout\n\
+             \x20 repl                   a read-eval-print loop\n\
              \x20 explain <code>         explain an error code\n{packages}"
         )
     }

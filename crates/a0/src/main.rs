@@ -30,8 +30,8 @@ commands:
   new <name> [--dir D] [--ext E] [--a0 PATH]
                             create a language project (grammar, compiler, tests, editor setup)
   lang <grammar.a0g> <command> ...
-                            a language defined by its grammar's @hir forms: run, build, hir,
-                            ir, lsp or explain, as with any language's driver
+                            a language defined by its grammar's @hir forms: run, build, check,
+                            hir, ir, lsp, dap, repl or explain, as with any language's driver
 
 targets: x86_64-linux, aarch64-linux, x86_64-macos, aarch64-macos, x86_64-windows,
          aarch64-windows (or full triples); the default is the host
