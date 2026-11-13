@@ -130,6 +130,35 @@ fn every_program_compiles_for_every_target() {
 }
 
 #[test]
+fn addresses_of_one_global_merge_within_a_function() {
+    use object::{ObjectSection, RelocationTarget};
+    // @main takes `addr @g` five times, in different blocks of a loop. Each used to be its own
+    // GlobalValue, which Cranelift never merges: one relocation each.
+    let (_, m) = corpus()
+        .into_iter()
+        .find(|(name, _)| name == "global_addr_reuse.a0ir")
+        .unwrap();
+    let bytes = compile_object(&m, Target::X86_64_LINUX, &CodegenOptions::default()).unwrap();
+    let file = object::File::parse(&*bytes).unwrap();
+    let g = file
+        .symbols()
+        .find(|s| s.name() == Ok("g"))
+        .unwrap()
+        .index();
+    let main = file.symbols().find(|s| s.name() == Ok("main")).unwrap();
+    let (start, end) = (main.address(), main.address() + main.size());
+    let text = file.section_by_name(".text").unwrap();
+    let in_main = text
+        .relocations()
+        .filter(|(at, r)| (start..end).contains(at) && r.target() == RelocationTarget::Symbol(g))
+        .count();
+    assert!(
+        (1..=2).contains(&in_main),
+        "{in_main} relocations against @g in @main"
+    );
+}
+
+#[test]
 fn library_objects_export_functions_under_their_names() {
     let text = "module \"lib\"\nfunc @\"binary|\"(%a: f64, %b: f64) -> f64 {\n  %r: f64 = fadd %a, %b\n  return %r\n}\nfunc @main() -> i32 {\n  %0: i32 = iconst 0\n  return %0\n}\n";
     let m = a0_ir::parse_and_verify(text, SourceId(0)).unwrap();

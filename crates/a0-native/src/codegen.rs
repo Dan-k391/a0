@@ -486,6 +486,7 @@ pub(crate) fn compile_functions<M: ClifModule>(
                 vars: HashMap::new(),
                 stack_slots: HashMap::new(),
                 func_refs: HashMap::new(),
+                data_refs: HashMap::new(),
                 trap_sites: Vec::new(),
                 loops: Vec::new(),
                 locations,
@@ -905,6 +906,7 @@ struct Lower<'a, M: ClifModule> {
     /// The Cranelift stack slot of each `stack_slot`.
     stack_slots: HashMap<Inst, ir::StackSlot>,
     func_refs: HashMap<cranelift_module::FuncId, ir::FuncRef>,
+    data_refs: HashMap<DataId, ir::GlobalValue>,
     /// Cold blocks that report a trap: (block, trap code, location).
     trap_sites: Vec<(ir::Block, i32, u32)>,
     loops: Vec<LoopBlocks>,
@@ -938,6 +940,17 @@ impl<M: ClifModule> Lower<'_, M> {
         let r = self.obj.declare_func_in_func(id, self.b.func);
         self.func_refs.insert(id, r);
         r
+    }
+
+    /// One GlobalValue per global in a function: Cranelift merges `symbol_value`s only of the
+    /// same GlobalValue, so a fresh one per `addr` would keep every address a value of its own.
+    fn data_ref(&mut self, id: DataId) -> ir::GlobalValue {
+        if let Some(&gv) = self.data_refs.get(&id) {
+            return gv;
+        }
+        let gv = self.obj.declare_data_in_func(id, self.b.func);
+        self.data_refs.insert(id, gv);
+        gv
     }
 
     fn function(&mut self) {
@@ -1137,9 +1150,7 @@ impl<M: ClifModule> Lower<'_, M> {
                         self.b.ins().func_addr(self.ptr, fr)
                     }
                     SymbolKind::Global => {
-                        let gv = self
-                            .obj
-                            .declare_data_in_func(self.data_ids[sym.index as usize], self.b.func);
+                        let gv = self.data_ref(self.data_ids[sym.index as usize]);
                         self.b.ins().symbol_value(self.ptr, gv)
                     }
                 };

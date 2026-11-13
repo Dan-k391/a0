@@ -1,0 +1,71 @@
+; One global read and written through `addr` in several blocks of a loop and around a call. The
+; backend gives each global one Cranelift GlobalValue per function, so these addresses merge
+; (crates/a0-native/tests/objects.rs counts the relocations).
+; expect-stdout: 0 1 3 5 6 8 10 11 13 15 | 160
+module "global addr reuse"
+
+extern func @a0_print_i64(i64)
+extern func @a0_print_cstr(ptr)
+global @g: i64 = 0
+data @space = " \00"
+data @bar = "| \00"
+data @nl = "\0a\00"
+
+func @bump(%by: i64) {
+  %p: ptr = addr @g
+  %v: i64 = load %p
+  %w: i64 = iadd %v, %by
+  store %w, %p
+  return
+}
+
+func @main() -> i32 {
+  var $i: i64
+  %zero: i64 = iconst 0
+  %one: i64 = iconst 1
+  %three: i64 = iconst 3
+  %ten: i64 = iconst 10
+  %sp: ptr = addr @space
+  set $i, %zero
+  loop {
+    %i: i64 = get $i
+    %done: i1 = icmp sge %i, %ten
+    if %done {
+      break
+    }
+    %p0: ptr = addr @g
+    %v0: i64 = load %p0
+    call @a0_print_i64(%v0)
+    call @a0_print_cstr(%sp)
+    %r: i64 = srem %i, %three
+    %even: i1 = icmp eq %r, %zero
+    if %even {
+      %p1: ptr = addr @g
+      %v1: i64 = load %p1
+      %w1: i64 = iadd %v1, %one
+      store %w1, %p1
+    } else {
+      call @bump(%three)
+      %p2: ptr = addr @g
+      %v2: i64 = load %p2
+      %w2: i64 = isub %v2, %one
+      store %w2, %p2
+    }
+    %p3: ptr = addr @g
+    %v3: i64 = load %p3
+    %w3: i64 = iadd %v3, %zero
+    store %w3, %p3
+    %i1: i64 = iadd %i, %one
+    set $i, %i1
+  }
+  %b: ptr = addr @bar
+  call @a0_print_cstr(%b)
+  %p4: ptr = addr @g
+  %v4: i64 = load %p4
+  %w4: i64 = imul %v4, %ten
+  call @a0_print_i64(%w4)
+  %n: ptr = addr @nl
+  call @a0_print_cstr(%n)
+  %z: i32 = iconst 0
+  return %z
+}
