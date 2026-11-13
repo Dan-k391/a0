@@ -21,7 +21,9 @@ void a0_rt_init(int32_t argc, char **argv) {
     g_argv = argv;
     a0_gc_restart();
 #ifdef _WIN32
-    /* Write "\n", not "\r\n": output must be byte-identical on every platform. */
+    /* Bytes in and out exactly as on every platform: no CRLF translation, no Ctrl-Z end of
+     * input. */
+    _setmode(_fileno(stdin), _O_BINARY);
     _setmode(_fileno(stdout), _O_BINARY);
     _setmode(_fileno(stderr), _O_BINARY);
 #endif

@@ -83,7 +83,7 @@ Misusing a function, such as giving `split` an empty separator, panics instead.
 | Function | |
 |---|---|
 | `read_line() -> string?` | the next line without its line ending (`\n` or `\r\n`), null at the end of the input |
-| `read_all() -> string` | the rest of the input |
+| `read_all() -> string` | the rest of the input, byte for byte (no line endings are translated, on any platform) |
 | `write(text)`, `write_line(text)` | to standard output (without, with a newline) |
 | `write_error(text)` | to standard error, after what was written to standard output |
 | `flush()` | flushes standard output (reading input does that too) |
