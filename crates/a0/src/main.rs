@@ -321,7 +321,9 @@ fn build(args: &[String], executable: bool) -> ExitCode {
             .output
             .unwrap_or_else(|| format!("{stem}{}", args.target.exe_suffix()));
         let opts = a0_native::BuildOptions {
-            no_optimize: !args.optimize,
+            // As the language drivers do, and as docs/debugging.md says: optimized code moves a
+            // line's instructions to where a debugger no longer finds them.
+            no_optimize: !args.optimize || args.debug_info,
             debug_info: args.debug_info,
             ..Default::default()
         };
