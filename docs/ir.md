@@ -288,6 +288,9 @@ same text (`docs/diagnostics.md`). The IR carries what that needs. None of it is
   each instruction it holds its function, file, line and column, and for inlined code the location
   of the call it was inlined at.
 
+Compiled code computes the C library's `sqrt` and `fabs` (declared as `extern`, from `f64` to
+`f64`) with one instruction each instead of a call; the results are the same (D89).
+
 Some runtime functions can fail: array and map access, substrings, casts out of `any`, panics and
 traps (`a0_runtime::REPORTS_LOCATION` lists them). They take two arguments more than the IR
 declares, which the backends pass:

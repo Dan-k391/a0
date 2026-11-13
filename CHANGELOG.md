@@ -12,6 +12,11 @@ APIs. `docs/milestones.md` has the details of each step, with measurements.
 - Language drivers implement their documented `check` command; `--help`, `-h` and `help` print
   their usage and succeed.
 
+### Changed
+
+- Compiled code computes C's `sqrt` and `fabs` with an instruction instead of a call (D89), and
+  the collector's marking is inlined in runtimes built by GCC. Results are unchanged.
+
 ### Fixed
 
 - The HIR optimizer preserves traps from unused sized-integer division and remainder expressions;

@@ -1350,3 +1350,16 @@ package is now `a0-cli`, the convention for a library family's command, with a `
 named `a0`: `cargo install a0-cli` installs `a0`, and the command line, which the compatibility
 promise covers, is unchanged. Only `cargo -p` names change (`cargo test -p a0-cli`); the directory
 stays `crates/a0`.
+
+## D89. Compiled code turns calls to C's `sqrt` and `fabs` into instructions
+
+A call to the C library's `sqrt` cost `nbody` a call and, around it, a spill of every float in a
+register. The choices were a float-math instruction in the core IR (the model, the builder, the
+verifier, the text format, three backends and the C API, for two operations), or to have the
+Cranelift backend recognize the call: an `extern` function named `sqrt` or `fabs` from one `f64`
+to another can only be the C library's, and IEEE 754 fixes the result for every input, so the
+instruction and the call agree. The backend does that. The interpreter and the WebAssembly backend
+still call C, and the differential tests compare the results (`tests/programs/floats.a0ir`).
+`floor`, `ceil` and `trunc` stay calls: without SSE4.1, Cranelift calls the C library for them
+anyway. `round` rounds halves away from zero, which Cranelift's `nearest` does not. `nbody` went
+from 93 to 88 ms on x86-64 Windows.

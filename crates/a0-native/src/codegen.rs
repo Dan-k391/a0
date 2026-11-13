@@ -93,6 +93,14 @@ fn clif_type(ty: Type, target: Target) -> ir::Type {
     }
 }
 
+/// Whether `f` is the C library's function `name` from one double to another.
+fn c_float_function(m: &Module, f: FuncId, name: &str) -> bool {
+    m.func_is_extern(f)
+        && m.func_name(f) == name
+        && m.func_params(f) == [Type::F64]
+        && m.func_ret(f) == Some(Type::F64)
+}
+
 /// Compiles a verified module into an object file for `target`.
 pub fn compile_object(
     m: &Module,
@@ -1273,6 +1281,16 @@ impl<M: ClifModule> Lower<'_, M> {
             }
             Opcode::Call if m.func_has_struct_params(m.inst_callee(inst)) => {
                 self.c_call(inst, m.inst_callee(inst), args);
+            }
+            // The C library's `sqrt` and `fabs` are one instruction each, with the same result for
+            // every input; a call would also spill every float that lives across it (D89).
+            Opcode::Call if c_float_function(m, m.inst_callee(inst), "sqrt") => {
+                let v = self.b.ins().sqrt(args[0]);
+                self.set(inst, v);
+            }
+            Opcode::Call if c_float_function(m, m.inst_callee(inst), "fabs") => {
+                let v = self.b.ins().fabs(args[0]);
+                self.set(inst, v);
             }
             Opcode::Call => {
                 let callee = m.inst_callee(inst);

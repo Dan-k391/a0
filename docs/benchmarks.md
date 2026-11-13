@@ -113,7 +113,8 @@ programs have no small functions for it to inline, so their differences are nois
 - **`sieve`:** the array holds one byte per boolean, as in C. What remains is Cranelift's code and
   a bounds check on every index, which Go has too. Tin, which has no check, takes 105 ms.
 - **`nbody`:** the bodies are structs on the heap, reached through a bounds-checked array of
-  references, and `math.sqrt` is a call to C's `sqrt` rather than an instruction.
+  references. When these numbers were measured, `math.sqrt` was also a call to C's `sqrt`; it is
+  now an instruction, which takes about 5% off this program.
 - **`binarytrees`:** close to a third of A0's time is the collector. With `A0_GC_STATS=1` it
   reports 56 collections taking 152.5 ms, 82.8 ms of it marking, with a peak of 22.4 MB and 240,329
   objects live after the last collection. A0's collector is a non-moving mark and sweep, so every

@@ -7,12 +7,18 @@
 ; expect-stdout: 3.5
 ; expect-stdout: 7
 ; expect-stdout: 1.4142135623730951
+; expect-stdout: 82.24962005991274
+; expect-stdout: 6765
+; expect-stdout: nan
+; expect-stdout: -0
+; expect-stdout: 0
 module "floats"
 
 extern func @a0_print_f64(f64)
 extern func @a0_print_i64(i64)
 extern func @a0_print_newline()
 extern func @sqrt(f64) -> f64
+extern func @fabs(f64) -> f64
 
 func @fib(%n: f64) -> f64 {
   %two: f64 = fconst 2.0
@@ -59,6 +65,18 @@ func @main() -> i32 {
   call @a0_print_newline()
   %root: f64 = call @sqrt(%two)
   call @show(%root)
+  ; `sqrt` and `fabs` are instructions in compiled code: the results must be the C library's.
+  %froot: f64 = call @sqrt(%f)
+  call @show(%froot)
+  %neg: f64 = fneg %f
+  %abs: f64 = call @fabs(%neg)
+  call @show(%abs)
+  %nan: f64 = call @sqrt(%neg)
+  call @show(%nan)
+  %nzroot: f64 = call @sqrt(%nz)
+  call @show(%nzroot)
+  %nzabs: f64 = call @fabs(%nz)
+  call @show(%nzabs)
   %ok: i32 = iconst 0
   return %ok
 }
