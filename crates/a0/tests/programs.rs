@@ -259,6 +259,32 @@ fn unoptimized_native_programs_match_expectations() {
     native("0");
 }
 
+/// Lowering the same HIR gives the same IR in every run: a build must be reproducible, and maps
+/// that iterate in a different order each time once made the method tables come out differently.
+#[test]
+fn lowering_is_the_same_in_every_run() {
+    for program in programs() {
+        if program.extension().is_none_or(|x| x != "hir") {
+            continue;
+        }
+        let lower = || {
+            let out = run(Command::new(env!("CARGO_BIN_EXE_a0"))
+                .current_dir(root())
+                .arg("lower")
+                .arg(&program));
+            (out.status.code(), out.stdout)
+        };
+        let first = lower();
+        for _ in 0..3 {
+            assert!(
+                lower() == first,
+                "{}: lowered differently",
+                program.display()
+            );
+        }
+    }
+}
+
 #[test]
 fn check_and_fmt_report_diagnostics() {
     let dir = scratch_dir("cli");

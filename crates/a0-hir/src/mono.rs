@@ -247,8 +247,15 @@ impl Mono<'_> {
     /// returns whether it made any.
     fn instantiate_vtables(&mut self) -> bool {
         let mut made = false;
-        let instances: Vec<(Owner, (Owner, Vec<TypeId>))> =
+        let mut instances: Vec<(Owner, (Owner, Vec<TypeId>))> =
             self.origin.iter().map(|(&o, x)| (o, x.clone())).collect();
+        // In the order the instances were made, not the map's: the tables and the functions
+        // instantiated for them must come out the same in every build.
+        instances.sort_by_key(|&(o, _)| match o {
+            Owner::Struct(s) => (0, s.index()),
+            Owner::Enum(e) => (1, e.index()),
+            Owner::Value(t) => (2, t.index()),
+        });
         for (out_owner, (owner, args)) in instances {
             for &(o, i, _) in &self.m.impls {
                 if o != owner
