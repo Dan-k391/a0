@@ -1,0 +1,42 @@
+// Parsing on two threads at once: whether a parse failed is each thread's own, so one thread's
+// failures never turn into another's (a regression test; the interpreter showed it reliably).
+// expect: "x" parsed as a number: 0 times; "12" rejected: 0 times
+import std.str;
+import std.thread;
+
+// Text that is never a number.
+fn bad(n: int) -> int {
+  let wrong = 0;
+  let i = 0;
+  while i < n {
+    wrong = wrong + match str.parse_int("x") {
+      Ok(_v) => 1,
+      Err(_e) => 0,
+    };
+    i = i + 1;
+  }
+  return wrong;
+}
+
+// Text that always is.
+fn good(n: int) -> int {
+  let wrong = 0;
+  let i = 0;
+  while i < n {
+    wrong = wrong + match str.parse_int("12") {
+      Ok(_v) => 0,
+      Err(_e) => 1,
+    };
+    i = i + 1;
+  }
+  return wrong;
+}
+
+fn main() {
+  let n = 200000;
+  let a = thread.spawn(fn() -> int { return bad(n); });
+  let b = thread.spawn(fn() -> int { return good(n); });
+  let x = thread.join(a);
+  let y = thread.join(b);
+  print("\"x\" parsed as a number: " + str(x) + " times; \"12\" rejected: " + str(y) + " times");
+}

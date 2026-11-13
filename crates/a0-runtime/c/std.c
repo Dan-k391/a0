@@ -21,10 +21,11 @@
 #endif
 
 /* Why the last call that failed did (a file that could not be opened, a number that did not parse),
- * for the HIR side to put in an error value. The runtime runs one thread, and C functions have no
- * other way to return both a value and a reason. */
+ * for the HIR side to put in an error value. Both are per thread: C functions have no other way to
+ * return both a value and a reason, and another thread's call must not overwrite them before the
+ * HIR side reads them. */
 static A0_THREAD_LOCAL char last_error[512];
-static int64_t last_failed;
+static A0_THREAD_LOCAL int64_t last_failed;
 
 static void fail(const char *message) {
     snprintf(last_error, sizeof last_error, "%s", message);
@@ -419,7 +420,8 @@ int64_t a0_std_find(A0String *s, A0String *part, int64_t from) {
     check(part);
     if (from < 0) from = 0;
     if (part->len == 0) return from <= s->len ? from : -1;
-    for (int64_t i = from; i + part->len <= s->len; i++) {
+    /* Not `i + part->len`: a start near INT64_MAX would overflow it. */
+    for (int64_t i = from; i <= s->len - part->len; i++) {
         if (s->bytes[i] == part->bytes[0] && memcmp(s->bytes + i, part->bytes, (size_t)part->len) == 0) {
             return i;
         }

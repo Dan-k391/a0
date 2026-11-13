@@ -15,6 +15,7 @@ fn strings() {
   print(str(len(parts)) + " " + s.join(parts, "|"));
   print(s.join(s.words("  one two\tthree \n"), "+"));
   print(str(s.find("hello", "l")) + " " + str(s.find_last("hello", "l")) + " " + str(s.find("hello", "z")));
+  print(s.find_from("abc", "b", 9223372036854775807)); // a start past any string
   print(s.contains("hello", "ell") && s.starts_with("hello", "he") && s.ends_with("hello", "lo"));
   print(s.replace("a-b-c", "-", "::") + " [" + s.trim("  x  ") + "] " + s.upper("MiXed") + " " + s.lower("MiXed"));
   print(s.repeat("ab", 3) + " " + s.slice("abcdef", 1, 4) + " " + s.fixed(math.pi(), 3));
@@ -74,6 +75,7 @@ fn main() {
 // expect: 4 a|b||c
 // expect: one+two+three
 // expect: 2 3 -1
+// expect: -1
 // expect: true
 // expect: a::b::c [x] MIXED mixed
 // expect: ababab bcd 3.142
