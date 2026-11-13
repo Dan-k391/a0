@@ -10,6 +10,7 @@
 #include "internal.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 /* A program compiled in parallel has a code table per object it was compiled into. */
@@ -20,14 +21,56 @@ static const A0CodeTable *g_code[A0_MAX_CODE_TABLES];
 static size_t g_code_count;
 static A0FramesFn g_frames;
 
+/* Each table's functions that have code, by start address, so that every frame of a throw finds
+ * its function by bisection: the JIT's functions are not in address order. Built when the table is
+ * registered (complete by then, and before the program's threads), since the failure path must not
+ * allocate. NULL when there was no memory for it: that table is searched in order. */
+static uint32_t *g_order[A0_MAX_CODE_TABLES];
+static uint64_t g_ordered[A0_MAX_CODE_TABLES];
+static const A0CodeTable *g_sorting;
+
+static int by_start(const void *a, const void *b) {
+    uintptr_t x = (uintptr_t)g_sorting->functions[*(const uint32_t *)a].start;
+    uintptr_t y = (uintptr_t)g_sorting->functions[*(const uint32_t *)b].start;
+    return x < y ? -1 : x > y;
+}
+
+static void index_code(size_t t) {
+    const A0CodeTable *code = g_code[t];
+    g_order[t] = NULL;
+    if (code->count == 0 || code->count > UINT32_MAX) return;
+    uint32_t *order = (uint32_t *)malloc(code->count * sizeof *order);
+    if (order == NULL) return;
+    /* Functions do not overlap, so without the empty ones each start is another function's. */
+    uint64_t n = 0;
+    for (uint64_t i = 0; i < code->count; i++) {
+        if (code->functions[i].size > 0) order[n++] = (uint32_t)i;
+    }
+    g_sorting = code;
+    qsort(order, (size_t)n, sizeof *order, by_start);
+    g_order[t] = order;
+    g_ordered[t] = n;
+}
+
 void a0_rt_set_debug(const A0LocationTable *locations, const A0CodeTable *code) {
     g_locations = locations;
+    /* A REPL or another run in the same process registers its tables again. */
+    for (size_t t = 0; t < g_code_count; t++) {
+        free(g_order[t]);
+        g_order[t] = NULL;
+    }
     g_code_count = 0;
-    if (code != NULL) g_code[g_code_count++] = code;
+    if (code != NULL) {
+        g_code[g_code_count] = code;
+        index_code(g_code_count++);
+    }
 }
 
 void a0_rt_add_code(const A0CodeTable *code) {
-    if (code != NULL && g_code_count < A0_MAX_CODE_TABLES) g_code[g_code_count++] = code;
+    if (code != NULL && g_code_count < A0_MAX_CODE_TABLES) {
+        g_code[g_code_count] = code;
+        index_code(g_code_count++);
+    }
 }
 
 void a0_rt_set_frames(A0FramesFn frames) { g_frames = frames; }
@@ -43,24 +86,42 @@ static const char *string_at(uint32_t offset) {
 
 /* Whether `ra` returns into generated code; if it does, `*site` is the location of the call (0 if
  * the call has none, in a function traces leave out). */
+static int call_site_in(const A0CodeTable *code, const A0CodeFunction *f, uintptr_t ra, uint32_t *site) {
+    uintptr_t start = (uintptr_t)f->start;
+    if (ra <= start || ra > start + f->size) return 0;
+    /* The call instruction ends where the return address points. */
+    uint32_t offset = (uint32_t)(ra - 1 - start);
+    *site = 0;
+    for (uint32_t r = f->first; r < f->first + f->count; r++) {
+        const A0CodeRange *range = &code->ranges[r];
+        if (offset >= range->start && offset < range->end) {
+            *site = range->location;
+            break;
+        }
+    }
+    return 1;
+}
+
 static int call_site(uintptr_t ra, uint32_t *site) {
     for (size_t t = 0; t < g_code_count; t++) {
         const A0CodeTable *code = g_code[t];
-        for (uint64_t i = 0; i < code->count; i++) {
-            const A0CodeFunction *f = &code->functions[i];
-            uintptr_t start = (uintptr_t)f->start;
-            if (ra <= start || ra > start + f->size) continue;
-            /* The call instruction ends where the return address points. */
-            uint32_t offset = (uint32_t)(ra - 1 - start);
-            *site = 0;
-            for (uint32_t r = f->first; r < f->first + f->count; r++) {
-                const A0CodeRange *range = &code->ranges[r];
-                if (offset >= range->start && offset < range->end) {
-                    *site = range->location;
-                    break;
+        const uint32_t *order = g_order[t];
+        if (order != NULL) {
+            /* The last function that starts before `ra` is the only one that can hold it. */
+            uint64_t lo = 0, hi = g_ordered[t];
+            while (lo < hi) {
+                uint64_t mid = lo + (hi - lo) / 2;
+                if ((uintptr_t)code->functions[order[mid]].start < ra) {
+                    lo = mid + 1;
+                } else {
+                    hi = mid;
                 }
             }
-            return 1;
+            if (lo > 0 && call_site_in(code, &code->functions[order[lo - 1]], ra, site)) return 1;
+            continue;
+        }
+        for (uint64_t i = 0; i < code->count; i++) {
+            if (call_site_in(code, &code->functions[i], ra, site)) return 1;
         }
     }
     return 0;

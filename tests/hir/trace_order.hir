@@ -1,0 +1,36 @@
+// A trace through functions defined in another order than they call each other, with exceptions
+// thrown and caught through them first: native code finds each frame's function by its address.
+// expect-stdout: caught: from third
+// expect-stderr: panic: uncaught exception: from third
+// expect-stderr:     at third (tests/hir/trace_order.hir:15:15)
+// expect-stderr:     at third (tests/hir/trace_order.hir:16:7)
+// expect-stderr:     ... the frame above repeats 1 more times
+// expect-stderr:     at second (tests/hir/trace_order.hir:25:3)
+// expect-stderr:     at first (tests/hir/trace_order.hir:21:3)
+// expect-stderr:     at main (tests/hir/trace_order.hir:34:3)
+// expect-exit: 101
+module "trace_order";
+
+fn third(n: int) -> int {
+  if n == 0 { throw "from third" }
+  1 + third(n - 1)
+}
+
+fn first(n: int) -> int {
+  if n == 0 { return 0; }
+  second(n) + first(n - 1)
+}
+
+fn second(n: int) -> int {
+  third(n) + 1
+}
+
+fn main() -> int {
+  try {
+    first(3);
+  } catch e {
+    print("caught: " + (e as string) + "\n");
+  }
+  first(2);
+  0
+}
