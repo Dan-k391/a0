@@ -1363,3 +1363,145 @@ still call C, and the differential tests compare the results (`tests/programs/fl
 `floor`, `ceil` and `trunc` stay calls: without SSE4.1, Cranelift calls the C library for them
 anyway. `round` rounds halves away from zero, which Cranelift's `nearest` does not. `nbody` went
 from 93 to 88 ms on x86-64 Windows.
+
+## D90. Chunks keep their own free lists, and empty untouched chunks are not swept
+
+After a program builds a large structure and drops it, the trigger falls back to 1 MB (D18's chunks
+are never returned to the system), and every later collection walked every cell of every chunk the
+peak left behind. A minnow program that dropped an 81 MB tree spent about 0.5 s in the collector,
+against 14 ms without the peak. Each object chunk now keeps the free list its last sweep built, the
+number of objects that sweep found live, and whether anything has been allocated from it since. When
+a size class's list runs dry, the allocator takes the next chunk's list whole, through a per-class
+cursor that each sweep resets. The sweep skips a chunk that held nothing live and has not been
+allocated from since, because its list is still intact. It rebuilds the list of every other chunk
+from that chunk's cells, which also takes back the cells `a0_gc_free` released, since those chunks
+always had something live. This amends D18 (one global list per size class) and D53 (every chunk
+walked). The trigger is unchanged. A one-line alternative, raising next_gc's floor to the bytes held
+in object chunks, was not chosen: it lets buffers and big objects grow resident memory well past
+today's limit. Returning empty chunks to the system or re-carving them was also left out, as
+unmeasured and harder to get right with `a0_gc_free`.
+
+## D91. Amend D16 and D28: string equality compares hashes only when both are cached
+
+D16 says: "Equality compares cached hashes before contents, so comparing the same long strings
+repeatedly is O(1) after the first time." Replace that with: "Equality compares hashes when both
+strings already have one cached (as map keys and interned names do), then bytes. It never computes a
+hash itself, because memcmp stops at the first difference and a hash reads the whole string." In
+D28, "string equality compares cached hashes before bytes" becomes "string equality compares hashes
+before bytes when both are cached". Also add to D28 that a map set right after `m[k]` reuses the
+cached entry too, so `m[k] = m[k] + 1` hashes `k` once. The alternative, hashing on first
+comparison, makes repeated comparison of the same unequal pair O(1). But it makes every comparison
+of fresh strings read both to the end, and fresh strings are the common case: concatenations and
+input, compared once.
+
+## D92. Index code tables at registration rather than assume address order
+
+A throw records its stack by mapping each return address to its function in the code tables.
+Scanning every function cost O(functions) per frame. Assuming the table is in address order and
+bisecting it is right only for native objects: the JIT gives a function that does not fit the
+current region a fresh region of its own, so its tables are not ordered (on this Windows machine, 1
+descent in 2,010 functions). A lazily checked or cached order per table would need atomics on the
+failure path. Instead, a0_rt_set_debug and a0_rt_add_code build a sorted index of each table's non-
+empty functions when the table is registered. The table is complete by then and no program thread
+runs yet, and the failure path takes no lock and allocates nothing. Registering again frees the old
+indexes. If malloc fails, that table is scanned as before.
+
+## D93. Functions that cannot collect have no frame
+
+Lowering used to give a shadow-stack frame to every function that holds a reference or an `any`. A
+collection starts only in a0_gc_alloc or at a safepoint, and safepoints exist only in programs with
+threads. So a function that cannot reach either, itself or through its direct calls, needs no roots
+while it runs. Lowering computes `collects` per body as a least fixed point over direct calls. It
+seeds the computation from `allocates_itself`, the one list of operations that may allocate, which
+may_gc shares, so the two cannot drift apart. Calls through closures and interfaces, and calls of C
+or runtime functions, stay conservatively allocating. So does a body with a captured local, whose
+box is allocated, and every body of a program with threads. Alternatives considered: treating C-ABI
+externs as non-collecting, as the argument-rooting comment already assumes, which would gain little
+now that sqrt and fabs are instructions; and a whole-program closure analysis, which would cost more
+complexity than its gain. A frameless recursion that overflows now hits the native stack limit
+instead of the shadow stack's, as numeric recursion already did.
+
+## D94. Root slots only for locals something mentions
+
+A local that nothing binds, assigns or reads always holds its declaration's zero, so it gets a
+variable but no slot. The optimizer leaves such locals behind when it removes the `let` of an
+inlined parameter. Parameters and match binds count as bound. The alternative test, giving a slot
+only to locals that are read, was rejected for two reasons. A written-but-unread local would then
+lose its root, and the debugger reads locals by dereferencing their words. Its lifetime would also
+change. Declaring no variable at all for such locals was rejected too: a builder can create a local
+that is assigned and read without a `let`, and lowering must still give it storage.
+
+## D95. A line's later runs are hidden in CodeView
+
+Cranelift often puts one source line's code in several places: a loop's body around its condition, a
+function's line in its prologue and epilogue, and a block that ends in a trap, which it treats as
+cold and moves to the end of the function. Windows' debuggers (dbgeng: WinDbg, cdb) refuse a
+breakpoint on such a line as ambiguous. Alternatives: (1) Keep every run's real line, which leaves
+breakpoints on loop lines and on any line with a bounds check broken. (2) Clear the statement flag
+on later runs. Tried: cdb still calls the line ambiguous. (3) Leave later runs without a row, so
+they take the previous row's line. That puts the wrong line on the code. (4) Emit cold code as
+separate code blocks (S_SEPCODE), as MSVC does for hot/cold splitting. That is correct, but needs
+Cranelift to report which blocks it moved, and is much more work. (5) Keep failing paths from being
+moved under -g, which makes -g change the code. Chosen: only a line's first run carries its number,
+and later runs get the hidden line 0xfeefee, which debuggers step through. Cost: in a Windows
+debugger, code in a later run shows no line. Examples are a frame stopped inside a failing path, or
+a function's epilogue. Runtime traces come from the location table and do not change, and DWARF is
+unchanged.
+
+## D96. Direct calls in objects, through use_colocated_libcalls
+
+Calls from objects to imported functions (the runtime, libc, A0 functions another codegen unit
+defines) are now direct branches: PLT32 or CALL26 on ELF, BRANCH on Mach-O, REL32 or BRANCH26 on
+COFF. Linkers route these through a PLT, a stub or an import thunk and add range thunks, which is
+the form clang and rustc emit. The JIT keeps loading each callee's address, because its code may sit
+more than 2 GB (or 128 MB on AArch64) from the runtime. Taking a function's address (`addr`) still
+goes through the GOT, since a PIE cannot take a shared-library function's address PC-relatively. The
+switch is Cranelift's use_colocated_libcalls flag: make_isa turns it on for objects and off for the
+JIT, and Lower::call_ref reads it. Alternatives: a new bool parameter to compile_functions, which
+has three callers (objects, the JIT and the interpreter's thunks). Or leave the code size as it was.
+The flag also makes Cranelift's own libcalls direct in objects, which is the same encoding.
+
+## D97. Float words are loaded as floats in the Cranelift backend, not in HIR lowering
+
+HIR lowering stores every field as a 64-bit word, so a float field read is `load i64` then `bitcast
+f64`, and a write is `bitcast i64` then `store`. For each function, the Cranelift backend finds the
+loads whose every use is a bitcast and the bitcasts whose every use is the value a store writes, and
+loads or stores those as floats. The bits are the same, so the interpreter, the JIT and native code
+still agree. Alternative: emit `load f64`/`store f64` in lowering (`object_field`,
+`set_object_field` and the other word_decode/word_encode sites). That would also save the
+interpreter an instruction per access, but it touches many call sites in lower.rs. The backend route
+covers them all in one place, and a use check over the function's instructions is complete because
+the IR has no block arguments.
+
+## D98. The optimizer skips functions main cannot reach
+
+Lowering emits only what `main` and the interface tables reach, but the optimizer used to inline
+into and simplify every function. In a large program about 90% of the functions are never lowered.
+The optimizer now computes the same reachable set (main, every method in a table, and the edges
+`Call` and `Func` over all of a function's bodies, closures included) and skips the rest. If there
+is no `main`, it optimizes everything. One alternative was to start the bottom-up walk from main.
+That changes the order inside recursive cycles, and with it which calls get inlined, so the IR of
+reachable code would differ from before. Filtering the existing order keeps it byte-identical. A
+root missed by mistake would only leave a function unoptimized, which is what A0_OPT=0 does. The
+roots are kept in step with `analyze_raises` by comments on both.
+
+## D99. Re-boxing a known local is allowed for every decided type except int
+
+A split initializer may now end in a local `l` that holds `raw as any`. Its value becomes `raw`, and
+the whole value is boxed once at the end. Boxing bool, float, f32, unit and references is a pure bit
+operation, so boxing `raw` again gives the same word. Boxing an int or sized int calls
+`a0_any_from_int`, which can allocate a new box. That would add an allocation where the code now
+reuses the existing box, and it would change the box's identity, so those types are left boxed.
+Inline structs are excluded too, as they already are for `Replace::Boxed`. The lets are now visited
+inner first (post-order) instead of in preorder, so a nested `left` is split before the let that
+contains it, in the same round.
+
+## D100. Line tables only in the dev profile
+
+Full Rust debug information in the dev and test profile made every test binary's PDB or DWARF tens
+of MB: about 3 GB per Windows build, and CI caches the whole target directory for each OS. A0's own
+crates now keep line tables (panic locations and backtraces still show file and line) and
+dependencies get none. Alternatives: keep full debug info (simplest to debug, but costs the disk,
+the CI cache and link time); split-debuginfo (does not shrink what gets written on MSVC); no debug
+info at all (backtraces lose their lines). To step through A0 itself, set CARGO_PROFILE_DEV_DEBUG=2.
+The C runtime is still compiled with -g or /Z7, because cc sees DEBUG=true.

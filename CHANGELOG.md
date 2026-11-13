@@ -14,8 +14,45 @@ APIs. `docs/milestones.md` has the details of each step, with measurements.
 
 ### Changed
 
-- Compiled code computes C's `sqrt` and `fabs` with an instruction instead of a call (D89), and
-  the collector's marking is inlined in runtimes built by GCC. Results are unchanged.
+Programs print the same and run faster. The times are native executables on x86-64 Windows,
+before and after; `docs/benchmarks.md` has the comparison with C, Go, clox and LLVM.
+
+- **Generated code.** Float fields are loaded and stored as floats rather than through an integer
+  register (D97), C's `sqrt` and `fabs` are instructions instead of calls (D89), `not` of an `i1`
+  is a compare with zero so that a negated branch is one compare and jump, a global's address is
+  taken once per function, and a failed bounds check ends its path instead of merging back into
+  the access. Minnow's `nbody` goes from 87 to 64 ms, `closures` from 81 to 60 ms, `sieve` from 62
+  to 54 ms, and Kaleidoscope's `mandel` from 254 to 202 ms. Messages, traces and exit codes are
+  unchanged.
+- **Roots.** A function that cannot allocate, directly or through what it calls, pushes no
+  shadow-stack frame, and its callers spill nothing around calls of it (D93); a local that nothing
+  binds, assigns or reads gets no frame slot (D94). Minnow's `binarytrees` goes from 219 to 192 ms
+  and Lox's `fib` from 204 to 162 ms. Programs with threads still push every frame.
+- **The collector** skips chunks it found empty until something is allocated from them again
+  (D90), so a program that builds a large structure and drops it no longer pays for the empty heap
+  at every later collection. Its marking is inlined in runtimes built by GCC.
+- **The runtime.** `m[k] = m[k] + 1` reuses the entry the read found instead of hashing the key
+  again; string equality no longer hashes a string that has no cached hash (D91); formatting a
+  float takes one round-trip try for most values instead of up to ten, with the same text; and a
+  throw or a runtime error finds each frame's function by bisection instead of scanning every
+  function (D92).
+- **The HIR optimizer** skips functions that `main` and the method tables cannot reach, as lowering
+  already did (D98), and unboxes a value whose branch ends in a local known to hold a boxed value,
+  as Lox's `and` and `or` do (D99). Unreachable functions are still checked.
+- **Lox** constructs an instance of a class whose `init` takes up to three parameters without an
+  argument array: `binary_trees` goes from 453 to 321 ms and `instantiation` from 407 to 272 ms.
+  Six of the book's nine benchmarks run 20% to 33% faster.
+- **Executables and objects** call the runtime, the C library and functions in other codegen units
+  directly instead of loading each address first (D96), which makes their code smaller. The JIT is
+  unchanged.
+- **The interpreter** no longer contends on a shared reference count when threads make calls, and
+  does not enter an empty `if` region.
+- **Compiling.** The HIR text grammar is compiled once per process instead of once per standard
+  library module, a parsed node's children move into the tree without a copy, clones of a syntax
+  tree share its arrays, and the language server parses and indexes an edited document once per
+  analysis.
+- The dev profile keeps only line tables for A0's crates and no debug information for
+  dependencies (D100); `CARGO_PROFILE_DEV_DEBUG=2` gives full debug information back.
 
 ### Fixed
 
@@ -38,6 +75,30 @@ APIs. `docs/milestones.md` has the details of each step, with measurements.
 - Python wheels are tagged with what their library needs: `manylinux_<glibc>` on Linux (PyPI does
   not take `linux` wheels), and macOS 11.0 (arm64) or 10.12 (x86-64) instead of the macOS that
   built them. `release/check.py` checks the tags.
+- A fresh object passed before an interface call whose method allocates, or before a 64-bit
+  integer is boxed into an `any`, is kept alive. A collection there could free it, and the program
+  read freed memory.
+- Functions whose stack frame is 64 KB or larger no longer crash on Windows in the JIT and in
+  executables: Cranelift emits inline stack probes.
+- `str.find_from` with a very large start returns -1 instead of crashing, and `parse_int` and
+  `parse_float` no longer share their result flag between threads.
+- Adding to a map that removals had left nearly full no longer copies the whole map on every
+  insert.
+- Channels no longer leak their lock and state when collected: the state lives in the channel
+  object.
+- Programs with `memory manual` no longer leak the text `print` and `eprint` make for a number, a
+  bool or a float.
+- On Windows, standard input is read in binary, as stdout and stderr already were: `read_all`
+  keeps `
+`, and a 0x1A byte no longer ends the input.
+- Programs with interfaces build reproducibly: method tables were made in the order a hash map
+  iterated, so the same source could lower to different IR from run to run.
+- The optimizer leaves `x is int` to run time when `x` was boxed from a sized integer or an `f32`,
+  which box as `int` and `float`; it folded the test to false.
+- WinDbg, cdb and Visual Studio can set a breakpoint on a line whose code is in several places,
+  such as a loop's body line or a line with a bounds check (D95).
+- `a0 --help` lists `check`, `dap` and `repl` among `a0 lang`'s commands, and every language
+  driver's usage text lists `repl`.
 
 ## [1.0.0] - 2026-10-26
 
