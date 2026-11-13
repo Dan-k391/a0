@@ -1,0 +1,26 @@
+; A frame larger than a page: Windows commits a thread's stack one guard page at a time, so native
+; code must touch each page of a large frame in order (stack probes) or it crashes.
+; expect-stdout: 42
+; expect-stdout: 7
+module "big"
+
+extern func @a0_print_i64(i64)
+extern func @a0_print_newline()
+
+func @main() -> i32 {
+  %s: ptr = stack_slot 65536, 8
+  %v: i64 = iconst 42
+  store %v, %s
+  %off: i64 = iconst 65528
+  %end: ptr = ptradd %s, %off
+  %w: i64 = iconst 7
+  store %w, %end
+  %a: i64 = load %s
+  call @a0_print_i64(%a)
+  call @a0_print_newline()
+  %b: i64 = load %end
+  call @a0_print_i64(%b)
+  call @a0_print_newline()
+  %z: i32 = iconst 0
+  return %z
+}

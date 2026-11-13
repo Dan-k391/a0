@@ -64,6 +64,11 @@ pub(crate) fn make_isa(
     // Runtime errors find their stack by walking the frame pointer chain (a0rt.h, "Traps and
     // panics").
     set(&mut flags, "preserve_frame_pointers", "true")?;
+    // A frame larger than a page must touch each page in order: Windows commits a thread's stack
+    // one guard page at a time. Inline, because the outline strategy calls `__probestack`, which
+    // A0 does not link, and is not implemented on AArch64.
+    set(&mut flags, "enable_probestack", "true")?;
+    set(&mut flags, "probestack_strategy", "inline")?;
     let pic = if jit {
         target.arch() == a0_target::Arch::X86_64
     } else {
