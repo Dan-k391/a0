@@ -84,8 +84,8 @@ static const char *string_at(uint32_t offset) {
     return (const char *)g_locations + g_locations->strings + offset;
 }
 
-/* Whether `ra` returns into generated code; if it does, `*site` is the location of the call (0 if
- * the call has none, in a function traces leave out). */
+/* Whether `ra` returns into the function `f` of `code`; if it does, `*site` is the location of
+ * the call (0 if the call has none, in a function traces leave out). */
 static int call_site_in(const A0CodeTable *code, const A0CodeFunction *f, uintptr_t ra, uint32_t *site) {
     uintptr_t start = (uintptr_t)f->start;
     if (ra <= start || ra > start + f->size) return 0;
@@ -102,6 +102,7 @@ static int call_site_in(const A0CodeTable *code, const A0CodeFunction *f, uintpt
     return 1;
 }
 
+/* Whether `ra` returns into generated code, with `*site` as `call_site_in` sets it. */
 static int call_site(uintptr_t ra, uint32_t *site) {
     for (size_t t = 0; t < g_code_count; t++) {
         const A0CodeTable *code = g_code[t];

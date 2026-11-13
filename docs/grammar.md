@@ -457,8 +457,8 @@ $ a0 lang examples/calc/calc.a0g run hyp.calc
 ```
 
 `a0 lang <grammar.a0g> <command> <file>` has the commands of every language's driver: `run`,
-`build`, `check`, `hir`, `ir`, `lsp`, `dap` and `explain`. So such a language gets the interpreter,
-native executables, the language server, the debugger and A0's diagnostics.
+`build`, `check`, `hir`, `ir`, `lsp`, `dap`, `repl` and `explain`. So such a language gets the
+interpreter, native executables, the language server, the debugger and A0's diagnostics.
 
 **Forms.** A rule's nodes mean what their form says. The forms build A0's
 [high-level IR](hir.md) (HIR), the typed form of a program that A0 runs and compiles.
