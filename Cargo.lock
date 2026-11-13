@@ -63,9 +63,7 @@ name = "a0-hir"
 version = "1.0.0"
 dependencies = [
  "a0-diag",
- "a0-interp",
  "a0-ir",
- "a0-runtime",
  "a0-sema",
  "a0-syntax",
 ]

@@ -15,7 +15,3 @@ a0-diag.workspace = true
 a0-ir.workspace = true
 a0-syntax.workspace = true
 a0-sema.workspace = true
-
-[dev-dependencies]
-a0-interp.workspace = true
-a0-runtime.workspace = true

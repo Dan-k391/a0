@@ -25,4 +25,3 @@ a0-driver.workspace = true
 
 [dev-dependencies]
 cc = "1.2"
-a0-driver.workspace = true
