@@ -220,3 +220,7 @@ requests and waits for events. Each example language has a test, in `examples/*/
   and each assignment also stores the value there. The slots are zeroed when the function starts.
   A0 writes DWARF (with the `gimli` library) or CodeView from these, with types from the core IR's
   debug types.
+- A line's code can be in several places, such as a loop's condition or a failed bounds check
+  that Cranelift moves to the end of the function. Windows' debuggers refuse a breakpoint on such a
+  line as ambiguous, so in CodeView only the line's first place has its number. The others are
+  hidden (line `0xfeefee`), which the debuggers step through.

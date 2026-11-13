@@ -8,7 +8,7 @@
 //! fields; strings and arrays are structures too, which the natvis file of [`natvis`] displays as
 //! text and as elements.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use a0_ir::{DebugKind, DebugType, Module};
 use a0_target::Arch;
@@ -163,6 +163,7 @@ pub(crate) fn emit(
         // The line table: a block of rows per run of rows in one file.
         let mut blocks: Vec<LineBlock> = Vec::new();
         let mut last = None;
+        let mut seen = HashSet::new();
         for &(offset, _, loc) in f.ranges {
             let Some(l) = locations.get(loc).filter(|l| l.line != 0) else {
                 continue;
@@ -177,7 +178,16 @@ pub(crate) fn emit(
             if blocks.last().is_none_or(|(f, _)| *f != file) {
                 blocks.push((file, Vec::new()));
             }
-            blocks.last_mut().unwrap().1.push((offset, l.line, l.col));
+            // A line's later runs (a loop's condition placed after its body, a failing path after
+            // the function's end) are hidden (0xfeefee, which debuggers step through), so that a
+            // breakpoint on the line finds its first run alone.
+            let first = seen.insert((l.file.as_str(), l.line));
+            let line = if first {
+                (l.line & 0xff_ffff) | (1 << 31)
+            } else {
+                0xfeefee
+            };
+            blocks.last_mut().unwrap().1.push((offset, line, l.col));
         }
         if blocks.is_empty() {
             continue;
@@ -192,8 +202,8 @@ pub(crate) fn emit(
             table.extend((12 + 12 * rows.len() as u32).to_le_bytes());
             for &(offset, line, _) in rows {
                 table.extend(offset.to_le_bytes());
-                // The line, no end line, a statement.
-                table.extend(((line & 0xff_ffff) | (1 << 31)).to_le_bytes());
+                // The line, no end line, and whether it is a statement.
+                table.extend(line.to_le_bytes());
             }
             for &(_, _, col) in rows {
                 table.extend((col as u16).to_le_bytes());
@@ -257,7 +267,7 @@ pub(crate) fn emit(
 }
 
 /// A function's rows in one file: the file's offset in the checksum table, and each row's code
-/// offset, line and column.
+/// offset, line (with the statement flag, as the table has it) and column.
 type LineBlock = (u32, Vec<(u32, u32, u32)>);
 
 /// Appends a subsection of `.debug$S`, padded to 4 bytes.

@@ -646,3 +646,54 @@ fn the_windows_debugger_stops_at_a_line_and_shows_variables() {
     }
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// A loop whose body line has code in two places (around the loop's condition).
+const LOOP: &str = "module \"loop\";
+
+fn main() -> int {
+  let i = 0;
+  let s = 0;
+  let xs = [1, 2, 3];
+  while i < 3 {
+    s = s + xs[i];
+    i = i + 1;
+  }
+  print(str(s) + \"\\n\");
+  0
+}
+";
+
+#[test]
+fn the_windows_debugger_stops_at_a_line_whose_code_is_in_several_places() {
+    if !cfg!(windows) {
+        return;
+    }
+    let Some(cdb) = cdb() else {
+        eprintln!("skipped: no cdb (Windows SDK debugging tools or WinDbg)");
+        return;
+    };
+    let dir = scratch("cdb-loop");
+    std::fs::write(dir.join("loop.hir"), LOOP).unwrap();
+    let out = a0(&dir, &["build", "loop.hir", "-g", "-o", "loop.exe"]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let out = Command::new(&cdb)
+        .current_dir(&dir)
+        .arg("-lines")
+        .arg("-y")
+        .arg(&dir)
+        .arg("-c")
+        .arg("bp `loop!loop.hir:8`;g;k 1;dv /t;q")
+        .arg(dir.join("loop.exe"))
+        .output()
+        .unwrap();
+    let text = String::from_utf8_lossy(&out.stdout);
+    // Stopped at the line the first time round, not refused as ambiguous.
+    for shown in ["loop.hir @ 8", "i = 0n0", "s = 0n0"] {
+        assert!(text.contains(shown), "cdb did not show {shown}:\n{text}");
+    }
+    std::fs::remove_dir_all(&dir).ok();
+}
