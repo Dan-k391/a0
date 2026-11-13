@@ -27,12 +27,17 @@ const ROUNDS: u32 = 3;
 
 pub(crate) fn optimize(m: &mut HirModule) {
     let mut o = Opt { m };
-    let inlinable = o.inlinable_functions();
+    // Lowering emits only what `main` reaches, so the rest is left as it is. Inlining copies only
+    // reachable callees into reachable callers, so nothing it makes becomes reachable.
+    let reach = o.reachable();
+    let inlinable = o.inlinable_functions(&reach);
     // Callees before their callers: a callee is copied, and measured, as it is after its own
     // inlining, so no copy is inlined into again and sizes cannot compound along a call chain.
     // (Bodies that inlining makes belong to the function inlined into, which is done by then.)
+    // The order is filtered rather than computed from `main`, so that reachable functions come out
+    // the same as when everything was optimized.
     let bodies = o.bodies_by_function();
-    for f in o.bottom_up() {
+    for f in o.bottom_up().into_iter().filter(|f| reach[f.index()]) {
         for &body in &bodies[f.index()] {
             if let Some(root) = o.m.bodies[body.index()].root {
                 let size = o.size(root);
@@ -54,7 +59,12 @@ pub(crate) fn optimize(m: &mut HirModule) {
             }
         }
     }
-    let bodies = o.bodies_by_function();
+    let bodies: Vec<Vec<BodyId>> = o
+        .bodies_by_function()
+        .into_iter()
+        .enumerate()
+        .filter_map(|(f, b)| reach[f].then_some(b))
+        .collect();
     for _ in 0..ROUNDS {
         for bodies in &bodies {
             o.simplify_function(bodies);
@@ -119,9 +129,10 @@ impl Opt<'_> {
 
     /// Functions small and simple enough to inline: no closures inside, `return` only where it can
     /// become the value of the inlined block, and no call to themselves.
-    fn inlinable_functions(&self) -> HashSet<FuncId> {
+    /// Only reachable ones are considered: reachable callers call nothing else.
+    fn inlinable_functions(&self, reach: &[bool]) -> HashSet<FuncId> {
         let mut out = HashSet::new();
-        for f in 0..self.m.funcs.len() {
+        for f in (0..self.m.funcs.len()).filter(|&f| reach[f]) {
             let f = FuncId(f as u32);
             let Some(root) = self.m.body_root(self.m.func_body(f)) else {
                 continue;
@@ -154,6 +165,39 @@ impl Opt<'_> {
             }
         }
         out
+    }
+
+    /// Which functions, by index, `main` and the method tables reach through calls and function
+    /// values in any of their bodies (closures included); all of them in a module without `main`.
+    /// Keep in step with `Lowerer::analyze_raises`, which decides what is lowered.
+    fn reachable(&self) -> Vec<bool> {
+        let n = self.m.funcs.len();
+        let Some(Item::Func(main)) = self.m.lookup_value("main") else {
+            return vec![true; n];
+        };
+        let bodies = self.bodies_by_function();
+        let mut reach = vec![false; n];
+        let mut stack = vec![main];
+        for (_, _, methods) in &self.m.vtables {
+            stack.extend(methods);
+        }
+        while let Some(f) = stack.pop() {
+            if std::mem::replace(&mut reach[f.index()], true) {
+                continue;
+            }
+            for &b in &bodies[f.index()] {
+                if let Some(root) = self.m.bodies[b.index()].root {
+                    self.walk(root, &mut |m, e| {
+                        if let ExprKind::Call(g, ..) | ExprKind::Func(g, _) =
+                            m.exprs[e.index()].kind
+                        {
+                            stack.push(g);
+                        }
+                    });
+                }
+            }
+        }
+        reach
     }
 
     /// The functions, callees before their callers except around recursion.

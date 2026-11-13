@@ -2808,7 +2808,8 @@ impl<'a> Lowerer<'a> {
     /// lowered, so a library or a prelude costs only what the program uses), and which of those may
     /// raise an exception into their caller: those that throw, call one that may, or call a closure
     /// while some closure the program makes may. Calls to the others need no check, so a program
-    /// that never throws pays nothing.
+    /// that never throws pays nothing. Keep the roots in step with `Opt::reachable`, which skips
+    /// optimizing what this does not lower.
     fn analyze_raises(&mut self) {
         let m = self.m;
         let n = m.bodies.len();

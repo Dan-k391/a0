@@ -1,0 +1,47 @@
+// The optimizer skips functions `main` cannot reach, as lowering does, but optimizes everything
+// reached through calls, function values, closures and interface tables. `unused` calls a helper
+// that prints; `Sq.area` is reached only through its table, and panics in an inlined helper.
+// expect-stdout: value 7
+// expect-stdout: closure 9
+// expect-stdout: area 4
+// expect-stderr: panic: index out of bounds: the length is 1 but the index is 1
+// expect-stderr:     at at (tests/hir/unreachable.hir:21:3)
+// expect-stderr:     at Sq.area (tests/hir/unreachable.hir:29:5)
+// expect-stderr:     at main (tests/hir/unreachable.hir:46:3)
+// expect-exit: 101
+module "unreachable";
+
+struct Sq { side: int }
+interface Shape { fn area(self) -> int; }
+impl Shape for Sq;
+
+fn twice(x: int) -> int { x + x }
+fn loud(x: int) -> int { print("loud\n"); x }
+fn at(xs: array<int>, i: int) -> int {
+  xs[i]
+}
+fn plus_one(x: int) -> int { twice(x) - x + 1 }
+fn unused() -> int { loud(1) + twice(2) }
+fn unused_too() -> int { unused() }
+
+impl Sq {
+  fn area(self: Sq) -> int {
+    at([twice(self.side)], self.side - 2)
+  }
+}
+
+fn main() -> int {
+  let f = plus_one;
+  print("value " + str(f(6)) + "\n");
+  let g = fn(x: int) -> int { twice(x) + 1 };
+  print("closure " + str(g(4)) + "\n");
+  let shapes = new array<Shape>;
+  push(shapes, new Sq { side: 2 });
+  push(shapes, new Sq { side: 3 });
+  let total = 0;
+  let i = 0;
+  while i < 1 { total = total + shapes[i].area(); i = i + 1; }
+  print("area " + str(total) + "\n");
+  // Sq.area panics for a side of 3.
+  shapes[1].area()
+}

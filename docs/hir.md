@@ -674,7 +674,9 @@ replaces generic items with one copy per combination of type arguments.
 
 Before lowering, the HIR optimizer (`opt.rs`) runs on the monomorphized module. It is on by
 default and needs nothing from frontends. `A0_OPT=0` (or `LowerOptions { optimize: false }`) turns
-it off. It complements Cranelift, which optimizes within each function. It does five things.
+it off. It complements Cranelift, which optimizes within each function. Like lowering, it skips
+the functions that `main` and the interface tables cannot reach through calls and function values;
+they are still checked, but never optimized or lowered. It does five things.
 
 **Inlining** of small functions: those with no closures inside that do not call themselves.
 Callees are inlined first.

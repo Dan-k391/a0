@@ -655,6 +655,53 @@ fn the_optimizer_inlines_small_functions_and_folds_any_tests() {
 }
 
 #[test]
+fn the_optimizer_reaches_what_main_reaches_and_skips_the_rest() {
+    // `Sq.area` is reached only through its interface table and `plus_one` only as a value: both
+    // must still be optimized. Adding a function nothing reaches changes nothing.
+    let src = |extra: &str| {
+        format!(
+            "module \"m\";
+struct Sq {{ side: int }}
+interface Shape {{ fn area(self) -> int; }}
+impl Shape for Sq;
+fn twice(x: int) -> int {{ x + x }}
+fn plus_one(x: int) -> int {{ twice(x) + 1 }}
+impl Sq {{ fn area(self: Sq) -> int {{ twice(self.side) }} }}
+{extra}
+fn main() -> int {{
+  let shapes = new array<Shape>;
+  push(shapes, new Sq {{ side: 2 }});
+  let f = plus_one;
+  shapes[0].area() + f(1)
+}}
+"
+        )
+    };
+    let lowered = |src: &str, optimize: bool| {
+        lower_with(&parse_ok(src), LowerOptions::optimized(optimize))
+            .unwrap()
+            .to_string()
+    };
+    let function = |ir: &str, name: &str| {
+        let start = ir.find(&format!("func @hir.{name}(")).unwrap();
+        let end = ir[start..].find("\n}\n").unwrap();
+        ir[start..start + end].to_string()
+    };
+    let plain = lowered(&src(""), false);
+    assert!(function(&plain, "Sq.area").contains("call @hir.twice"));
+    assert!(function(&plain, "plus_one").contains("call @hir.twice"));
+    let optimized = lowered(&src(""), true);
+    assert!(!function(&optimized, "Sq.area").contains("call @hir.twice"));
+    assert!(!function(&optimized, "plus_one").contains("call @hir.twice"));
+    let with_unused = lowered(
+        &src("fn unused() -> int { twice(3) }\nfn unused_too() -> int { unused() + twice(1) }"),
+        true,
+    );
+    assert!(!with_unused.contains("unused"), "{with_unused}");
+    assert_eq!(with_unused, optimized);
+}
+
+#[test]
 fn the_optimizer_keeps_sized_integer_traps() {
     let m = parse_ok(
         r#"module "m";
