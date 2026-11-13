@@ -1,0 +1,50 @@
+// Many channels made and dropped while collections run: a channel's lock and state live in its
+// object, so a collected channel's cell is reused (poisoned first under A0_GC_STRESS) by the next
+// one, which must start from a fresh lock, an empty ring and not closed. Then the same with a
+// thread sending, so that the locks are really taken.
+// expect-stdout: alone: 2001000
+// expect-stdout: threaded: 20100
+// expect-exit: 0
+module "channels_many";
+
+extern "a0" fn a0_thread_spawn(fn() -> any) -> any;
+extern "a0" fn a0_thread_join(any) -> any;
+extern "a0" fn a0_chan_new(int) -> any;
+extern "a0" fn a0_chan_send(any, any);
+extern "a0" fn a0_chan_recv(any) -> any;
+extern "a0" fn a0_chan_close(any);
+
+struct Node { value: int, next: Node? }
+
+fn main() -> int {
+  let total = 0;
+  let i = 0;
+  while i < 2000 {
+    let ch = a0_chan_new(1);
+    a0_chan_send(ch, (i + 1) as any);
+    total = total + a0_chan_recv(ch) as int;
+    a0_chan_close(ch);
+    let junk = new Node { value: i, next: new Node { value: i, next: null<Node> } };
+    total = total + junk.value - junk.next!.value;
+    i = i + 1;
+  }
+  print("alone: " + str(total) + "\n");
+
+  let sum = 0;
+  let k = 0;
+  while k < 200 {
+    let ch = a0_chan_new(2);
+    let base = k;
+    let t = a0_thread_spawn(fn() -> any {
+      a0_chan_send(ch, base as any);
+      a0_chan_send(ch, 1 as any);
+      a0_chan_close(ch);
+      () as any
+    });
+    sum = sum + a0_chan_recv(ch) as int + a0_chan_recv(ch) as int;
+    a0_thread_join(t);
+    k = k + 1;
+  }
+  print("threaded: " + str(sum) + "\n");
+  0
+}

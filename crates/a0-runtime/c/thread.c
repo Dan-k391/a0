@@ -361,12 +361,6 @@ int64_t a0_thread_parallelism(void) {
 
 /* ---- Channels ----------------------------------------------------------------------------------- */
 
-/* A channel's handle, an object: its buffer (an array of `any`, used as a ring) and its state. */
-static const uint8_t chan_layout[2] = {A0_WORD_REF, A0_WORD_RAW};
-static const A0Type chan_type = {
-    .name = "channel", .kind = A0_KIND_FIXED, .word_count = 2, .layout = (uint8_t *)chan_layout,
-    .family = &chan_type};
-
 typedef struct ChanState {
     Mutex lock;
     Cond changed;
@@ -374,10 +368,18 @@ typedef struct ChanState {
     int closed;
 } ChanState;
 
+/* A channel's handle, an object: its buffer (an array of `any`, used as a ring) and its state,
+ * inline so that the collector frees it with the channel (nothing waits on a collected channel). */
 typedef struct {
-    A0Array *buffer;
-    A0_WORD_PTR(ChanState *, state);
+    A0_WORD_PTR(A0Array *, buffer);
+    ChanState state;
 } ChanObject;
+
+#define CHAN_WORDS (1 + (sizeof(ChanState) + 7) / 8)
+static const uint8_t chan_layout[CHAN_WORDS] = {A0_WORD_REF}; /* the rest A0_WORD_RAW */
+static const A0Type chan_type = {
+    .name = "channel", .kind = A0_KIND_FIXED, .word_count = (int32_t)CHAN_WORDS,
+    .layout = (uint8_t *)chan_layout, .family = &chan_type};
 
 static A0_THREAD_LOCAL int64_t receive_closed;
 
@@ -391,12 +393,11 @@ uint64_t a0_chan_new(int64_t capacity) {
     c->buffer = buffer;
     frame[0] = 0;
     a0_gc_frame_pop(1);
-    ChanState *s = (ChanState *)calloc(1, sizeof(ChanState));
-    if (s == NULL) a0_panic("out of memory");
+    /* The cell came zeroed: head, count and closed start at 0. */
+    ChanState *s = &c->state;
     mutex_init(&s->lock);
     cond_init(&s->changed);
     s->capacity = capacity;
-    c->state = s;
     return a0_any_from_ref(c);
 }
 
@@ -406,7 +407,7 @@ A0_COLD static void deadlock(const char *what, uint64_t loc, void *frame) {
 
 void a0_chan_send(uint64_t handle, uint64_t value, uint64_t loc, void *frame) {
     ChanObject *c = (ChanObject *)object_of(handle, &chan_type, "not a channel", loc, frame);
-    ChanState *s = c->state;
+    ChanState *s = &c->state;
     for (;;) {
         /* Waiting for room, the thread is stopped; it puts the value in once it runs again. */
         a0_safe_begin();
@@ -438,7 +439,7 @@ void a0_chan_send(uint64_t handle, uint64_t value, uint64_t loc, void *frame) {
 
 uint64_t a0_chan_recv(uint64_t handle, uint64_t loc, void *frame) {
     ChanObject *c = (ChanObject *)object_of(handle, &chan_type, "not a channel", loc, frame);
-    ChanState *s = c->state;
+    ChanState *s = &c->state;
     for (;;) {
         a0_safe_begin();
         mutex_lock(&s->lock);
@@ -476,7 +477,7 @@ int64_t a0_chan_closed(void) { return receive_closed; }
 
 void a0_chan_close(uint64_t handle, uint64_t loc, void *frame) {
     ChanObject *c = (ChanObject *)object_of(handle, &chan_type, "not a channel", loc, frame);
-    ChanState *s = c->state;
+    ChanState *s = &c->state;
     mutex_lock(&s->lock);
     if (s->closed) {
         mutex_unlock(&s->lock);
