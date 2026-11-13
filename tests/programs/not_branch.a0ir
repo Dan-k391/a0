@@ -1,0 +1,73 @@
+; `not` of an i1, branched on and used as a value: of an integer compare in a loop, of a float
+; compare with NaN (lt is false, so its `not` is true), of an i1 loaded from memory, and printed.
+; expect-stdout: 000111
+; expect-stdout: 1
+; expect-stdout: 1
+; expect-stdout: 0
+; expect-stdout: 1
+; expect-stdout: 1
+module "not branch"
+
+extern func @a0_print_i64(i64)
+extern func @a0_print_newline()
+
+func @main() -> i32 {
+  var $i: i64
+  %zero: i64 = iconst 0
+  %one: i64 = iconst 1
+  %three: i64 = iconst 3
+  %six: i64 = iconst 6
+  set $i, %zero
+  loop {
+    %i: i64 = get $i
+    %more: i1 = icmp slt %i, %six
+    %done: i1 = not %more
+    if %done {
+      break
+    }
+    %small: i1 = icmp slt %i, %three
+    %big: i1 = not %small
+    if %big {
+      call @a0_print_i64(%one)
+    } else {
+      call @a0_print_i64(%zero)
+    }
+    %i1: i64 = iadd %i, %one
+    set $i, %i1
+  }
+  call @a0_print_newline()
+  %nan: f64 = fconst nan
+  %x: f64 = fconst 1.0
+  %lt: i1 = fcmp lt %nan, %x
+  %nlt: i1 = not %lt
+  if %nlt {
+    call @a0_print_i64(%one)
+  } else {
+    call @a0_print_i64(%zero)
+  }
+  call @a0_print_newline()
+  %slot: ptr = stack_slot 1, 1
+  store %nlt, %slot
+  %m: i1 = load %slot
+  %mw: i64 = zext %m
+  call @a0_print_i64(%mw)
+  call @a0_print_newline()
+  %nm: i1 = not %m
+  if %nm {
+    call @a0_print_i64(%one)
+  } else {
+    call @a0_print_i64(%zero)
+  }
+  call @a0_print_newline()
+  %nnm: i1 = not %nm
+  %nnmw: i64 = zext %nnm
+  call @a0_print_i64(%nnmw)
+  call @a0_print_newline()
+  %le: i1 = fcmp le %x, %nan
+  %nle: i1 = not %le
+  %nlew: i64 = zext %nle
+  call @a0_print_i64(%nlew)
+  call @a0_print_newline()
+  %r: i32 = iconst 0
+  return %r
+}

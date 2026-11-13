@@ -1222,7 +1222,9 @@ impl<M: ClifModule> Lower<'_, M> {
             }
             Opcode::Not => {
                 let v = if arg_ty(0) == Type::I1 {
-                    self.b.ins().bxor_imm_u(args[0], 1)
+                    // eq 0 rather than xor 1, so the mid-end folds `not (icmp cc)` into
+                    // `icmp !cc` and a branch on it becomes one compare and jump.
+                    self.b.ins().icmp_imm_u(condcodes::IntCC::Equal, args[0], 0)
                 } else {
                     self.b.ins().bnot(args[0])
                 };
