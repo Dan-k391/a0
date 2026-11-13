@@ -302,7 +302,7 @@ struct Code {
 }
 
 enum FuncKind {
-    Defined(Arc<Code>),
+    Defined(Code),
     /// A resolved C function.
     Native {
         address: usize,
@@ -590,7 +590,7 @@ impl Interpreter {
         let debug = a0_runtime::debug::encode(&entries);
         for (info, code) in funcs.iter_mut().zip(codes) {
             if let Some(code) = code {
-                info.kind = FuncKind::Defined(Arc::new(code));
+                info.kind = FuncKind::Defined(code);
             }
         }
 
@@ -719,7 +719,10 @@ impl Interpreter {
         let base = self.stack.len();
         self.stack.extend_from_slice(args);
         let slots: Vec<Slot> = (0..args.len() as u32).collect();
-        let r = self.call_func(f.0, base, &slots, 0);
+        // Calls borrow the program through this one reference rather than each cloning an `Arc`:
+        // a shared refcount written on every call makes threads contend.
+        let shared = self.shared.clone();
+        let r = self.call_func(&shared, f.0, base, &slots, 0);
         self.stack.truncate(base);
         let v = r?;
         Ok(shape.ret.map(|_| v))
@@ -728,14 +731,14 @@ impl Interpreter {
     /// Calls function `f` from a call at location `loc`.
     fn call_func(
         &mut self,
+        shared: &Shared,
         f: u32,
         caller_base: usize,
         args: &[Slot],
         loc: u32,
     ) -> Result<u64, Trap> {
-        match &self.shared.funcs[f as usize].kind {
+        match &shared.funcs[f as usize].kind {
             FuncKind::Defined(code) => {
-                let code = code.clone();
                 if self.depth >= self.max_depth {
                     return Err(Trap::new(trap::STACK_OVERFLOW));
                 }
@@ -758,7 +761,7 @@ impl Interpreter {
                         loc: 0,
                     });
                 }
-                let flow = self.exec(&code.ops, base);
+                let flow = self.exec(shared, &code.ops, base);
                 if self.hook.is_some() {
                     if let Err(trap) = &flow {
                         let trap = trap.clone();
@@ -783,12 +786,12 @@ impl Interpreter {
                 ret_kind,
                 reports,
             } => {
-                let ret = self.shared.funcs[f as usize].shape.ret;
+                let ret = shared.funcs[f as usize].shape.ret;
                 let extra = if reports { Some(loc) } else { None };
                 self.native_call(address, mask, ret_kind, ret, caller_base, args, extra)
             }
             &FuncKind::Thunk { address, .. } => {
-                let ret = self.shared.funcs[f as usize].shape.ret;
+                let ret = shared.funcs[f as usize].shape.ret;
                 let words: Vec<u64> = args
                     .iter()
                     .map(|&a| self.stack[caller_base + a as usize])
@@ -818,7 +821,7 @@ impl Interpreter {
             }
             FuncKind::Unresolved => Err(Trap::panic(format!(
                 "call to unresolved external function @{}",
-                self.shared.funcs[f as usize].name
+                shared.funcs[f as usize].name
             ))),
         }
     }
@@ -865,23 +868,24 @@ impl Interpreter {
 
     fn call_indirect(
         &mut self,
+        shared: &Shared,
         sig: &Shape,
         callee: u64,
         base: usize,
         args: &[Slot],
         loc: u32,
     ) -> Result<u64, Trap> {
-        let token_base = self.shared.tokens.as_ptr() as u64;
-        if callee >= token_base && callee < token_base + self.shared.tokens.len() as u64 {
+        let token_base = shared.tokens.as_ptr() as u64;
+        if callee >= token_base && callee < token_base + shared.tokens.len() as u64 {
             let f = (callee - token_base) as u32;
-            let actual = &self.shared.funcs[f as usize].shape;
+            let actual = &shared.funcs[f as usize].shape;
             if actual.params != sig.params || actual.ret != sig.ret {
                 return Err(Trap::panic(format!(
                     "call_indirect signature does not match @{}",
-                    self.shared.funcs[f as usize].name
+                    shared.funcs[f as usize].name
                 )));
             }
-            return self.call_func(f, base, args, loc);
+            return self.call_func(shared, f, base, args, loc);
         }
         if callee == 0 {
             return Err(Trap::panic(
@@ -908,7 +912,7 @@ impl Interpreter {
         self.stack[base + s as usize] = v;
     }
 
-    fn exec(&mut self, ops: &[Op], base: usize) -> Result<Flow, Trap> {
+    fn exec(&mut self, shared: &Shared, ops: &[Op], base: usize) -> Result<Flow, Trap> {
         for op in ops {
             match op {
                 &Op::Const { dst, bits } => self.put(base, dst, bits),
@@ -993,7 +997,7 @@ impl Interpreter {
                     dst,
                     loc,
                 } => {
-                    let v = self.call_func(*func, base, args, *loc)?;
+                    let v = self.call_func(shared, *func, base, args, *loc)?;
                     if let Some(d) = *dst {
                         self.put(base, d, v)
                     }
@@ -1006,23 +1010,23 @@ impl Interpreter {
                     loc,
                 } => {
                     let target = self.get(base, *callee);
-                    let v = self.call_indirect(sig, target, base, args, *loc)?;
+                    let v = self.call_indirect(shared, sig, target, base, args, *loc)?;
                     if let Some(d) = *dst {
                         self.put(base, d, v)
                     }
                 }
                 Op::If { c, then, els } => {
                     let flow = if self.get(base, *c) != 0 {
-                        self.exec(then, base)?
+                        self.exec(shared, then, base)?
                     } else {
-                        self.exec(els, base)?
+                        self.exec(shared, els, base)?
                     };
                     if !matches!(flow, Flow::Next) {
                         return Ok(flow);
                     }
                 }
                 Op::Loop { body } => loop {
-                    match self.exec(body, base)? {
+                    match self.exec(shared, body, base)? {
                         Flow::Next | Flow::Continue(0) => {}
                         Flow::Break(0) => break,
                         Flow::Break(n) => return Ok(Flow::Break(n - 1)),
