@@ -621,6 +621,11 @@ replaces generic items with one copy per combination of type arguments.
     allocate. Reads of locals that are never reassigned are not spilled.
   - A slot is cleared when its scope ends or is left by `return`, `break` or `continue`. So the
     stack above its top is always zero, and pushing a frame clears nothing (D30).
+  - A function that cannot start a collection pushes no frame: one that allocates nothing,
+    itself or through the functions it calls, such as a tree walk that only reads. Its callers
+    spill nothing around calls of it. A call through a closure, an interface or to a C function
+    counts as allocating, and in a program with threads every function keeps its frame, since
+    its loops wait for collections.
   - Globals of these types are registered as roots. Heap objects are traced by layout.
 - **Objects.** Every struct, enum variant and closure environment gets a type descriptor,
   registered at startup, with a layout: one byte per word, saying raw, reference or `any`. Field

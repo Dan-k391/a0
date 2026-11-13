@@ -1062,7 +1062,82 @@ impl Gen {
         }
     }
 
+    /// A function that only reads the references it is given, recursing on them: it cannot
+    /// collect, so lowering gives it no frame and its callers spill nothing around its calls,
+    /// whose arguments are often fresh objects next to ones that allocate. Sometimes it first calls
+    /// a function given only numbers, which may allocate: then it may collect too, and must root
+    /// what it reads afterwards.
+    fn reader(&mut self, index: usize) -> String {
+        let name = format!("f{index}");
+        let mut params = vec![Int];
+        for _ in 0..1 + self.rng.below(3) {
+            params.push(self.rng.pick(&[Rec, Arr, Str, Opt, Shape]));
+        }
+        let mut parts = Vec::new();
+        let mut cost = 4;
+        self.current = index;
+        self.cost = 1;
+        let numeric: Vec<usize> = self
+            .callees(Int, 1)
+            .into_iter()
+            .filter(|&f| {
+                let f = &self.funcs[f];
+                f.cost <= BUDGET / 8
+                    && f.params
+                        .iter()
+                        .all(|p| matches!(p, Int | U8 | I32 | Bool | Float))
+            })
+            .collect();
+        if !numeric.is_empty() && self.rng.chance(40) {
+            let f = self.rng.pick(&numeric);
+            let empty = Ctx {
+                locals: Vec::new(),
+                ret: None,
+                in_loop: false,
+                in_closure: false,
+                in_try: false,
+                times: 1,
+            };
+            parts.push(self.call(f, &empty, 0));
+            cost = 4 * (1 + self.funcs[f].cost);
+        }
+        for (i, &p) in params.iter().enumerate().skip(1) {
+            let k = self.rng.below(3);
+            parts.push(match (p, self.rng.below(2)) {
+                (Rec, 0) => format!("p{i}.n"),
+                (Rec, _) => format!("len(p{i}.s)"),
+                (Arr, 0) => format!("aget(p{i}, {k})"),
+                (Arr, _) => format!("len(p{i})"),
+                (Str, _) => format!("len(p{i})"),
+                (Opt, _) => format!("(if let r = p{i} {{ r.n + len(r.s) }} else {{ {k} }})"),
+                _ => format!("p{i}.size()"),
+            });
+        }
+        let args: Vec<String> = (1..params.len()).map(|i| format!("p{i}")).collect();
+        let value = parts.join(" + ");
+        let sig: Vec<String> = params
+            .iter()
+            .enumerate()
+            .map(|(i, p)| format!("p{i}: {}", p.syntax()))
+            .collect();
+        self.funcs.push(Func {
+            name: name.clone(),
+            params,
+            ret: Int,
+            fuel: true,
+            cost,
+        });
+        format!(
+            "fn {name}({}) -> int {{\n  if p0 == 0 {{ {value} }} else {{ {name}(p0 - 1, {}) + {value} }}\n}}\n",
+            sig.join(", "),
+            args.join(", ")
+        )
+    }
+
     fn function(&mut self, index: usize) -> String {
+        if self.rng.chance(15) {
+            return self.reader(index);
+        }
         let fuel = self.rng.chance(20);
         let mut params = Vec::new();
         if fuel {
@@ -1452,6 +1527,7 @@ fn the_generator_is_deterministic_and_varied() {
         "set_field(",
         "as Sized).copy()",
         "with_any(",
+        "if p0 == 0 {",
     ] {
         let uses = programs.iter().filter(|p| p.contains(feature)).count();
         assert!(uses >= 3, "only {uses} programs use {feature}");

@@ -489,6 +489,47 @@ fn lowered_closures_take_their_environment_first() {
 }
 
 #[test]
+fn bodies_that_cannot_collect_push_no_frame() {
+    let m = parse_ok(
+        r#"module "m";
+struct Node { left: Node?, right: Node?, n: int }
+interface Make { fn make(self) -> Node; }
+impl Make for Node;
+impl Node {
+  fn make(self: Node) -> Node { new Node { left: null<Node>, right: null<Node>, n: 0 } }
+}
+fn depth(t: Node?) -> int {
+  if let n = t { 1 + depth(n.left) + depth(n.right) } else { 0 }
+}
+fn walk(t: Node) -> int { depth(t) + t.n }
+fn boxed(t: Node, x: u64) -> int { let a = x as any; t.n }
+fn through(t: Node, m: Make) -> int { m.make().n + t.n }
+fn odd(t: Node, k: int) -> int { if k == 0 { t.n } else { even(t, k - 1) } }
+fn even(t: Node, k: int) -> int { if k == 0 { len(str(t.n)) } else { odd(t, k - 1) } }
+fn main() -> int {
+  let t = new Node { left: null<Node>, right: null<Node>, n: 1 };
+  walk(t) + boxed(t, 1) + through(t, t) + odd(t, 3)
+}
+"#,
+    );
+    let ir = lower_with(&m, LowerOptions::optimized(false))
+        .unwrap()
+        .to_string();
+    let pushes = |f: &str| {
+        let start = ir.find(&format!("func @hir.{f}(")).expect(f);
+        let body = &ir[start..];
+        let end = body[1..].find("\nfunc ").map_or(body.len(), |e| e + 1);
+        body[..end].contains("a0_gc_frame_push")
+    };
+    // Reading references allocates nothing, through calls too.
+    assert!(!pushes("depth") && !pushes("walk"), "{ir}");
+    // Boxing a 64-bit number and calling through an interface may allocate, and so may a
+    // function only because the one it calls does.
+    assert!(pushes("boxed") && pushes("through"), "{ir}");
+    assert!(pushes("odd") && pushes("even"), "{ir}");
+}
+
+#[test]
 fn builders_infer_types_and_generics_are_monomorphized() {
     // fn id<T>(x: T) -> T { x }, called with an int and a string; `xs` is `[]` until a push.
     let mut b = HirBuilder::new("m");

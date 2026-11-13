@@ -1,0 +1,94 @@
+// Functions that cannot collect push no frame, and their callers do not spill around them; those
+// that allocate however indirectly (boxing a 64-bit number, a call through an interface, a call of
+// one that allocates, a captured parameter) still root what they hold.
+// expect-stdout: walk 13 12
+// expect-stdout: boxed 2000 2000
+// expect-stdout: iface 3010
+// expect-stdout: mutual 109 114
+// expect-stdout: captured 105
+// expect-exit: 0
+module "frameless";
+
+struct Node { left: Node?, right: Node?, n: int }
+interface Make { fn make(self) -> Node; }
+impl Make for Node;
+
+impl Node {
+  fn make(self: Node) -> Node {
+    leaf(self.n + 1)
+  }
+}
+
+fn leaf(n: int) -> Node {
+  new Node { left: null<Node>, right: null<Node>, n: n }
+}
+
+fn tree(d: int) -> Node {
+  if d == 0 { leaf(1) } else { new Node { left: tree(d - 1), right: tree(d - 1), n: d } }
+}
+
+// Reads references only: no frame.
+fn count(t: Node?) -> int {
+  if let n = t { 1 + count(n.left) + count(n.right) } else { 0 }
+}
+
+fn sum(t: Node?) -> int {
+  if let n = t { n.n + sum(n.left) + sum(n.right) } else { 0 }
+}
+
+fn pair(a: Node, b: Node) -> int {
+  a.n + b.n
+}
+
+// Its only allocations box the numbers, which are objects beyond 48 bits (unless the optimizer
+// drops the unused values).
+fn boxed(t: Node, x: u64, y: i64) -> int {
+  let a = x as any;
+  let b = y as any;
+  t.n
+}
+
+// A caller does not spill its last argument: the callee roots it.
+fn through(m: Make, t: Node) -> int {
+  let made = m.make();
+  t.n + made.n
+}
+
+fn chain(d: int) -> Node {
+  if d == 0 { leaf(0) } else { new Node { left: chain(d - 1), right: null<Node>, n: d } }
+}
+
+// Mutual recursion where only `even` allocates: `odd` must root `t`, which only it holds once it
+// passes `even` the node below.
+fn odd(k: int, t: Node) -> int {
+  if k == 0 { t.n } else { if let l = t.left { even(k - 1, l) + t.n } else { t.n } }
+}
+
+fn even(k: int, t: Node) -> int {
+  let s = str(k);
+  if k == 0 { t.n + len(s) } else { odd(k - 1, t) + t.n }
+}
+
+// The box of a captured parameter is allocated in the prologue.
+fn captured(t: Node) -> int {
+  let f = fn() -> int { t.n };
+  f() + t.n
+}
+
+fn main() -> int {
+  let i = 0;
+  let w = 0;
+  while i < 20 {
+    w = count(tree(2)) + pair(leaf(5), tree(1));
+    i = i + 1;
+  }
+  print("walk " + str(w) + " " + str(sum(tree(2)) + pair(leaf(4), leaf(0))) + "\n");
+  let big: u64 = 1;
+  big = big shl 60;
+  print("boxed " + str(boxed(leaf(1000), big, 1 shl 50) + boxed(leaf(1000), big, 3)) + " "
+    + str(pair(leaf(1000), leaf(boxed(leaf(1000), big, 7)))) + "\n");
+  print("iface " + str(through(leaf(4), leaf(1000)) + pair(leaf(1000), leaf(1005))) + "\n");
+  print("mutual " + str(odd(11, chain(12))) + " " + str(even(11, chain(12))) + "\n");
+  print("captured " + str(captured(leaf(50)) + pair(leaf(2), leaf(3))) + "\n");
+  0
+}

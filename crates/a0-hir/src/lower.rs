@@ -345,6 +345,9 @@ struct Lowerer<'a> {
     /// exception into its caller (`analyze_raises`).
     reached: Vec<bool>,
     raises: Vec<bool>,
+    /// Per body: whether running it may start a collection (`analyze_collects`). One that cannot
+    /// needs no frame, and its callers need not spill around calls of it.
+    collects: Vec<bool>,
     /// Whether some closure the program makes may raise one.
     closures_raise: bool,
     /// The pending exception, if the program throws: a flag, and its value (an `any`).
@@ -438,6 +441,7 @@ impl<'a> Lowerer<'a> {
             null_message: None,
             reached: Vec::new(),
             raises: Vec::new(),
+            collects: Vec::new(),
             closures_raise: false,
             exception: None,
         }
@@ -911,6 +915,7 @@ impl<'a> Lowerer<'a> {
         self.analyze_captures();
         self.analyze_locals();
         self.analyze_raises();
+        self.analyze_collects();
         let m = self.m;
         if m.exprs.iter().any(|e| matches!(e.kind, ExprKind::Throw(_))) {
             let pending = self.b.add_global_int("hir.exception.pending", Type::I64, 0);
@@ -2105,6 +2110,10 @@ impl<'a> Lowerer<'a> {
         if m.memory() == Memory::Manual {
             return false;
         }
+        // Nothing can collect while it runs, so nothing it holds needs a root.
+        if !self.collects[body.index()] {
+            return false;
+        }
         if closure && !self.captures[&body].is_empty() {
             return true;
         }
@@ -2138,17 +2147,30 @@ impl<'a> Lowerer<'a> {
             return r;
         }
         let m = self.m;
-        let own = match &m.expr(e).kind {
+        let own = self.allocates_itself(e);
+        let mut children = Vec::new();
+        visit_children(m, e, &mut |c| children.push(c));
+        let r = own || children.into_iter().any(|c| self.may_gc(c));
+        self.st().gc_memo.insert(e, r);
+        r
+    }
+
+    /// Whether evaluating `e` itself, not counting its operands, may allocate (and so collect): the
+    /// one list both `may_gc` and `analyze_collects` use.
+    fn allocates_itself(&self, e: ExprId) -> bool {
+        let m = self.m;
+        match &m.expr(e).kind {
             ExprKind::Let(l, _) | ExprKind::IfLet(l, ..) | ExprKind::Try(_, l, _) => {
                 self.captured[l.index()]
             }
             // Boxing the value may allocate.
             ExprKind::Throw(_) => true,
+            // A call collects if the body it runs may.
+            ExprKind::Call(f, ..) => self.collects[m.func_body(*f).index()],
             // A loop polls for a collection in a program with threads.
             ExprKind::While(..) | ExprKind::Loop(_) => self.poll.is_some(),
             ExprKind::Func(..)
             | ExprKind::Lambda(_)
-            | ExprKind::Call(..)
             | ExprKind::CallExtern(..)
             | ExprKind::CallValue(..)
             | ExprKind::InterfaceCall(..)
@@ -2168,12 +2190,7 @@ impl<'a> Lowerer<'a> {
                     .any(|b| self.captured[b.index()])
             }),
             _ => false,
-        };
-        let mut children = Vec::new();
-        visit_children(m, e, &mut |c| children.push(c));
-        let r = own || children.into_iter().any(|c| self.may_gc(c));
-        self.st().gc_memo.insert(e, r);
-        r
+        }
     }
 
     /// Evaluates operands left to right. A GC value is spilled when an operand after it, or the
@@ -2840,6 +2857,52 @@ impl<'a> Lowerer<'a> {
             }
         }
         self.reached = reached;
+    }
+
+    /// Which bodies may start a collection while they run: those that allocate (anything
+    /// `allocates_itself` names, or the boxes of captured locals, which a parameter gets in the
+    /// prologue) or call a body that may. Calls through closures and interfaces count as
+    /// allocating, and in a program with threads every body may collect, since its loops poll.
+    fn analyze_collects(&mut self) {
+        let m = self.m;
+        let n = m.bodies.len();
+        if self.poll.is_some() {
+            self.collects = vec![true; n];
+            return;
+        }
+        // The least fixed point: start from nothing, and only what allocates or calls a body that
+        // collects joins.
+        self.collects = vec![false; n];
+        for (i, l) in m.locals.iter().enumerate() {
+            if self.captured[i] {
+                self.collects[l.body.index()] = true;
+            }
+        }
+        let mut calls: Vec<Vec<usize>> = Vec::with_capacity(n);
+        for (b, body) in m.bodies.iter().enumerate() {
+            let mut callees = Vec::new();
+            let mut stack: Vec<ExprId> = body.root.into_iter().collect();
+            while let Some(e) = stack.pop() {
+                match m.expr(e).kind {
+                    ExprKind::Call(f, ..) => callees.push(m.func_body(f).index()),
+                    _ => self.collects[b] |= self.allocates_itself(e),
+                }
+                visit_children(m, e, &mut |c| stack.push(c));
+            }
+            calls.push(callees);
+        }
+        loop {
+            let mut changed = false;
+            for (b, callees) in calls.iter().enumerate() {
+                if !self.collects[b] && callees.iter().any(|&c| self.collects[c]) {
+                    self.collects[b] = true;
+                    changed = true;
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
     }
 
     /// The address of the pending exception's flag, or of its value: globals, or the slots of the
