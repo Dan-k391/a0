@@ -5,24 +5,29 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-/// `target/<profile>`; the test runs from its `deps` directory.
-fn profile_dir() -> PathBuf {
-    let exe = std::env::current_exe().unwrap();
-    exe.parent().unwrap().parent().unwrap().to_path_buf()
-}
-
 /// The static library cargo built along with this test: the newest `a0_capi.lib` or
-/// `liba0_capi.a` in `deps` (`cargo test` does not copy it up to `target/<profile>`). Cargo leaves
-/// the hash out of the name because the crate is also a cdylib, but older builds may have one.
+/// `liba0_capi.a` next to it (`cargo test` does not copy it up to `target/<profile>`). Cargo up to
+/// 1.99 puts both in `target/<profile>/deps`; from 1.100 each unit has its own
+/// `target/<profile>/build/a0-capi/<hash>/out`, so the library is in a sibling of the test's.
+/// Cargo leaves the hash out of the name because the crate is also a cdylib, but older builds may
+/// have one.
 fn static_library(msvc: bool) -> PathBuf {
     let (prefix, suffix) = if msvc {
         ("a0_capi", ".lib")
     } else {
         ("liba0_capi", ".a")
     };
-    let deps = profile_dir().join("deps");
-    std::fs::read_dir(&deps)
-        .unwrap()
+    let exe = std::env::current_exe().unwrap();
+    let here = exe.parent().unwrap();
+    let siblings = std::fs::read_dir(here.parent().unwrap().parent().unwrap())
+        .into_iter()
+        .flatten()
+        .filter_map(Result::ok)
+        .map(|e| e.path().join("out"));
+    std::iter::once(here.to_path_buf())
+        .chain(siblings)
+        .filter_map(|dir| std::fs::read_dir(dir).ok())
+        .flatten()
         .filter_map(Result::ok)
         .filter(|e| {
             let name = e.file_name().to_string_lossy().into_owned();
@@ -32,7 +37,7 @@ fn static_library(msvc: bool) -> PathBuf {
         })
         .max_by_key(|e| e.metadata().and_then(|m| m.modified()).ok())
         .map(|e| e.path())
-        .unwrap_or_else(|| panic!("no {prefix}*{suffix} in {}", deps.display()))
+        .unwrap_or_else(|| panic!("no {prefix}*{suffix} near {}", here.display()))
 }
 
 fn compile_host(work: &Path) -> PathBuf {
@@ -82,7 +87,7 @@ fn compile_host(work: &Path) -> PathBuf {
 
 #[test]
 fn a_c_program_builds_runs_and_compiles_modules() {
-    let work = profile_dir().join("capi-host");
+    let work = Path::new(env!("CARGO_TARGET_TMPDIR")).join("capi-host");
     let _ = std::fs::remove_dir_all(&work);
     std::fs::create_dir_all(&work).unwrap();
     let host = compile_host(&work);

@@ -22,9 +22,8 @@ pub fn check(m: &mut HirModule) -> Diagnostics {
         uses: vec![0; m.exprs.len()],
         body_uses: vec![0; m.bodies.len()],
     };
-    for f in 0..m.funcs.len() {
-        let body = m.funcs[f].body;
-        c.body(body, m.funcs[f].span);
+    for func in &m.funcs {
+        c.body(func.body, func.span);
     }
     for (i, &n) in c.uses.iter().enumerate() {
         if n > 1 {
