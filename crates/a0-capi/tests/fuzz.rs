@@ -5,21 +5,11 @@
 //! `A0_FUZZ_ITERATIONS=n` runs `n` sequences (100 by default) and `A0_FUZZ_SEED=s` starts at seed
 //! `s`.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::Command;
 
-fn shared_library() -> PathBuf {
-    let exe = std::env::current_exe().unwrap();
-    let deps = exe.parent().unwrap();
-    let name = if cfg!(windows) {
-        "a0_capi.dll"
-    } else if cfg!(target_os = "macos") {
-        "liba0_capi.dylib"
-    } else {
-        "liba0_capi.so"
-    };
-    deps.join(name)
-}
+mod common;
+use common::shared_library;
 
 fn python() -> Option<&'static str> {
     ["python3", "python"].into_iter().find(|p| {

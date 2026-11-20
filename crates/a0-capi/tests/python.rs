@@ -10,20 +10,8 @@ use a0_driver::dap::Client;
 use a0_driver::json::Json;
 use a0_driver::lsp::session_with_args;
 
-fn shared_library() -> PathBuf {
-    let exe = std::env::current_exe().unwrap();
-    let deps = exe.parent().unwrap();
-    let name = if cfg!(windows) {
-        "a0_capi.dll"
-    } else if cfg!(target_os = "macos") {
-        "liba0_capi.dylib"
-    } else {
-        "liba0_capi.so"
-    };
-    let path = deps.join(name);
-    assert!(path.is_file(), "no {}", path.display());
-    path
-}
+mod common;
+use common::shared_library;
 
 /// The first of `python3` and `python` that runs (Windows may have a `python3` that only opens the
 /// store).

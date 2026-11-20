@@ -5,45 +5,16 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-/// The static library cargo built along with this test: the newest `a0_capi.lib` or
-/// `liba0_capi.a` next to it (`cargo test` does not copy it up to `target/<profile>`). Cargo up to
-/// 1.99 puts both in `target/<profile>/deps`; from 1.100 each unit has its own
-/// `target/<profile>/build/a0-capi/<hash>/out`, so the library is in a sibling of the test's.
-/// Cargo leaves the hash out of the name because the crate is also a cdylib, but older builds may
-/// have one.
-fn static_library(msvc: bool) -> PathBuf {
-    let (prefix, suffix) = if msvc {
-        ("a0_capi", ".lib")
-    } else {
-        ("liba0_capi", ".a")
-    };
-    let exe = std::env::current_exe().unwrap();
-    let here = exe.parent().unwrap();
-    let siblings = std::fs::read_dir(here.parent().unwrap().parent().unwrap())
-        .into_iter()
-        .flatten()
-        .filter_map(Result::ok)
-        .map(|e| e.path().join("out"));
-    std::iter::once(here.to_path_buf())
-        .chain(siblings)
-        .filter_map(|dir| std::fs::read_dir(dir).ok())
-        .flatten()
-        .filter_map(Result::ok)
-        .filter(|e| {
-            let name = e.file_name().to_string_lossy().into_owned();
-            name.strip_prefix(prefix)
-                .and_then(|rest| rest.strip_suffix(suffix))
-                .is_some_and(|hash| hash.is_empty() || hash.starts_with('-'))
-        })
-        .max_by_key(|e| e.metadata().and_then(|m| m.modified()).ok())
-        .map(|e| e.path())
-        .unwrap_or_else(|| panic!("no {prefix}*{suffix} near {}", here.display()))
-}
+mod common;
 
 fn compile_host(work: &Path) -> PathBuf {
     let target = env!("A0_CAPI_TARGET");
     let msvc = target.contains("msvc");
-    let lib = static_library(msvc);
+    let lib = if msvc {
+        common::built_library("a0_capi", ".lib")
+    } else {
+        common::built_library("liba0_capi", ".a")
+    };
     let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
     let include = manifest.join("include");
     let source = manifest.join("tests").join("host.c");
